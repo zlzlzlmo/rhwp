@@ -212,7 +212,7 @@ pub(super) fn place_fitted_paragraph(
         st.col_count,
         trim_spacing_before_for_flow,
         st.vpos_ladder_dirty
-            || !spacing_trim_restorable(paragraphs, para_idx)
+            || !spacing_trim_restorable(paragraphs, para_idx, st.stored_ladder_predates_growth)
             || next_boundary_reverts_spacing_trim(
                 st.profile.hwpx_stored_layout() && !st.profile.hwp3_layout(),
                 paragraphs,
@@ -240,7 +240,7 @@ pub(super) fn place_fitted_paragraph(
             st.col_count,
             trim_spacing_before_for_flow,
             st.vpos_ladder_dirty
-                || !spacing_trim_restorable(paragraphs, para_idx)
+                || !spacing_trim_restorable(paragraphs, para_idx, st.stored_ladder_predates_growth)
                 || next_boundary_reverts_spacing_trim(
                     st.profile.hwpx_stored_layout() && !st.profile.hwp3_layout(),
                     paragraphs,
@@ -281,7 +281,7 @@ pub(super) fn try_place_overflow_paragraph(
             st.col_count,
             trim_spacing_before_for_flow,
             st.vpos_ladder_dirty
-                || !spacing_trim_restorable(paragraphs, para_idx)
+                || !spacing_trim_restorable(paragraphs, para_idx, st.stored_ladder_predates_growth)
                 || next_boundary_reverts_spacing_trim(
                     st.profile.hwpx_stored_layout() && !st.profile.hwp3_layout(),
                     paragraphs,
@@ -367,7 +367,7 @@ pub(super) fn place_after_failed_fit(
             st.col_count,
             trim_spacing_before_for_flow,
             st.vpos_ladder_dirty
-                || !spacing_trim_restorable(paragraphs, para_idx)
+                || !spacing_trim_restorable(paragraphs, para_idx, st.stored_ladder_predates_growth)
                 || next_boundary_reverts_spacing_trim(
                     st.profile.hwpx_stored_layout() && !st.profile.hwp3_layout(),
                     paragraphs,
@@ -383,7 +383,11 @@ pub(super) fn place_after_failed_fit(
                 st.col_count,
                 trim_spacing_before_for_flow,
                 st.vpos_ladder_dirty
-                    || !spacing_trim_restorable(paragraphs, para_idx)
+                    || !spacing_trim_restorable(
+                        paragraphs,
+                        para_idx,
+                        st.stored_ladder_predates_growth,
+                    )
                     || next_boundary_reverts_spacing_trim(
                         st.profile.hwpx_stored_layout() && !st.profile.hwp3_layout(),
                         paragraphs,

@@ -86,8 +86,13 @@ pub(super) fn prepare(
                     .find(|m| m.para_index == para_idx && m.control_index == ci)?;
                 let grown_in_session =
                     flow.session_edited() && measured.total_height > declared + 8.0;
-                let predates =
-                    crate::renderer::typeset::stored_host_line_growth_hu(para, t).is_some();
+                let predates = crate::renderer::typeset::stored_host_line_growth_hu(
+                    para,
+                    t,
+                    flow.tac_table_line_index(para, t, fmt),
+                    ci,
+                )
+                .is_some();
                 grown_before_save |= predates;
                 (grown_in_session || predates).then_some(measured.total_height)
             })

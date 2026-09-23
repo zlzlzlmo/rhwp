@@ -112,9 +112,41 @@ fn stored_intra_line_gap(para: &Paragraph) -> Option<i32> {
 pub(in crate::renderer::typeset) fn spacing_trim_restorable(
     paragraphs: &[Paragraph],
     para_idx: usize,
+    stored_ladder_predates_growth: bool,
 ) -> bool {
     use crate::model::paragraph::LineSeg;
+    // 다음 문단의 스냅(`HeightCursor::vpos_adjust`)은 직전 문단의 끝 줄(폭 있는 마지막 줄)이 vpos 0(쪽 머리 리셋)이면
+    // 건너뛴다 — 그 문단에서 깎은 간격은 되돌아오지 않는다. 렌더는 깎지 않으므로 조판만 짧게 센다(맥 한글 12.30:
+    // c3fb5220 신청서 9쪽 «기타 현황» 쪽 나누기 제목 48px 를 조판이 20px 로 세 쪽마다 모자람이 쌓이고, 렌더는 맞게
+    // 그려 쪽 바닥을 넘겼다 — 채움본 rhwp 44쪽 · 맥 46쪽).
+    let anchor_line_is_page_top = paragraphs.get(para_idx).is_some_and(|para| {
+        para.line_segs
+            .iter()
+            .rev()
+            .find(|seg| seg.segment_width > 0)
+            .or_else(|| para.line_segs.last())
+            .is_some_and(|seg| seg.vertical_pos == 0)
+    });
+    if para_idx > 0 && anchor_line_is_page_top {
+        return false;
+    }
     for para in paragraphs.iter().skip(para_idx + 1).take(32) {
+        // 저장 전에 자란 표를 지난 구역(`stored_ladder_predates_growth`)에서는 글자처럼 취급한 표·개체만 든 host 가
+        // 재앵커 지점이 아니다 — 그 사다리는 낡아 표 경로가 저장 자리로 되돌아가지 않고 흐름을 그대로 잇는다(맥 한글
+        // 12.30: c3fb5220 신청서 채움 9쪽 «다. 관계사 현황»·«라. 사업장 현황» 제목 44px 를 조판이 20px 로 세고 뒤 글자처럼
+        // 표에서 되찾지 못해 쪽마다 24px 씩 모자랐다). 한컴 저장본은 종전대로 재앵커로 본다(hwp3-sample16 hwpx 64쪽).
+        let tac_only_host = stored_ladder_predates_growth
+            && para.text.is_empty()
+            && !para.controls.is_empty()
+            && para.controls.iter().all(|c| match c {
+                crate::model::control::Control::Table(t) => t.common.treat_as_char,
+                crate::model::control::Control::Picture(p) => p.common.treat_as_char,
+                crate::model::control::Control::Shape(s) => s.common().treat_as_char,
+                _ => false,
+            });
+        if tac_only_host {
+            return false;
+        }
         if !para.controls.is_empty() {
             return true; // 표/개체 재앵커 지점
         }

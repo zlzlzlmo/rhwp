@@ -1972,9 +1972,19 @@ fn is_synthetic_line_seg(ls: &LineSeg) -> bool {
 /// 나누지 않는 표의 높이는 선언과 칸 저장 줄이 그린 높이(`stored_layout_table_height_hu`) 중 큰 값이다 — 채움이 칸에 줄을 더 쓰고 선언은
 /// 그대로 둔 표도 한/글은 저장 줄대로 키운다(맥 한글 12.30: 74e0ad0b 신청서 28행 표 선언 846px · 칸 저장 줄 12칸이 선언을
 /// 넘어 964.6px — 제목 아래 남은 자리에 안 들어 다음 쪽으로 간다. host 줄로 흘리면 rhwp 는 제목 아래에 두고 112.8px 넘쳤다).
-fn stored_host_line_growth_hu(para: &Paragraph, table: &crate::model::table::Table) -> Option<i32> {
-    let [seg] = para.line_segs.as_slice() else {
-        return None;
+/// 여러 줄 host(글자처럼 표 여럿이 줄마다 선 문단)는 그 표가 선 줄(`line_idx`)의 저장 줄로 잰다(맥 한글 12.30: c3fb5220 신청서
+/// 9쪽 «사업장 현황» 표 — 채움이 행을 더해 선언 187.3px · 저장 줄 85.6px, host 줄로 흘리면 rhwp 는 쪽 바닥을 112.5px 넘겼다).
+/// 줄 번호는 높이 짝(`tac_table_line_index`)이 먼저고, 높이가 낡아 짝이 없으면 글 없는 host 에서 «글자처럼 표 하나 = 줄 하나»
+/// 순서로 찾는다(`ctrl_idx` 번째 표가 몇 번째 글자처럼 표인가).
+fn stored_host_line_growth_hu(
+    para: &Paragraph,
+    table: &crate::model::table::Table,
+    line_idx: Option<usize>,
+    ctrl_idx: usize,
+) -> Option<i32> {
+    let seg = match para.line_segs.as_slice() {
+        [seg] => seg,
+        segs => segs.get(line_idx.or_else(|| tac_line_by_order(para, ctrl_idx))?)?,
     };
     if is_synthetic_line_seg(seg) {
         return None;
@@ -1991,6 +2001,21 @@ fn stored_host_line_growth_hu(para: &Paragraph, table: &crate::model::table::Tab
         .saturating_add(i32::from(table.outer_margin_bottom));
     let growth = frame.saturating_sub(seg.line_height);
     (growth > 600).then_some(growth)
+}
+
+/// 글 없는 host 에 글자처럼 표가 줄 수만큼 있으면 `ctrl_idx` 번째 표의 줄 번호.
+fn tac_line_by_order(para: &Paragraph, ctrl_idx: usize) -> Option<usize> {
+    let is_tac_table = |c: &Control| matches!(c, Control::Table(t) if t.common.treat_as_char);
+    let tac_tables = para.controls.iter().filter(|c| is_tac_table(c)).count();
+    (para.text.is_empty()
+        && tac_tables == para.line_segs.len()
+        && is_tac_table(para.controls.get(ctrl_idx)?))
+    .then(|| {
+        para.controls[..ctrl_idx]
+            .iter()
+            .filter(|c| is_tac_table(c))
+            .count()
+    })
 }
 
 /// 미뤄지는 표 앞 선행 채움에서 통째로 안 드는 글 문단은 드는 머리 줄만 이 쪽에 두고, 나머지는 표 뒤에서 잇는다
@@ -4334,12 +4359,11 @@ impl TypesetEngine {
         };
         // 🔴 저장 전에 자란 표는 저장 줄 대신 성장분만큼 더 흘린다 — 한/글은 host 줄을 새로 짠다(맥 한글 12.30: SMATEC
         // 채움 4쪽 표 저장 줄 313.7px · 선언 374.9px, 저장 줄로 흘리면 뒤 문단이 그만큼 덜 밀린다).
-        let table_height = match stored_host_line_growth_hu(para, table) {
-            Some(growth) if tac_count == 1 && !owns_tac_band => {
-                table_height + hwpunit_to_px(growth, self.dpi)
-            }
-            _ => table_height,
-        };
+        let table_height =
+            match stored_host_line_growth_hu(para, table, tac_table_line_idx, ctrl_idx) {
+                Some(growth) if !owns_tac_band => table_height + hwpunit_to_px(growth, self.dpi),
+                _ => table_height,
+            };
 
         // TAC 표는 분할하지 않고 통째로 배치
         let column = st.inline_flow_column();
@@ -5349,7 +5373,11 @@ impl TypesetEngine {
                 st.col_count,
                 trim_sb,
                 st.vpos_ladder_dirty
-                    || !spacing_trim_restorable(paragraphs_all, next_idx)
+                    || !spacing_trim_restorable(
+                        paragraphs_all,
+                        next_idx,
+                        st.stored_ladder_predates_growth,
+                    )
                     || next_boundary_reverts_spacing_trim(
                         st.profile.hwpx_stored_layout() && !st.profile.hwp3_layout(),
                         paragraphs_all,
