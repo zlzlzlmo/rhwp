@@ -84,8 +84,17 @@ pub(super) fn place_split_paragraph(
         } else {
             0.0
         };
-        // Task #332 Stage 4b: partial split 의 줄 단위 fit 검사에도 layout drift 마진 적용
-        let avail_for_lines = (page_avail - sp_b - layout_drift_safety_px).max(0.0);
+        // Task #332 Stage 4b: partial split 의 줄 단위 fit 검사에도 layout drift 마진 적용.
+        // 🔴 rhwp 가 지은 줄(합성 태그)은 한 번만 뺀다 — `base_available`(→ `page_avail`)이 이미 마진을 뺀 값이라 또 빼면
+        // 8px 를 뺐다(맥 한글 12.30: 예창패 채움 쪽 바닥 46.3px 에 두 줄 41.6px 가 한/글은 2/2 로 서는데 rhwp 는 38.3px 로
+        // 보고 통째로 넘겼다). 합성 줄은 조판과 렌더가 같은 줄 높이라 drift 가 없다. 한컴 저장 줄은 상류 이중 마진 그대로
+        // (한 번으로 줄이면 상류 본문 넘침·겹침 기준선 19건이 깨졌다 — 그 문서들의 drift 는 실재한다).
+        let drift_margin = if crate::renderer::para_has_no_stored_line_segs(para) {
+            0.0
+        } else {
+            layout_drift_safety_px
+        };
+        let avail_for_lines = (page_avail - sp_b - drift_margin).max(0.0);
 
         let scan::LineScanResult {
             end_line,
