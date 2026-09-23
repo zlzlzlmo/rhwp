@@ -1348,13 +1348,80 @@ impl DocumentCore {
     ///
     /// 이 함수는 `reflow_linesegs_on_demand` 에서만 사용되며, 자동 파싱 경로에는 영향 없음.
     fn needs_reflow_broadly(para: &crate::model::paragraph::Paragraph) -> bool {
-        if !para.text.is_empty() && para.line_segs.is_empty() {
+        // 저장 줄이 없는 문단은 글자가 없어도 줄을 만든다. 한/글은 빈 문단(글자 크기 줄)과
+        // 개체만 든 문단(개체 높이 줄)에도 LINE_SEG 를 적는다 — 비워 두면 저장본에 그 문단의
+        // 조판이 아예 없다. 만드는 법은 `reflow_line_segs` 의 빈 문단 분기가 이미 안다.
+        if para.line_segs.is_empty() {
             return true;
         }
         if Self::needs_line_seg_reflow(para, false) {
             return true;
         }
         false
+    }
+
+    /// 표 하나의 칸 문단을 on-demand 로 다시 조판한다 (#177) — 한/글 저장 규약대로.
+    ///
+    /// - 상자: 칸 안쪽 폭에서 **문단 좌우 여백을 뺀** 구간([`ParagraphBox::cell_for_style`]).
+    /// - 세로 자리: 칸 안 문단은 앞 문단 끝에서 이어진다. 한/글은 `0 → 2400 → 4800` 으로
+    ///   적는데 reflow 는 문단마다 0 을 적었다 — 칸마다 사다리를 다시 세운다.
+    /// - 칸 안의 표도 같은 규약으로 내려간다. 종전엔 본문 문단의 표만 돌아, 중첩 표의 칸
+    ///   문단은 저장 줄 없이 남았다.
+    ///
+    /// 반환값: reflow 한 칸 문단 수(중첩 포함).
+    fn reflow_table_cells_on_demand(
+        table: &mut crate::model::table::Table,
+        styles: &ResolvedStyleSet,
+        dpi: f64,
+        is_hwp3_variant: bool,
+    ) -> usize {
+        let mut reflowed = 0usize;
+        let owner_widths = table.paragraph_frame_owner_widths();
+        let table_padding = table.padding;
+        for (cell, owner_width) in table.cells.iter_mut().zip(owner_widths) {
+            let cell_w_px = crate::renderer::hwpunit_to_px(owner_width, dpi);
+            let frame_padding = cell.paragraph_frame_padding(&table_padding);
+            let pad_left = crate::renderer::hwpunit_to_px(frame_padding.left as i32, dpi);
+            let pad_right = crate::renderer::hwpunit_to_px(frame_padding.right as i32, dpi);
+            let cell_inner_width = crate::renderer::composer::cell_inner_text_width(
+                cell_w_px, pad_left, pad_right, dpi,
+            );
+            let mut cell_reflowed = false;
+            for cell_para in &mut cell.paragraphs {
+                if Self::needs_reflow_broadly(cell_para) {
+                    let para_style = styles.para_styles.get(cell_para.para_shape_id as usize);
+                    reflow_line_segs(
+                        cell_para,
+                        ParagraphBox::cell_for_style(cell_inner_width, para_style, dpi),
+                        styles,
+                        dpi,
+                    );
+                    reflowed += 1;
+                    cell_reflowed = true;
+                }
+                for ctrl in &mut cell_para.controls {
+                    if let Control::Table(ref mut nested) = ctrl {
+                        reflowed += Self::reflow_table_cells_on_demand(
+                            nested,
+                            styles,
+                            dpi,
+                            is_hwp3_variant,
+                        );
+                    }
+                }
+            }
+            if cell_reflowed {
+                super::text_editing::recalculate_cell_paragraph_vpos(
+                    &mut cell.paragraphs,
+                    0,
+                    None,
+                    styles,
+                    dpi,
+                    is_hwp3_variant,
+                );
+            }
+        }
+        reflowed
     }
 
     /// 사용자 명시 요청에 의한 전체 lineseg reflow (#177).
@@ -1481,34 +1548,15 @@ impl DocumentCore {
                     reflowed += 1;
                     min_reflowed_idx.get_or_insert(pi);
                 }
-                // 표 셀 내부 문단도 동일 처리
+                // 표 셀 내부 문단도 동일 처리 — 칸 안의 표까지 내려간다.
                 for ctrl in &mut section.paragraphs[pi].controls {
                     if let Control::Table(ref mut table) = ctrl {
-                        let owner_widths = table.paragraph_frame_owner_widths();
-                        let table_padding = table.padding;
-                        for (cell, owner_width) in table.cells.iter_mut().zip(owner_widths) {
-                            let cell_w_px = crate::renderer::hwpunit_to_px(owner_width, dpi);
-                            let frame_padding = cell.paragraph_frame_padding(&table_padding);
-                            let pad_left =
-                                crate::renderer::hwpunit_to_px(frame_padding.left as i32, dpi);
-                            let pad_right =
-                                crate::renderer::hwpunit_to_px(frame_padding.right as i32, dpi);
-                            let cell_inner_width = crate::renderer::composer::cell_inner_text_width(
-                                cell_w_px, pad_left, pad_right, dpi,
-                            );
-                            for cell_para in &mut cell.paragraphs {
-                                if Self::needs_reflow_broadly(cell_para) {
-                                    // 셀 내용 상자 — 위와 같은 이유로 미스냅.
-                                    reflow_line_segs(
-                                        cell_para,
-                                        ParagraphBox::content_width_px(cell_inner_width, dpi),
-                                        &styles,
-                                        dpi,
-                                    );
-                                    reflowed += 1;
-                                }
-                            }
-                        }
+                        reflowed += Self::reflow_table_cells_on_demand(
+                            table,
+                            &styles,
+                            dpi,
+                            doc_hwp3_layout,
+                        );
                     }
                 }
                 pi += 1;
@@ -3073,15 +3121,13 @@ mod validate_linesegs_tests {
         core.set_document(document);
         core.validation_report = DocumentCore::validate_linesegs(core.document(), false);
 
-        assert_eq!(core.reflow_linesegs_on_demand(), 1);
+        // 글자 칸 1 + 빈 칸 3 + 표를 품은 본문 문단 1 — 한/글은 빈 문단에도 줄을 적는다.
+        assert_eq!(core.reflow_linesegs_on_demand(), 5);
         let line = short_table_frame_target_line(core.document());
         assert_eq!(
-            line.segment_width,
-            crate::renderer::px_to_hwpunit(
-                crate::renderer::hwpunit_to_px(RESOLVED_LAST_TRACK_WIDTH, core.dpi),
-                core.dpi,
-            ),
-            "on-demand reflow must use the table-owned frame width and the table's zero padding"
+            line.segment_width, RESOLVED_LAST_TRACK_WIDTH,
+            "on-demand reflow must use the table-owned frame width and the table's zero padding, \
+             rounded to HWPUNIT rather than truncated through px"
         );
     }
 
@@ -3144,11 +3190,143 @@ mod validate_linesegs_tests {
         assert!(!DocumentCore::needs_reflow_broadly(&para));
     }
 
-    /// needs_reflow_broadly: 빈 문단 (text 없음) → false
+    /// 칸 문단 on-demand reflow 픽스처: 폭 `CELL_WIDTH` 칸 하나에 문단 둘(여백 있는 문단 모양),
+    /// 첫 문단에는 칸 안 표가 하나 들어 있다. 저장 줄은 전부 비어 있다.
+    fn cell_margin_ladder_core() -> DocumentCore {
+        use crate::model::control::Control;
+        use crate::model::style::ParaShape;
+        use crate::model::table::{Cell, Table};
+
+        let text_para = |text: &str| Paragraph {
+            text: text.to_string(),
+            char_offsets: (0..text.chars().count() as u32).collect(),
+            char_count: text.chars().count() as u32 + 1,
+            has_para_text: true,
+            ..Default::default()
+        };
+        let table_of = |paragraphs: Vec<Paragraph>| {
+            let mut table = Table::default();
+            table.row_count = 1;
+            table.col_count = 1;
+            table.cells = vec![Cell {
+                row: 0,
+                col: 0,
+                row_span: 1,
+                col_span: 1,
+                width: CELL_WIDTH,
+                paragraphs,
+                ..Default::default()
+            }];
+            table
+        };
+
+        let nested = table_of(vec![text_para("안쪽 표")]);
+        let mut first = text_para("가나다");
+        first.controls.push(Control::Table(Box::new(nested)));
+        let outer = table_of(vec![first, text_para("라마바")]);
+
+        let mut host = Paragraph::default();
+        host.controls.push(Control::Table(Box::new(outer)));
+        let mut section = Section::default();
+        section.paragraphs.push(host);
+        let mut document = Document::default();
+        document.doc_info.para_shapes.push(ParaShape {
+            margin_left: MARGIN_LEFT_RAW,
+            margin_right: MARGIN_RIGHT_RAW,
+            line_spacing: 160,
+            ..Default::default()
+        });
+        document.sections.push(section);
+
+        let mut core = DocumentCore::new_empty();
+        core.set_document(document);
+        core.validation_report = DocumentCore::validate_linesegs(core.document(), false);
+        core
+    }
+
+    const CELL_WIDTH: u32 = 20_000;
+    const MARGIN_LEFT_RAW: i32 = 1_600;
+    const MARGIN_RIGHT_RAW: i32 = 800;
+
+    fn outer_cell(core: &DocumentCore) -> &crate::model::table::Cell {
+        let Control::Table(table) = &core.document().sections[0].paragraphs[0].controls[0] else {
+            panic!("outer table");
+        };
+        &table.cells[0]
+    }
+
+    /// 한/글은 칸 줄을 본문 줄처럼 적는다 — `column_start = 문단 왼쪽 여백`,
+    /// `segment_width = 칸 안쪽 폭 - 좌우 여백`. reflow 가 `0..안쪽 폭` 을 적으면 원점이
+    /// 틀리고, 한/글이 쓰지 않는 폭으로 줄을 나눈다.
     #[test]
-    fn needs_reflow_broadly_skips_empty_paragraph() {
+    fn on_demand_cell_rows_publish_paragraph_margins_like_hangul() {
+        let mut core = cell_margin_ladder_core();
+        core.reflow_linesegs_on_demand();
+
+        let style = &core.styles.para_styles[0];
+        let to_hwpunit =
+            |px: f64| (px * crate::renderer::HWPUNIT_PER_INCH / core.dpi).round() as i32;
+        let margin_left = to_hwpunit(style.margin_left);
+        let margin_right = to_hwpunit(style.margin_right);
+        assert!(
+            margin_left > 0 && margin_right > 0,
+            "픽스처 문단 모양에 여백이 있어야 한다"
+        );
+
+        for paragraph in &outer_cell(&core).paragraphs {
+            let row = &paragraph.line_segs[0];
+            assert_eq!(
+                row.column_start, margin_left,
+                "칸 줄의 원점은 문단 왼쪽 여백이다"
+            );
+            assert_eq!(
+                row.segment_width,
+                CELL_WIDTH as i32 - margin_left - margin_right,
+                "칸 줄의 폭은 안쪽 폭에서 좌우 여백을 뺀 값이다(HWPUNIT 반올림)"
+            );
+        }
+    }
+
+    /// 한/글은 칸 안 문단의 세로 자리를 이어 적는다(`0 → lh+sp → …`). reflow 가 문단마다
+    /// 0 을 적으면 저장본의 칸 사다리가 무너진다.
+    #[test]
+    fn on_demand_cell_paragraphs_stack_their_vpos_like_hangul() {
+        let mut core = cell_margin_ladder_core();
+        core.reflow_linesegs_on_demand();
+
+        let paragraphs = &outer_cell(&core).paragraphs;
+        let first = paragraphs[0].line_segs.last().expect("first row");
+        let second = paragraphs[1].line_segs.first().expect("second row");
+        assert_eq!(paragraphs[0].line_segs[0].vertical_pos, 0);
+        assert_eq!(
+            second.vertical_pos,
+            first.vertical_pos + first.line_height + first.line_spacing,
+            "둘째 문단은 첫 문단의 끝에서 이어진다"
+        );
+    }
+
+    /// 칸 안의 표도 on-demand reflow 가 내려간다. 종전엔 본문 문단의 표만 돌아 중첩 표의
+    /// 칸 문단은 저장 줄 없이 남았다.
+    #[test]
+    fn on_demand_reflow_descends_into_nested_tables() {
+        let mut core = cell_margin_ladder_core();
+        core.reflow_linesegs_on_demand();
+
+        let Control::Table(nested) = &outer_cell(&core).paragraphs[0].controls[0] else {
+            panic!("nested table");
+        };
+        assert!(
+            !nested.cells[0].paragraphs[0].line_segs.is_empty(),
+            "칸 안 표의 문단에도 줄이 있어야 한다"
+        );
+    }
+
+    /// needs_reflow_broadly: 저장 줄 없는 빈 문단 → true. 한/글은 빈 문단에도 글자 크기
+    /// 줄을 적는다 — 건너뛰면 저장본에 그 문단의 조판이 없다.
+    #[test]
+    fn needs_reflow_broadly_covers_empty_paragraph_without_linesegs() {
         let para = Paragraph::default();
-        assert!(!DocumentCore::needs_reflow_broadly(&para));
+        assert!(DocumentCore::needs_reflow_broadly(&para));
     }
 
     #[test]

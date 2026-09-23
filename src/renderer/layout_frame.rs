@@ -143,6 +143,33 @@ impl ParagraphBox {
             .with_derivable_origin(matches!(head_type, HeadType::None | HeadType::Outline))
     }
 
+    /// The box of a table-cell paragraph — the cell's inner width inset by the
+    /// resolved paragraph margins, in the cell's own coordinates.
+    ///
+    /// HWP stores a cell row the way it stores a body row: `column_start =
+    /// margin_left`, `segment_width = inner - margin_left - margin_right`. The
+    /// on-demand reflow gave cells `0..inner` instead, so a cell paragraph with
+    /// margins published the wrong origin and wrapped against a width HWP never
+    /// uses (ERICA 신청양식 셀: 한/글 `cs=300 sw=6464`, reflow `cs=0 sw=7066`).
+    ///
+    /// Built by **rounding** to HWPUNIT. `content_width_px` truncates through
+    /// `px_to_hwpunit`, and a width that started as HWPUNIT loses a unit on the
+    /// px round trip — the same `37531` against HWP's `37532` on most cells.
+    pub(crate) fn cell_for_style(
+        inner_width_px: f64,
+        style: Option<&crate::renderer::style_resolver::ResolvedParaStyle>,
+        dpi: f64,
+    ) -> Self {
+        use crate::model::style::HeadType;
+        let to_hwpunit = |px: f64| (px * crate::renderer::HWPUNIT_PER_INCH / dpi).round() as i32;
+        let inner = to_hwpunit(inner_width_px);
+        let margin_left = to_hwpunit(style.map(|s| s.margin_left).unwrap_or(0.0));
+        let margin_right = to_hwpunit(style.map(|s| s.margin_right).unwrap_or(0.0));
+        let head_type = style.map(|s| s.head_type).unwrap_or(HeadType::None);
+        Self::content(margin_left..inner.saturating_sub(margin_right))
+            .with_derivable_origin(matches!(head_type, HeadType::None | HeadType::Outline))
+    }
+
     /// Declare whether this box's **origin** may be published, or only its width.
     ///
     /// `false` is a **named blocker**, and it is temporary. The residual 0.78% of

@@ -23,7 +23,7 @@ use crate::renderer::style_resolver::ResolvedStyleSet;
 
 pub(crate) type CellReflowMetrics = (i32, i16, i16);
 
-fn recalculate_cell_paragraph_vpos(
+pub(crate) fn recalculate_cell_paragraph_vpos(
     paragraphs: &mut [Paragraph],
     start_para: usize,
     ignore_reset_at: Option<usize>,
