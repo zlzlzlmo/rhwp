@@ -1966,9 +1966,12 @@ fn is_synthetic_line_seg(ls: &LineSeg) -> bool {
     ls.tag & 0x80000000 != 0
 }
 
-/// 한 줄짜리 host 의 한컴 저장 줄보다 표 선언 틀(높이 + 바깥 여백)이 600HU(≈ 8px) 넘게 크면 그 차이 — 저장 줄을 짠
+/// 한 줄짜리 host 의 한컴 저장 줄보다 표 틀(높이 + 바깥 여백)이 600HU(≈ 8px) 넘게 크면 그 차이 — 저장 줄을 짠
 /// 뒤 표 크기만 바뀌었다(채움이 행을 키우고 host 줄은 그대로 저장). 한컴 저장본의 host 줄은 선언 틀 이상이다
 /// (캡션이 있으면 캡션만큼 더 크다) — [#2279 stale-lh]의 성장 방향.
+/// 나누지 않는 표의 높이는 선언과 칸 저장 줄이 그린 높이(`stored_layout_table_height_hu`) 중 큰 값이다 — 채움이 칸에 줄을 더 쓰고 선언은
+/// 그대로 둔 표도 한/글은 저장 줄대로 키운다(맥 한글 12.30: 74e0ad0b 신청서 28행 표 선언 846px · 칸 저장 줄 12칸이 선언을
+/// 넘어 964.6px — 제목 아래 남은 자리에 안 들어 다음 쪽으로 간다. host 줄로 흘리면 rhwp 는 제목 아래에 두고 112.8px 넘쳤다).
 fn stored_host_line_growth_hu(para: &Paragraph, table: &crate::model::table::Table) -> Option<i32> {
     let [seg] = para.line_segs.as_slice() else {
         return None;
@@ -1976,7 +1979,14 @@ fn stored_host_line_growth_hu(para: &Paragraph, table: &crate::model::table::Tab
     if is_synthetic_line_seg(seg) {
         return None;
     }
-    let frame = (table.common.height as i32)
+    // 쪽을 나누는 표(한컴 저장 host 줄 = 선언 — 2025 행정업무운영 편람 RowBreak 표)는 조각 흐름이 따로 잰다. 통째로 옮겨 가는
+    // 나누지 않는 표만 칸 저장 줄 높이를 표 높이로 본다.
+    let stored_layout = (table.page_break == crate::model::table::TablePageBreak::None)
+        .then(|| crate::renderer::height_measurer::stored_layout_table_height_hu(table))
+        .flatten()
+        .unwrap_or(0);
+    let height = (table.common.height as i32).max(stored_layout);
+    let frame = height
         .saturating_add(i32::from(table.outer_margin_top))
         .saturating_add(i32::from(table.outer_margin_bottom));
     let growth = frame.saturating_sub(seg.line_height);

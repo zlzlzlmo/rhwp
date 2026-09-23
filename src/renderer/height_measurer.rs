@@ -13,6 +13,63 @@ use crate::model::paragraph::{LineSeg, Paragraph};
 use crate::model::shape::{Caption, CommonObjAttr, HorzRelTo, TextWrap, VertAlign, VertRelTo};
 use crate::model::table::{Table, TablePageBreak};
 
+/// 한컴 저장 조판이 그린 표 높이(HU, 칸 간격 포함) — 행마다 «칸 선언 · (선언을 한 줄 400HU 넘게 넘는) 저장 줄 범위 + 여백» 중
+/// 큰 값의 합이다. 한/글은 저장 줄이 칸 선언을 넘는 표를 그 범위대로 키운다(맥 한글 12.30: e7ff70da 신청서 «기업명» 표 —
+/// 20·22행 체크 목록의 저장 줄 4200HU가 칸 선언 2695·237HU를 넘어 선언 829px보다 큰 933.8px).
+/// 행 선언 합이 이미 표 선언을 넘는 표(선언끼리 어긋난 표 — multiline_cell_zero_positions 계약)는 `None` 이다.
+pub(crate) fn stored_layout_table_height_hu(table: &crate::model::table::Table) -> Option<i32> {
+    let row_count = table.row_count as usize;
+    let row_max = |r: usize, height_of: &dyn Fn(&crate::model::table::Cell) -> i32| -> i32 {
+        table
+            .cells
+            .iter()
+            .filter(|c| c.row as usize == r && c.row_span == 1 && c.height < 0x8000_0000)
+            .map(height_of)
+            .max()
+            .unwrap_or(0)
+    };
+    let spacing = i32::from(table.cell_spacing) * row_count.saturating_sub(1) as i32;
+    let declared_rows_total: i32 = (0..row_count)
+        .map(|r| row_max(r, &|c| c.height as i32))
+        .sum::<i32>()
+        + spacing;
+    let common = table.common.height as i32;
+    // 비례 축소 면제 임계(#672 `TAC_SHRINK_THRESHOLD_RATIO` 2% · 최소 1px)와 같은 창.
+    let threshold = ((f64::from(common) * 0.02) as i32).max(75);
+    if declared_rows_total > common.saturating_add(threshold) {
+        return None;
+    }
+    let stored_rows_total: i32 = (0..row_count)
+        .map(|r| {
+            row_max(r, &|c| {
+                let stored = !c.paragraphs.is_empty()
+                    && c.paragraphs
+                        .iter()
+                        .all(|p| !crate::renderer::para_has_no_stored_line_segs(p))
+                    && crate::renderer::cell_vpos_ladder_is_intact(&c.paragraphs);
+                // 선언을 한 줄(400HU)보다 크게 넘는 저장 범위만 증언으로 친다 — 반올림·여백 잣대 차이는 한컴 조판의 성장이 아니다.
+                let extent = if stored {
+                    c.paragraphs
+                        .iter()
+                        .flat_map(|p| p.line_segs.iter())
+                        .map(|seg| seg.vertical_pos.saturating_add(seg.line_height))
+                        .max()
+                        .map_or(0, |hu| hu.saturating_add(c.stored_vertical_padding_hu()))
+                } else {
+                    0
+                };
+                if extent > (c.height as i32).saturating_add(400) {
+                    extent
+                } else {
+                    c.height as i32
+                }
+            })
+        })
+        .sum::<i32>()
+        + spacing;
+    Some(stored_rows_total)
+}
+
 /// A stored Square table fits between its host line and the next visible paragraph.
 pub(crate) fn stored_square_table_anchor_offset(
     cell: &crate::model::table::Cell,
@@ -3591,59 +3648,8 @@ impl HeightMeasurer {
         // 표 선언보다 크면 한컴 스스로 그만큼 그린 표다. 한/글은 그 표를 선언 높이로 누르지 않는다(맥 한글 12.30: e7ff70da 신청서
         // «기업명» 표 — 20·22행 체크 목록의 저장 줄 4200HU가 칸 선언 2695·237HU를 넘어 표가 선언 829px보다 큰 933.8px ·
         // 채움본 990.6px). 저장 조판이 선언 안인 표(exam_science 등 rhwp 측정만 큰 표)는 종전대로 선언까지 누른다.
-        let stored_rows_total: f64 = (0..row_count)
-            .map(|r| {
-                table
-                    .cells
-                    .iter()
-                    .filter(|c| c.row as usize == r && c.row_span == 1 && c.height < 0x8000_0000)
-                    .map(|c| {
-                        let declared = hwpunit_to_px(c.height as i32, self.dpi);
-                        let stored = !c.paragraphs.is_empty()
-                            && c.paragraphs
-                                .iter()
-                                .all(|p| !crate::renderer::para_has_no_stored_line_segs(p))
-                            && crate::renderer::cell_vpos_ladder_is_intact(&c.paragraphs);
-                        // 선언을 한 줄(400HU)보다 크게 넘는 저장 범위만 증언으로 친다 — 반올림·여백 잣대 차이는 한컴 조판의 성장이 아니다.
-                        let extent_hu = if stored {
-                            c.paragraphs
-                                .iter()
-                                .flat_map(|p| p.line_segs.iter())
-                                .map(|seg| seg.vertical_pos.saturating_add(seg.line_height))
-                                .max()
-                                .map(|hu| hu.saturating_add(c.stored_vertical_padding_hu()))
-                                .unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        if extent_hu > (c.height as i32).saturating_add(400) {
-                            hwpunit_to_px(extent_hu, self.dpi)
-                        } else {
-                            declared
-                        }
-                    })
-                    .fold(0.0f64, f64::max)
-            })
-            .sum::<f64>()
-            + cell_spacing * row_count.saturating_sub(1) as f64;
-        // 행 선언 합이 이미 표 선언을 넘는 표(선언끼리 어긋난 표)는 종전대로 표 선언까지 누른다 — 저장 조판 합은 선언이 서로
-        // 맞는 표에서만 목표가 된다(multiline_cell_zero_positions 계약).
-        let declared_rows_total: f64 = (0..row_count)
-            .map(|r| {
-                table
-                    .cells
-                    .iter()
-                    .filter(|c| c.row as usize == r && c.row_span == 1 && c.height < 0x8000_0000)
-                    .map(|c| hwpunit_to_px(c.height as i32, self.dpi))
-                    .fold(0.0f64, f64::max)
-            })
-            .sum::<f64>()
-            + cell_spacing * row_count.saturating_sub(1) as f64;
-        let shrink_target = if declared_rows_total <= common_h + shrink_threshold {
-            common_h.max(stored_rows_total)
-        } else {
-            common_h
-        };
+        let shrink_target = stored_layout_table_height_hu(table)
+            .map_or(common_h, |hu| common_h.max(hwpunit_to_px(hu, self.dpi)));
         // [편집 세션] TAC 비례 축소(아래 분기)는 저장 시점 형상 전용 보정이다 —
         // 편집으로 셀이 자란 성장분까지 선언높이로 눌러 다른 행의 몫을 잠식한다
         // (셀 Enter 재현: 표가 선언 높이에 고정된 채 행 경계만 위로 밀림).
@@ -5260,6 +5266,44 @@ mod tests {
             col_span: 1,
             ..Default::default()
         }
+    }
+
+    /// 칸 저장 줄이 칸 선언을 한 줄(400HU) 넘게 넘으면 그 행은 저장 줄 범위로 센다 — 채움이 칸에 줄을 더 쓴 표(74e0ad0b)를
+    /// 한/글은 그만큼 키운다. 행 선언 합이 표 선언을 넘는 표는 증언으로 쓰지 않는다.
+    #[test]
+    fn stored_layout_table_height_counts_cells_whose_stored_lines_outgrow_the_declaration() {
+        let seg = |vpos: i32| crate::model::paragraph::LineSeg {
+            vertical_pos: vpos,
+            line_height: 1000,
+            ..Default::default()
+        };
+        let cell =
+            |row: u16, lines: Vec<crate::model::paragraph::LineSeg>| crate::model::table::Cell {
+                row,
+                row_span: 1,
+                col_span: 1,
+                height: 1000,
+                paragraphs: vec![crate::model::paragraph::Paragraph {
+                    line_segs: lines,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+        let mut table = make_table_with_cells(
+            2,
+            1,
+            vec![cell(0, vec![seg(0)]), cell(1, vec![seg(0), seg(1600)])],
+        );
+        table.common.height = 2000;
+        assert_eq!(stored_layout_table_height_hu(&table), Some(1000 + 2600));
+
+        // 한 줄 안쪽의 넘침(여백·반올림 잣대 차이)은 선언을 그대로 센다.
+        table.cells[1].paragraphs[0].line_segs = vec![seg(0), seg(300)];
+        assert_eq!(stored_layout_table_height_hu(&table), Some(2000));
+
+        // 행 선언 합(2000)이 표 선언(1500)보다 2% 넘게 큰 표는 증언이 아니다.
+        table.common.height = 1500;
+        assert_eq!(stored_layout_table_height_hu(&table), None);
     }
 
     #[test]
