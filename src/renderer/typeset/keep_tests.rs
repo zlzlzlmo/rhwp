@@ -112,3 +112,15 @@ fn keep_lines_moves_a_paragraph_that_would_split() {
         );
     }
 }
+
+#[test]
+fn keep_with_next_needs_the_next_paragraphs_first_fragment_under_its_own_protection() {
+    // B에 외톨이줄 보호가 있으면 B의 첫 조각은 두 줄이다 — F=39는 한 줄만 들어가는 자리라 제목이 B와 함께 넘어간다
+    // (맥 한글 12.30: 예창패 채움 «◦ 소비자…» + 두 줄 문단).
+    let core = build(39, r#"{"keepWithNext":true}"#, r#"{"widowOrphan":true}"#);
+    assert_eq!((page_of(&core, 39), page_of(&core, 40)), (1, 1));
+    // F=38은 두 줄이 들어간다 — 제목은 그대로, B는 2/5로 갈린다.
+    let core = build(38, r#"{"keepWithNext":true}"#, r#"{"widowOrphan":true}"#);
+    assert_eq!(page_of(&core, 38), 0);
+    assert_eq!(placement(&core, 39), vec![(0, 2), (1, 5)]);
+}

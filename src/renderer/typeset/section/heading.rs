@@ -8,8 +8,12 @@ impl TypesetEngine {
     /// 맥 한글 12.30 쓸기 실측(채움 줄 34~42 · 한 줄 제목 + 7줄 본문, 2026-09-23): 본문 첫 줄이 이 쪽에 들어가면
     /// 본문이 갈려도 제목은 그대로다(1/6 분할까지 같음). 본문 첫 줄이 못 들어가면 제목이 본문과 함께 다음 쪽으로
     /// 간다 — 보호가 없으면 제목만 쪽 끝에 홀로 남는 자리다.
-    /// 사슬(«다음 문단과 함께»가 잇달아 걸린 문단들)은 앞머리에서 통째로 잰다 — 사슬 전부 + 마지막 다음 문단의 첫 줄.
-    /// 사슬이 한 쪽보다 크면 넘겨도 소용없으니 그대로 둔다. 이 쪽에 이미 무엇이 있을 때만 넘긴다.
+    /// 사슬(«다음 문단과 함께»가 잇달아 걸린 문단들)은 **짝마다** 잰다 — 사슬 머리부터 쌓아 가다 어느 문단의 첫 조각이
+    /// 이 쪽에 못 서면 그 앞 문단이 따라 넘어가고, 그 앞도 따라가 결국 머리부터 넘어간다(맥 한글 12.30: 초창패 채움
+    /// «< 사업비 집행 계획 >» → 안내 표 → 빈 문단 → 표 사슬이 한 쪽보다 길어도 캡션이 표와 함께 다음 쪽).
+    /// 첫 조각은 그 문단의 보호 규칙이 정한다 — 문단 보호면 통째, 외톨이줄 보호면 두 줄(세 줄 이하는 통째)이다(맥 한글:
+    /// 예창패 채움 «◦ 소비자…» 다음 두 줄 문단은 첫 줄만 들어가는 자리에서 소제목이 함께 넘어간다).
+    /// 넘어가도 새 쪽에 그 조각까지 못 서면 그대로 둔다. 이 쪽에 이미 무엇이 있을 때만 넘긴다.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn keep_paragraph_with_next(
         &self,
@@ -20,12 +24,8 @@ impl TypesetEngine {
         composed: &[ComposedParagraph],
         styles: &ResolvedStyleSet,
     ) {
-        let keeps = |p: &Paragraph| {
-            styles
-                .para_styles
-                .get(p.para_shape_id as usize)
-                .is_some_and(|style| style.keep_with_next)
-        };
+        let style_of = |p: &Paragraph| styles.para_styles.get(p.para_shape_id as usize);
+        let keeps = |p: &Paragraph| style_of(p).is_some_and(|style| style.keep_with_next);
         if !keeps(para)
             || st.current_items.is_empty()
             || st.col_count != 1
@@ -44,16 +44,20 @@ impl TypesetEngine {
         let mut j = para_idx;
         while let Some(p) = paragraphs.get(j) {
             let fmt = self.format_paragraph(p, composed.get(j), styles, Some(col_w));
-            if keeps(p) && j + 1 < paragraphs.len() {
-                need += fmt.total_height;
-                j += 1;
-                continue;
+            if j > para_idx {
+                let first = fmt.spacing_before + first_fragment_height(&fmt, style_of(p));
+                if st.current_height + need + first > st.available_height() {
+                    if need + first <= st.base_available_height() {
+                        st.advance_column_or_new_page();
+                    }
+                    return;
+                }
             }
-            need += fmt.spacing_before + fmt.line_heights.first().copied().unwrap_or(0.0);
-            break;
-        }
-        if need <= st.base_available_height() && st.current_height + need > st.available_height() {
-            st.advance_column_or_new_page();
+            if !(keeps(p) && j + 1 < paragraphs.len()) {
+                return;
+            }
+            need += fmt.total_height;
+            j += 1;
         }
     }
 
@@ -151,4 +155,23 @@ impl TypesetEngine {
             }
         }
     }
+}
+
+/// 다음 문단이 이 쪽에 세워야 하는 첫 조각의 높이(마지막 줄 뒤 간격 제외) — 문단 보호면 통째, 외톨이줄 보호면
+/// 두 줄(세 줄 이하는 갈 수 없으니 통째), 보호가 없으면 첫 줄.
+fn first_fragment_height(
+    fmt: &super::super::paragraph::metrics::FormattedParagraph,
+    style: Option<&crate::renderer::style_resolver::ResolvedParaStyle>,
+) -> f64 {
+    let n = fmt.line_heights.len();
+    if n == 0 {
+        return 0.0;
+    }
+    let lines = match style {
+        Some(s) if s.keep_lines => n,
+        Some(s) if s.widow_orphan && n <= 3 => n,
+        Some(s) if s.widow_orphan => 2,
+        _ => 1,
+    };
+    fmt.line_advances_sum(0..lines - 1) + fmt.line_heights[lines - 1]
 }
