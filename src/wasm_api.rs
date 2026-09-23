@@ -2476,6 +2476,17 @@ impl HwpDocument {
     }
 
     /// 강제 쪽 나누기 삽입 (Ctrl+Enter)
+    /// 문단 앞 «쪽 나눔»(문단 머리 비트)을 끈다. 끌 것이 없으면 false.
+    #[wasm_bindgen(js_name = clearPageBreakAtParagraphStart)]
+    pub fn clear_page_break_at_paragraph_start(
+        &mut self,
+        section_idx: u32,
+        para_idx: u32,
+    ) -> Result<bool, JsValue> {
+        self.clear_page_break_at_paragraph_start_native(section_idx as usize, para_idx as usize)
+            .map_err(|e| e.into())
+    }
+
     #[wasm_bindgen(js_name = insertPageBreak)]
     pub fn insert_page_break(
         &mut self,

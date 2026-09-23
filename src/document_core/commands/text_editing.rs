@@ -3854,6 +3854,48 @@ impl DocumentCore {
         Ok(true)
     }
 
+    /// 문단 앞 «쪽 나눔»(문단 머리 비트 0x04)을 끈다 — `mark_page_break_at_paragraph_start_native`의 짝.
+    /// 남는 비트(단·구역·다단)의 유효 분류는 파서와 같은 순서로 다시 정한다. 끌 비트가 없으면 false.
+    pub fn clear_page_break_at_paragraph_start_native(
+        &mut self,
+        section_idx: usize,
+        para_idx: usize,
+    ) -> Result<bool, HwpError> {
+        use crate::model::paragraph::ColumnBreakType;
+        let section = self.document.sections.get(section_idx).ok_or_else(|| {
+            HwpError::RenderError(format!("구역 인덱스 {} 범위 초과", section_idx))
+        })?;
+        let para = section
+            .paragraphs
+            .get(para_idx)
+            .ok_or_else(|| HwpError::RenderError(format!("문단 인덱스 {} 범위 초과", para_idx)))?;
+        if para.column_type != ColumnBreakType::Page && para.raw_break_type & 0x04 == 0 {
+            return Ok(false);
+        }
+        self.document.sections[section_idx].raw_stream = None;
+        let para = &mut self.document.sections[section_idx].paragraphs[para_idx];
+        para.raw_break_type &= !0x04;
+        para.column_type = if para.raw_break_type & 0x08 != 0 {
+            ColumnBreakType::Column
+        } else if para.raw_break_type & 0x01 != 0 {
+            ColumnBreakType::Section
+        } else if para.raw_break_type & 0x02 != 0 {
+            ColumnBreakType::MultiColumn
+        } else {
+            ColumnBreakType::None
+        };
+        para.page_break_synthesized = false;
+
+        self.recompose_section(section_idx);
+        self.paginate_if_needed();
+        self.invalidate_page_tree_cache();
+        self.event_log.push(DocumentEvent::ParaFormatChanged {
+            section: section_idx,
+            para: para_idx,
+        });
+        Ok(true)
+    }
+
     /// CLI/MCP의 문단 앞 단 나눔 속성 설정. 사용자 분할 명령과 구분한다.
     /// 쪽/단은 직교하는 저장 비트이며 유효 조판 분류는 파서와 같은 Page 우선이다.
     pub fn mark_column_break_at_paragraph_start_native(
