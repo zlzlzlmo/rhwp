@@ -1652,6 +1652,43 @@ impl HeightMeasurer {
 
     /// 문단들 내 비-인라인(treat_as_char가 아닌) 그림/도형의 높이 합계를 측정한다.
     /// LINE_SEG에는 비-인라인 컨트롤 높이가 포함되지 않으므로 별도 합산이 필요하다.
+    /// [Task #1763] 칸 마지막 문단 마지막 줄의 trailing 줄간격(px) — 여러 문단 칸이고 행 단위 쪽나눔 표가 아닐 때만.
+    /// 칸 높이 측정이 그 간격을 넣는 갈래(#874/#1086 보존)에서 «초과가 그것 때문뿐인가»를 재는 데 쓴다.
+    fn cell_last_line_trailing_px(
+        &self,
+        cell: &crate::model::table::Cell,
+        table: &crate::model::table::Table,
+        styles: &ResolvedStyleSet,
+        cell_inner_width: f64,
+    ) -> f64 {
+        if cell.text_direction != 0
+            || cell.paragraphs.len() <= 1
+            || matches!(table.page_break, TablePageBreak::RowBreak)
+        {
+            return 0.0;
+        }
+        cell.paragraphs
+            .last()
+            .map(|p| {
+                let mut comp = crate::renderer::composer::compose_paragraph_in_context(p, styles);
+                crate::renderer::composer::recompose_horizontal_cell_lines_for_width(
+                    &mut comp,
+                    p,
+                    cell_inner_width,
+                    styles,
+                    self.dpi,
+                    self.legacy_hwp3_stored_geometry,
+                    self.is_native_hwp5,
+                    &self.single_line_overflow_cache,
+                );
+                comp.lines
+                    .last()
+                    .map(|l| hwpunit_to_px(l.line_spacing, self.dpi))
+                    .unwrap_or(0.0)
+            })
+            .unwrap_or(0.0)
+    }
+
     fn measure_non_inline_controls_height(&self, paragraphs: &[Paragraph]) -> f64 {
         let mut total = 0.0;
         for para in paragraphs {
@@ -2905,39 +2942,16 @@ impl HeightMeasurer {
                 // 초과하는 기존 보존 케이스(aift/KTX)는 조건 미충족으로 불변.
                 // RowBreak(행 단위 쪽나눔) 표는 TAC 여부와 무관하게 clamp 제외 —
                 // 분할 배치가 trailing 포함 측정에 정합 (rowbreak-problem-pages p11~13).
-                let cell_last_trailing_ls = if cell.text_direction == 0
-                    && !has_nested_table_in_cell
-                    && cell.paragraphs.len() > 1
-                    && !matches!(table.page_break, TablePageBreak::RowBreak)
-                {
-                    cell.paragraphs
-                        .last()
-                        .map(|p| {
-                            let mut comp =
-                                crate::renderer::composer::compose_paragraph_in_context(p, styles);
-                            crate::renderer::composer::recompose_horizontal_cell_lines_for_width(
-                                &mut comp,
-                                p,
-                                cell_inner_width,
-                                styles,
-                                self.dpi,
-                                self.legacy_hwp3_stored_geometry,
-                                self.is_native_hwp5,
-                                &self.single_line_overflow_cache,
-                            );
-                            comp.lines
-                                .last()
-                                .map(|l| hwpunit_to_px(l.line_spacing, self.dpi))
-                                .unwrap_or(0.0)
-                        })
-                        .unwrap_or(0.0)
+                let cell_last_trailing_ls = if !has_nested_table_in_cell {
+                    self.cell_last_line_trailing_px(cell, table, styles, cell_inner_width)
                 } else {
                     0.0
                 };
                 let required_height = if cell_h_px > 0.0
                     && required_height > cell_h_px
                     && cell_last_trailing_ls > 0.0
-                    && content_height - cell_last_trailing_ls + total_pad <= cell_h_px
+                    && content_height - cell_last_trailing_ls + total_pad
+                        <= cell_h_px + CELL_TRAILING_CLAMP_ROUNDING_PX
                 {
                     cell_h_px
                 } else {
@@ -3501,6 +3515,33 @@ impl HeightMeasurer {
                         .max(nested_bottom)
                         .max(wrap_bottom);
                     content_height + pad_top + pad_bottom
+                };
+                // [Task #1763] 걸친 칸도 같다 — 초과분이 마지막 줄 trailing 줄간격 때문뿐이면 선언 높이를 지킨다.
+                // 한 행 칸에만 걸려 있어 걸친 칸이 선언을 넘겨 행을 키웠다(맥 한글 12.30: 74e0ad0b 신청서 담당자 연락처
+                // 칸 — 문단 셋, 선언 3760HU · trailing 포함 3882HU, 한/글 3756 · rhwp 3880, 표가 10.9px 길어 쪽 바닥을 넘었다).
+                let has_nested_table_in_cell = cell
+                    .paragraphs
+                    .iter()
+                    .any(|p| p.controls.iter().any(|c| matches!(c, Control::Table(_))));
+                let cell_h_px = if cell.height < 0x80000000 {
+                    hwpunit_to_px(cell.height as i32, self.dpi)
+                } else {
+                    0.0
+                };
+                let cell_last_trailing_ls = if !has_nested_table_in_cell {
+                    self.cell_last_line_trailing_px(cell, table, styles, cell_inner_width)
+                } else {
+                    0.0
+                };
+                let required_height = if cell_h_px > 0.0
+                    && required_height > cell_h_px
+                    && cell_last_trailing_ls > 0.0
+                    && required_height - cell_last_trailing_ls
+                        <= cell_h_px + CELL_TRAILING_CLAMP_ROUNDING_PX
+                {
+                    cell_h_px
+                } else {
+                    required_height
                 };
                 let combined: f64 = (r..r + span).map(|i| row_heights[i]).sum();
                 if required_height > combined {
@@ -4493,6 +4534,10 @@ impl MeasuredTable {
         )
     }
 }
+
+/// [Task #1763] trailing 줄간격 clamp 의 반올림 허용(px) — 여백 141HU×2 와 줄 높이 합이 선언보다 몇 HU 크게 나오는
+/// 칸(맥 한글 12.30: 74e0ad0b 직접생산여부 칸 2682HU vs 선언 2680HU — 한/글은 선언 그대로)을 놓치지 않는다.
+const CELL_TRAILING_CLAMP_ROUNDING_PX: f64 = 0.5;
 
 /// 블록 단위 보호 분할의 최대 rowspan. 이 값을 초과하는 큰 rowspan 묶음은
 /// 행 단위 분할을 허용하여 페이지 잔여 공간을 활용한다 (Task #398 v2, HanCom-compat).
