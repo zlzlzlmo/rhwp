@@ -1417,3 +1417,85 @@ fn insert_column_inherits_shape_when_row_has_only_merged_cells() {
         assert_inherited(cell, "insert_column");
     }
 }
+
+/// 예비창업패키지 공식 양식 «일반현황» 표(한/글 저장본 실측 칸 목록). 행마다 칸 폭 합이 표 폭 47983 이다.
+/// 한 칸짜리 열 근거가 c0·c1·c5·c7 뿐이라 기본 열 격자(`base_grid_column_widths`)에는 구멍이 난다.
+fn yechangpae_general_status_table() -> Table {
+    const ROWS: &[&[(u16, u16, HwpUnit)]] = &[
+        &[(0, 3, 10651), (3, 5, 37332)],
+        &[(0, 3, 10651), (3, 5, 37332)],
+        &[(0, 3, 10651), (3, 2, 13428), (5, 1, 10534), (6, 2, 13370)],
+        &[(0, 8, 47983)],
+        &[
+            (0, 1, 3182),
+            (1, 1, 6810),
+            (2, 2, 8741),
+            (4, 3, 21815),
+            (7, 1, 7435),
+        ],
+        &[
+            (0, 1, 3182),
+            (1, 1, 6810),
+            (2, 2, 8741),
+            (4, 3, 21815),
+            (7, 1, 7435),
+        ],
+        &[
+            (0, 1, 3182),
+            (1, 1, 6810),
+            (2, 2, 8741),
+            (4, 3, 21815),
+            (7, 1, 7435),
+        ],
+        &[
+            (0, 1, 3182),
+            (1, 1, 6810),
+            (2, 2, 8741),
+            (4, 3, 21815),
+            (7, 1, 7435),
+        ],
+        &[
+            (0, 1, 3182),
+            (1, 1, 6810),
+            (2, 2, 8741),
+            (4, 3, 21815),
+            (7, 1, 7435),
+        ],
+    ];
+    let mut cells = Vec::new();
+    for (r, row) in ROWS.iter().enumerate() {
+        for &(col, span, width) in row.iter() {
+            let mut cell = Cell::new_empty(col, r as u16, width, 2129, 1);
+            cell.col_span = span;
+            cells.push(cell);
+        }
+    }
+    let mut table = Table {
+        row_count: ROWS.len() as u16,
+        col_count: 8,
+        row_sizes: ROWS.iter().map(|row| row.len() as i16).collect(),
+        border_fill_id: 1,
+        cells,
+        ..Default::default()
+    };
+    table.common.width = 47983;
+    table.common.height = 2129 * ROWS.len() as HwpUnit;
+    table.rebuild_grid();
+    table
+}
+
+/// 행 삭제는 표 폭을 바꾸지 않는다(한/글). 종전엔 `update_ctrl_dimensions` 가 구멍 난 기본 열 격자 합으로
+/// 표 폭을 다시 적어 47983 → 35161 로 줄였고, 렌더가 그 폭으로 격자를 줄여 공식 양식의 일반현황 표가
+/// 찌그러졌다(09-23 한컴독스 대조: 한/글은 온폭, rhwp 468.8px).
+#[test]
+fn test_delete_row_keeps_table_width_when_base_grid_has_holes() {
+    let mut table = yechangpae_general_status_table();
+    for row in [8, 7, 6] {
+        table.delete_row(row).unwrap();
+    }
+    assert_eq!(table.row_count, 6);
+    assert_eq!(
+        table.common.width, 47983,
+        "행을 지워도 표 폭은 행별 칸 폭 합(47983)이다"
+    );
+}

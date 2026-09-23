@@ -1077,7 +1077,15 @@ impl Table {
     ///   [12..16] width, [16..20] height, [20..24] z_order,
     ///   [24..32] outer_margin (i16×4), [32..36] instance_id
     pub fn update_ctrl_dimensions(&mut self) {
-        let total_width: HwpUnit = self.base_grid_column_widths().iter().sum();
+        // 표 폭은 기본 열 격자 합과 «행별 칸 폭 합»의 큰 쪽이다. HWP 는 행마다 칸 폭 합이 표 폭이
+        // 되도록 저장한다. 한 칸짜리 열 근거가 모자란 표(병합이 많은 일반현황 표)는 기본 격자에
+        // 구멍이 나 합이 작다 — 그 합으로 적으면 행을 지우기만 해도 47983 → 35161 로 표가 줄고,
+        // 렌더가 줄어든 폭으로 격자를 좁힌다(한/글은 온폭).
+        let total_width: HwpUnit = self
+            .base_grid_column_widths()
+            .iter()
+            .sum::<HwpUnit>()
+            .max(self.max_declared_row_width());
         let total_height: HwpUnit = self.get_row_heights().iter().sum();
         // (1) serialize source — raw_ctrl_data bytes (HWP 직렬화 시 사용).
         // HWPX 파스 문서처럼 raw 가 없으면 건너뛴다 — 그 경우 직렬화기가
@@ -1093,6 +1101,21 @@ impl Table {
         // dual maintenance 가 필수 — 한쪽만 갱신 시 stale 결함.
         self.common.width = total_width;
         self.common.height = total_height;
+    }
+
+    /// 행마다 그 행에 닻을 둔 칸들의 저장 폭 합 중 최댓값 — 위 행에서 내려온 병합 칸이 덮는
+    /// 행은 합이 작으므로 최댓값이 표 폭의 증거다.
+    fn max_declared_row_width(&self) -> HwpUnit {
+        let mut sums = vec![0u64; usize::from(self.row_count)];
+        for cell in &self.cells {
+            if let Some(sum) = sums.get_mut(usize::from(cell.row)) {
+                *sum += u64::from(cell.width);
+            }
+        }
+        sums.into_iter()
+            .max()
+            .unwrap_or(0)
+            .min(u64::from(HwpUnit::MAX)) as HwpUnit
     }
 
     pub(crate) fn sync_ctrl_height(&mut self, height: HwpUnit) {
