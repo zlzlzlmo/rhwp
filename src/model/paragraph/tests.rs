@@ -765,6 +765,56 @@ fn test_merge_from_empty_text_with_control() {
 }
 
 #[test]
+fn test_merge_from_drops_char_shape_left_past_the_end() {
+    // 구역 머리 문단(컨트롤 셋만 남기고 글자·표를 비움)에 표 둘 문단을 붙인다 — 도약 양식 목차 비우기.
+    // 비운 글자의 모양 구간(24→49)이 남아 있어도 병합 뒤 구간 위치는 순증가여야 하고, 붙인 표 글자는
+    // 제 모양(22)을 가져야 한다. 종전: [(0,11),(24,49),(24,22)] — 한/글이 49(15pt)를 써서 표지가 밀렸다.
+    let mut head = Paragraph {
+        text: String::new(),
+        char_count: 25,
+        controls: vec![
+            make_picture_control(),
+            make_picture_control(),
+            make_picture_control(),
+        ],
+        ctrl_data_records: vec![None, None, None],
+        char_shapes: vec![
+            CharShapeRef {
+                start_pos: 0,
+                char_shape_id: 11,
+            },
+            CharShapeRef {
+                start_pos: 24,
+                char_shape_id: 49,
+            },
+        ],
+        has_para_text: true,
+        ..Default::default()
+    };
+    let cover = Paragraph {
+        text: String::new(),
+        char_count: 17,
+        controls: vec![make_picture_control(), make_picture_control()],
+        ctrl_data_records: vec![None, None],
+        char_shapes: vec![CharShapeRef {
+            start_pos: 0,
+            char_shape_id: 22,
+        }],
+        has_para_text: true,
+        ..Default::default()
+    };
+
+    head.merge_from(&cover);
+
+    let runs: Vec<(u32, u32)> = head
+        .char_shapes
+        .iter()
+        .map(|cs| (cs.start_pos, cs.char_shape_id))
+        .collect();
+    assert_eq!(runs, vec![(0, 11), (24, 22)]);
+}
+
+#[test]
 fn test_merge_from_text_only_control_mask_bits() {
     // other 문단이 controls는 없고 tab/개행만 가진 경우에도 control_mask의
     // 텍스트 기반 비트(0x9=tab, 0xA=개행)가 병합 결과에 반영돼야 한다.

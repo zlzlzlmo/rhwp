@@ -1629,6 +1629,13 @@ impl Paragraph {
         }
 
         // 3. char_shapes 결합 (other의 start_pos에 utf16_end 추가)
+        // self 끝(utf16_end)에서 시작하는 구간은 덮는 글자가 없다 — 지운 글자의 모양이 남은 것이다.
+        // 그대로 두고 other 구간을 붙이면 같은 위치에 구간이 둘 생기는데(HWP 는 순증가여야 한다),
+        // 한/글은 앞 구간을 쓴다. 목차 글자·표를 비운 구역 머리 문단에 표지 문단을 붙이면 지운
+        // 15pt 구간이 표 글자에 걸려 표지 전체가 24pt(15pt × 160%) 밀렸다(한컴독스 실측).
+        if !other.char_shapes.is_empty() {
+            //MUT self.char_shapes.retain(|cs| cs.start_pos < utf16_end);
+        }
         for cs in &other.char_shapes {
             let new_pos = cs.start_pos + utf16_end;
             // 중복 위치에 같은 스타일이면 스킵
