@@ -30,6 +30,17 @@ pub(in crate::renderer::typeset) fn place(
         styles,
         is_last_in_section,
     } = input;
+    // 미뤄진 표 앞 쪽에 머리 줄을 채운 문단은 표 뒤에서 나머지 줄만 잇는다(`prefill_paragraph_head`).
+    if let Some(start_line) = st.take_prefilled_head(para_idx) {
+        let line_count = fmt.line_count();
+        st.append_item(crate::renderer::pagination::PageItem::PartialParagraph {
+            para_index: para_idx,
+            start_line,
+            end_line: line_count,
+        });
+        st.advance_flow_by(fmt.line_advances_sum(start_line..line_count) + fmt.spacing_after);
+        return;
+    }
     let paragraph::FitBudget {
         strict_after_empty_host_float,
         layout_drift_safety_px,

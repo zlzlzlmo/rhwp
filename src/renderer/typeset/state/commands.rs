@@ -76,6 +76,22 @@ impl TypesetState {
     pub(in crate::renderer::typeset) fn mark_prefilled_paragraph(&mut self, index: usize) {
         self.data.prefilled_paras.insert(index);
     }
+    pub(in crate::renderer::typeset) fn mark_prefilled_head(&mut self, index: usize, next_line: usize) {
+        self.data.prefilled_heads.insert(index, next_line);
+    }
+    pub(in crate::renderer::typeset) fn take_prefilled_head(&mut self, index: usize) -> Option<usize> {
+        self.data.prefilled_heads.remove(&index)
+    }
+    pub(in crate::renderer::typeset) fn mark_composed_host_deferred(&mut self, index: usize) {
+        self.data.composed_host_deferred = Some(index);
+    }
+    pub(in crate::renderer::typeset) fn take_composed_host_deferred(&mut self, index: usize) -> bool {
+        if self.data.composed_host_deferred == Some(index) {
+            self.data.composed_host_deferred = None;
+            return true;
+        }
+        false
+    }
     pub(in crate::renderer::typeset) fn add_visible_float_exclusion(
         &mut self,
         exclusion: VisibleFloatExclusion,

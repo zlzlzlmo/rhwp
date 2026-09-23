@@ -12261,7 +12261,11 @@ impl LayoutEngine {
                                 next_first.vertical_pos > host_first.vertical_pos
                                     && (next_ladder_y - y_offset).abs() <= 0.5
                             });
-                    if gap > 0 && !ladder_already_at_flow {
+                    // rhwp 가 짠 host 줄을 앞 쪽에 먼저 냈으면(typeset `prefill_before_deferred_table`) 그 줄 간격도 거기
+                    // 몫이다 — 표 뒤에서 다시 띄우지 않는다(맥 한글 12.30: 도약 채움 7쪽 머리 표 바로 아래 제목).
+                    let composed_host_pre_emitted = self.pre_emitted_host_paras.borrow().contains(&para_index)
+                        && crate::renderer::para_has_no_stored_line_segs(para);
+                    if gap > 0 && !ladder_already_at_flow && !composed_host_pre_emitted {
                         y_offset += hwpunit_to_px(gap, self.dpi);
                     }
                 }

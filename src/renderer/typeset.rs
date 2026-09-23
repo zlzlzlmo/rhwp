@@ -302,6 +302,8 @@ struct HostSpacing {
     /// 흐름 전진에만 계상하고 fit 에서 제외한다 (#2195 stage58: 86712 구분선 간격
     /// 한글 괘선 실측 vs hwpspec 178쪽 핀(#1086) 동시 충족).
     after_for_fit: f64,
+    /// `after`가 담은 host 줄 간격 — host 줄을 앞 쪽에 먼저 낸 표(`prefill_before_deferred_table`)는 표 뒤에서 뺀다.
+    host_line_spacing: f64,
 }
 
 /// 단일 패스 조판 엔진
@@ -1979,6 +1981,48 @@ fn stored_host_line_growth_hu(para: &Paragraph, table: &crate::model::table::Tab
         .saturating_add(i32::from(table.outer_margin_bottom));
     let growth = frame.saturating_sub(seg.line_height);
     (growth > 600).then_some(growth)
+}
+
+/// 미뤄지는 표 앞 선행 채움에서 통째로 안 드는 글 문단은 드는 머리 줄만 이 쪽에 두고, 나머지는 표 뒤에서 잇는다
+/// (`take_prefilled_head`) — 맥 한글 12.30: 도약 채움 6쪽 바닥 세 줄 문단이 두 줄 · 7쪽 표 뒤 한 줄.
+/// 문단 보호면 통째로 넘기고, 외톨이줄 보호면 쪽 양 끝 두 줄을 지킨다(`ParagraphKeep` 와 같은 규칙).
+fn prefill_paragraph_head(
+    st: &mut TypesetState,
+    para_idx: usize,
+    para: &Paragraph,
+    fmt: &paragraph::metrics::FormattedParagraph,
+    styles: &ResolvedStyleSet,
+) {
+    let line_count = fmt.line_count();
+    let style = styles.para_styles.get(para.para_shape_id as usize);
+    if line_count < 2 || style.is_some_and(|s| s.keep_lines) {
+        return;
+    }
+    let room = st.available_height() - st.current_height - fmt.spacing_before;
+    let mut head = 0;
+    let mut used = 0.0;
+    while head < line_count && used + fmt.line_heights[head] <= room {
+        used += fmt.line_advance(head);
+        head += 1;
+    }
+    if style.is_some_and(|s| s.widow_orphan) {
+        if line_count - head == 1 {
+            head -= 1;
+        }
+        if head < 2 {
+            head = 0;
+        }
+    }
+    if head == 0 || head >= line_count {
+        return;
+    }
+    st.append_item(PageItem::PartialParagraph {
+        para_index: para_idx,
+        start_line: 0,
+        end_line: head,
+    });
+    st.advance_flow_by(fmt.spacing_before + fmt.line_advances_sum(0..head));
+    st.mark_prefilled_head(para_idx, head);
 }
 
 /// [#6409] HWPX 가 글자처럼 취급 표를 쪽높이급 **한 줄**로 저장했으면, leftover
@@ -5143,13 +5187,36 @@ impl TypesetEngine {
         if st.col_count != 1 || st.current_items.is_empty() {
             return;
         }
+        // 🔴 rhwp 가 다시 짠 host 줄(합성 — 채움·편집 뒤)에는 «같은 쪽 연속»을 증언할 저장 사다리가 없다. 그 문서는
+        // 높이 fit 만으로 채우고, 셀 단위로 나누는 표도 같게 넘긴다 — 맥 한글 12.30: 도약 채움 6쪽 캡션 아래 host 줄과
+        // 빈 문단이 남고 «셀 단위로 나눔» 표만 7쪽 머리(여러 줄 문단은 쪽 끝에서 갈리고 나머지가 표 뒤로 간다).
+        let composed_host = crate::renderer::para_has_no_stored_line_segs(para);
         if !para_has_visible_text(para)
             || !crate::renderer::float_placement::is_para_topbottom_float(&table.common)
-            || !matches!(
-                table.page_break,
-                crate::model::table::TablePageBreak::RowBreak
-            )
+            || !match table.page_break {
+                crate::model::table::TablePageBreak::RowBreak => true,
+                crate::model::table::TablePageBreak::CellBreak => composed_host,
+                crate::model::table::TablePageBreak::None => false,
+            }
         {
+            return;
+        }
+        if composed_host {
+            if signed_hwpunit(table.common.vertical_offset) < 0
+                || !self.pre_emit_visible_rowbreak_host_text(st, para_idx, para, composed_all, styles)
+            {
+                return;
+            }
+            st.mark_composed_host_deferred(para_idx);
+            self.prefill_following_paragraphs(
+                st,
+                para_idx,
+                None,
+                paragraphs_all,
+                composed_all,
+                styles,
+                MAX_PREFILL,
+            );
             return;
         }
         let Some(host_seg) = para.line_segs.iter().find(|ls| !is_synthetic_line_seg(ls)) else {
@@ -5187,35 +5254,64 @@ impl TypesetEngine {
         if host_vpos < 0 || host_vpos > body_h_hu {
             return; // 누적좌표 등 — 저장 flow 로 같은 쪽 여부를 알 수 없음
         }
+        if !pre_emit_before_vpos_check
+            && !self.pre_emit_visible_rowbreak_host_text(st, para_idx, para, composed_all, styles)
+        {
+            return;
+        }
+        self.prefill_following_paragraphs(
+            st,
+            para_idx,
+            Some((host_vpos, body_h_hu)),
+            paragraphs_all,
+            composed_all,
+            styles,
+            MAX_PREFILL,
+        );
+    }
+
+    /// 선행 채움 후보 루프 — `stored_page` 가 있으면 저장 flow 가 host 와 같은 쪽 연속임을 인코딩한 문단만,
+    /// 없으면(rhwp 가 짠 host) 높이 fit 만으로 채운다. 컨트롤이 있는 문단에서 멈춘다.
+    #[allow(clippy::too_many_arguments)]
+    fn prefill_following_paragraphs(
+        &self,
+        st: &mut TypesetState,
+        para_idx: usize,
+        stored_page: Option<(i32, i32)>,
+        paragraphs_all: &[Paragraph],
+        composed_all: &[ComposedParagraph],
+        styles: &ResolvedStyleSet,
+        max_prefill: usize,
+    ) {
         let col_w = st
             .layout
             .column_areas
             .get(st.current_column as usize)
             .map(|a| a.width)
             .unwrap_or(st.layout.body_area.width);
-        if !pre_emit_before_vpos_check
-            && !self.pre_emit_visible_rowbreak_host_text(st, para_idx, para, composed_all, styles)
-        {
-            return;
-        }
-        let end = paragraphs_all.len().min(para_idx + 1 + MAX_PREFILL);
+        let end = paragraphs_all.len().min(para_idx + 1 + max_prefill);
         for next_idx in (para_idx + 1)..end {
             let next = &paragraphs_all[next_idx];
             if !next.controls.is_empty() {
                 break;
             }
-            let Some(seg) = next.line_segs.iter().find(|ls| !is_synthetic_line_seg(ls)) else {
-                break;
-            };
-            // 저장 flow 가 host 와 같은 쪽 연속임을 인코딩한 경우만.
-            if seg.vertical_pos <= host_vpos
-                || seg.vertical_pos.saturating_add(seg.line_height) > body_h_hu
-            {
-                break;
+            if let Some((host_vpos, body_h_hu)) = stored_page {
+                let Some(seg) = next.line_segs.iter().find(|ls| !is_synthetic_line_seg(ls)) else {
+                    break;
+                };
+                // 저장 flow 가 host 와 같은 쪽 연속임을 인코딩한 경우만.
+                if seg.vertical_pos <= host_vpos
+                    || seg.vertical_pos.saturating_add(seg.line_height) > body_h_hu
+                {
+                    break;
+                }
             }
             let fmt_n =
                 self.format_paragraph(next, composed_all.get(next_idx), styles, Some(col_w));
             if st.current_height + fmt_n.height_for_fit > st.available_height() {
+                if stored_page.is_none() {
+                    prefill_paragraph_head(st, next_idx, next, &fmt_n, styles);
+                }
                 break;
             }
             let trim_sb =

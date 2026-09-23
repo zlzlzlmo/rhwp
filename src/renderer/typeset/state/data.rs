@@ -149,6 +149,10 @@ pub(in crate::renderer::typeset) struct StateView {
     /// [Task #1753] 지연 이월되는 visible-host 자리차지 표 직전에 현재 쪽 잔여 공간으로
     /// 선행 배치(prefill)된 후속 문단들 — 메인 루프에서 스킵.
     pub(in crate::renderer::typeset) prefilled_paras: std::collections::HashSet<usize>,
+    /// 미뤄지는 표 앞에 머리 줄만 선행 채운 문단 → 표 뒤에서 이을 첫 줄.
+    pub(in crate::renderer::typeset) prefilled_heads: std::collections::HashMap<usize, usize>,
+    /// rhwp 가 짠 host 줄을 앞 쪽에 먼저 내고 표만 다음 쪽으로 미룬 문단 — 표 뒤 host 줄 간격을 다시 세지 않는다.
+    pub(in crate::renderer::typeset) composed_host_deferred: Option<usize>,
     /// [Task #1755] 이월 전 쪽에 host 텍스트 줄을 PartialParagraph 로 pre-emit 한 문단 —
     /// layout 의 마지막 fragment 뒤 host 렌더 억제 신호(PaginationResult 로 전달).
     pub(in crate::renderer::typeset) pre_emitted_host_paras: std::collections::HashSet<usize>,

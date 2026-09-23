@@ -231,6 +231,7 @@ pub(super) fn resolve(
         after,
         spacing_after_only: sa,
         after_for_fit: after - outer_bottom_flow_only,
+        host_line_spacing,
     };
 
     HostSpacingResult {

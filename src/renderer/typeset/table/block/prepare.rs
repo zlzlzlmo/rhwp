@@ -836,7 +836,13 @@ impl TypesetEngine {
             queue_table_footnotes,
             table_footnotes: ft.table_footnotes.clone(),
             footnote_margin: fn_margin,
-            host_spacing_total,
+            // host 줄을 앞 쪽에 먼저 낸 표는 그 줄 간격을 표 뒤에서 다시 세지 않는다 — 맥 한글 12.30: 도약 채움 7쪽
+            // 머리 표 바로 아래 «3-2-2» 제목(표 하단 + 바깥 여백).
+            host_spacing_total: if st.take_composed_host_deferred(para_idx) {
+                host_spacing_total - ft.host_spacing.host_line_spacing
+            } else {
+                host_spacing_total
+            },
             host_spacing_before: ft.host_spacing.before,
             host_spacing_after_only: ft.host_spacing.spacing_after_only,
             terminal_nested_child_host_line_spacing: native_terminal_child_host_line_spacing(
