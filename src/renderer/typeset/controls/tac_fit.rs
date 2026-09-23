@@ -113,15 +113,28 @@ pub(super) fn prepare(
         // 566 HU 씩 덜 쌓였고, 소제목 표가 앞 쪽 바닥에 남아 이후 쪽이 통째로 밀렸다.
         // 소유 줄이 상하 여백까지 담는 경로는 위에서 한 번만 계상한다.
         // 그 증거가 없는 저장 줄은 기존 수용 판정의 여백 보충을 유지한다.
+        // 🔴 rhwp 가 다시 조판한 줄(합성 태그 — «저장 조판 없음»)은 줄 높이와 형식 단계(`tac_outer_margin_v_px`)가
+        // 이미 담은 몫을 빼고 남은 만큼만 더한다 — 셋이 겹쳐 3.8px 를 세 번 셌다(맥 한글 12.30: 도약 채움 일반현황
+        // 둘째 표가 2쪽 끝에 들어가 8쪽 · rhwp 9쪽). 한컴 저장 줄은 위 주석의 보충을 그대로 둔다(상류 기준선 계약).
+        let rhwp_composed_lines = crate::renderer::para_has_no_stored_line_segs(para);
+        let tallest_line = fmt.line_heights.iter().copied().fold(0.0f64, f64::max);
         let tac_outer_margin_px: f64 = para
             .controls
             .iter()
             .filter_map(|ctrl| match ctrl {
                 Control::Table(t) if flow.is_effective_tac_table(para, t, fmt) => {
-                    Some(crate::renderer::hwpunit_to_px(
-                        i32::from(t.common.margin.top) + i32::from(t.common.margin.bottom),
-                        dpi,
-                    ))
+                    Some(if rhwp_composed_lines {
+                        super::super::paragraph::format::tac_outer_margin_deficit_px(
+                            t,
+                            tallest_line + fmt.tac_outer_margin_v_px,
+                            dpi,
+                        )
+                    } else {
+                        crate::renderer::hwpunit_to_px(
+                            i32::from(t.common.margin.top) + i32::from(t.common.margin.bottom),
+                            dpi,
+                        )
+                    })
                 }
                 _ => None,
             })

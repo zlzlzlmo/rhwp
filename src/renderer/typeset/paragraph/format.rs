@@ -82,15 +82,16 @@ pub(in crate::renderer::typeset) fn format_paragraph_for_flow(
     // `lineseg` 를 그대로 쓰므로 여기서 또 더하면 이중 가산이 되어, 분할 표 꼬리가 페이지를
     // 단독 점유하고 뒤 본문이 밀린다(#2373 핀: 한글 2022 정답지 4쪽 ↔ 가산 시 5쪽).
     // 다시 조판해야 하는 문단(붙여넣기·생성계)에서만 이 몫이 실제로 빠져 있다.
+    // 🔴 **줄이 이미 담은 몫은 빼고 모자란 만큼만** 더한다. rhwp 가 다시 조판한 줄(합성 태그라
+    // «저장 조판 없음»으로 읽힌다)은 한컴처럼 `표 높이 + 바깥 여백`을 줄 높이에 이미 담는다 — 그 위에
+    // 또 더하면 쪽 끝에 딱 맞는 표가 다음 쪽으로 밀렸다(맥 한글 12.30: 도약 채움 8쪽 · rhwp 9쪽).
     let tac_outer_margin_v_px: f64 = if crate::renderer::para_has_no_stored_line_segs(para) {
+        let tallest_line = line_heights.iter().copied().fold(0.0f64, f64::max);
         para.controls
             .iter()
             .filter_map(|ctrl| match ctrl {
                 Control::Table(t) if t.common.treat_as_char => {
-                    Some(crate::renderer::hwpunit_to_px(
-                        i32::from(t.common.margin.top) + i32::from(t.common.margin.bottom),
-                        ctx.dpi(),
-                    ))
+                    Some(tac_outer_margin_deficit_px(t, tallest_line, ctx.dpi()))
                 }
                 _ => None,
             })
@@ -622,4 +623,41 @@ fn resolve_line_metrics(
     }
 
     (line_heights, line_spacings)
+}
+
+/// 글자처럼 취급한 표의 바깥 여백(위·아래) 중 **줄 높이에 아직 없는 몫**(px).
+/// 줄 높이가 `표 높이 + 여백`을 다 담았으면 0, 표 높이만 담았으면 여백 전량, 그 사이면 모자란 만큼 — 여백을 넘지 않는다.
+pub(in crate::renderer::typeset) fn tac_outer_margin_deficit_px(
+    table: &crate::model::table::Table,
+    line_height_px: f64,
+    dpi: f64,
+) -> f64 {
+    let margin = hwpunit_to_px(
+        i32::from(table.common.margin.top) + i32::from(table.common.margin.bottom),
+        dpi,
+    );
+    let full = hwpunit_to_px(table.common.height as i32, dpi) + margin;
+    (full - line_height_px).clamp(0.0, margin)
+}
+
+#[cfg(test)]
+mod tac_margin_tests {
+    use super::tac_outer_margin_deficit_px;
+    use crate::renderer::hwpunit_to_px;
+
+    #[test]
+    fn 줄이_이미_담은_바깥_여백은_다시_더하지_않는다() {
+        let mut table = crate::model::table::Table::default();
+        table.common.height = 7200;
+        table.common.margin.top = 283;
+        table.common.margin.bottom = 283;
+        let dpi = 96.0;
+        let table_px = hwpunit_to_px(7200, dpi);
+        let margin_px = hwpunit_to_px(566, dpi);
+
+        assert_eq!(tac_outer_margin_deficit_px(&table, table_px, dpi), margin_px);
+        assert_eq!(tac_outer_margin_deficit_px(&table, table_px + margin_px, dpi), 0.0);
+        let half = tac_outer_margin_deficit_px(&table, table_px + margin_px / 2.0, dpi);
+        assert!((half - margin_px / 2.0).abs() < 1e-9);
+    }
 }
