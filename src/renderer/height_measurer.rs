@@ -3587,6 +3587,63 @@ impl HeightMeasurer {
         // exam_eng 선택지 표는 행당 ~3px·합 ~20px. 거대 overfill 은 수백 px.
         const TAC_FLOOR_OVERFLOW_NOSHRINK_CAP_PX: f64 = 48.0;
         let shrink_threshold = (common_h * TAC_SHRINK_THRESHOLD_RATIO).max(1.0);
+        // 🔴 비례 축소의 목표는 한컴 저장 조판이다 — 행마다 «칸 선언 · 저장 줄 범위 + 여백» 중 큰 값을 더한 합(`stored_rows_total`)이
+        // 표 선언보다 크면 한컴 스스로 그만큼 그린 표다. 한/글은 그 표를 선언 높이로 누르지 않는다(맥 한글 12.30: e7ff70da 신청서
+        // «기업명» 표 — 20·22행 체크 목록의 저장 줄 4200HU가 칸 선언 2695·237HU를 넘어 표가 선언 829px보다 큰 933.8px ·
+        // 채움본 990.6px). 저장 조판이 선언 안인 표(exam_science 등 rhwp 측정만 큰 표)는 종전대로 선언까지 누른다.
+        let stored_rows_total: f64 = (0..row_count)
+            .map(|r| {
+                table
+                    .cells
+                    .iter()
+                    .filter(|c| c.row as usize == r && c.row_span == 1 && c.height < 0x8000_0000)
+                    .map(|c| {
+                        let declared = hwpunit_to_px(c.height as i32, self.dpi);
+                        let stored = !c.paragraphs.is_empty()
+                            && c.paragraphs
+                                .iter()
+                                .all(|p| !crate::renderer::para_has_no_stored_line_segs(p))
+                            && crate::renderer::cell_vpos_ladder_is_intact(&c.paragraphs);
+                        // 선언을 한 줄(400HU)보다 크게 넘는 저장 범위만 증언으로 친다 — 반올림·여백 잣대 차이는 한컴 조판의 성장이 아니다.
+                        let extent_hu = if stored {
+                            c.paragraphs
+                                .iter()
+                                .flat_map(|p| p.line_segs.iter())
+                                .map(|seg| seg.vertical_pos.saturating_add(seg.line_height))
+                                .max()
+                                .map(|hu| hu.saturating_add(c.stored_vertical_padding_hu()))
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        if extent_hu > (c.height as i32).saturating_add(400) {
+                            hwpunit_to_px(extent_hu, self.dpi)
+                        } else {
+                            declared
+                        }
+                    })
+                    .fold(0.0f64, f64::max)
+            })
+            .sum::<f64>()
+            + cell_spacing * row_count.saturating_sub(1) as f64;
+        // 행 선언 합이 이미 표 선언을 넘는 표(선언끼리 어긋난 표)는 종전대로 표 선언까지 누른다 — 저장 조판 합은 선언이 서로
+        // 맞는 표에서만 목표가 된다(multiline_cell_zero_positions 계약).
+        let declared_rows_total: f64 = (0..row_count)
+            .map(|r| {
+                table
+                    .cells
+                    .iter()
+                    .filter(|c| c.row as usize == r && c.row_span == 1 && c.height < 0x8000_0000)
+                    .map(|c| hwpunit_to_px(c.height as i32, self.dpi))
+                    .fold(0.0f64, f64::max)
+            })
+            .sum::<f64>()
+            + cell_spacing * row_count.saturating_sub(1) as f64;
+        let shrink_target = if declared_rows_total <= common_h + shrink_threshold {
+            common_h.max(stored_rows_total)
+        } else {
+            common_h
+        };
         // [편집 세션] TAC 비례 축소(아래 분기)는 저장 시점 형상 전용 보정이다 —
         // 편집으로 셀이 자란 성장분까지 선언높이로 눌러 다른 행의 몫을 잠식한다
         // (셀 Enter 재현: 표가 선언 높이에 고정된 채 행 경계만 위로 밀림).
@@ -3594,7 +3651,7 @@ impl HeightMeasurer {
         let table_height = if table.common.treat_as_char
             && !self.session_edited
             && common_h > 0.0
-            && raw_table_height > common_h + shrink_threshold
+            && raw_table_height > shrink_target + shrink_threshold
             && raw_table_height <= common_h * TAC_SHRINK_MAX_OVERFLOW_RATIO
         {
             // [#5748] 비례 축소가 '내용이 딱 맞는 행'까지 누르면 그 행의 글자가
@@ -3667,7 +3724,7 @@ impl HeightMeasurer {
                     floors[r] = floor;
                 }
             }
-            let deficit = raw_table_height - common_h;
+            let deficit = raw_table_height - shrink_target;
             let total_slack: f64 = row_heights
                 .iter()
                 .zip(floors.iter())
@@ -3706,7 +3763,7 @@ impl HeightMeasurer {
                 // 비례 축소를 유지한다 (overflow_cell_baseline).
                 raw_table_height
             } else {
-                let scale = common_h / raw_table_height.max(0.5);
+                let scale = shrink_target / raw_table_height.max(0.5);
                 for h in &mut row_heights {
                     *h *= scale;
                 }
