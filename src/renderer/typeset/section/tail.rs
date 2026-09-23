@@ -18,6 +18,17 @@ impl TypesetEngine {
         para_style_break: bool,
         force_page_break: bool,
     ) -> bool {
+        // 🔴 «다음 문단과 함께»가 걸린 문단은 꼬리로 흡수(숨김)하지 않는다 — 한/글은 그 문단을 다음 문단과 함께 다음 쪽으로
+        // 넘긴다(맥 한글 12.30: 마포 신청서 채움 3쪽 끝 빈 문단이 4쪽 «개인정보 동의서» 제목 표와 함께 넘어가 동의서 표가
+        // 5쪽으로 간다 — 그 속성을 끄면 한/글도 4쪽). 짝 판정은 `keep_paragraph_with_next` 가 한다.
+        if para_idx + 1 < paragraphs.len()
+            && styles
+                .para_styles
+                .get(para.para_shape_id as usize)
+                .is_some_and(|style| style.keep_with_next)
+        {
+            return false;
+        }
         // [Task #359] 단독 항목 페이지 차단:
         // 다음 pi 가 vpos-reset 가드를 발동할 예정이고 현재 pi 가 잔여 공간 부족으로
         // 새 페이지를 시작하면 단독 항목 페이지가 발생.
