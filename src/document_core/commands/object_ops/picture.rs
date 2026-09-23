@@ -818,16 +818,22 @@ impl DocumentCore {
 
         let picture_height_hu = pic.common.height as i32;
         let baseline = (picture_height_hu as f64 * 0.85).round() as i32;
+        // 🔴 이 줄은 rhwp 가 지은 것이다 — 합성 비트를 켠다. 물려받은 «저장» 태그를 그대로 두면 분할이 남긴
+        // vpos 0 자리표시가 한컴의 쪽 경계로 읽혀(Task #321) 그림 앞에서 쪽을 넘겼다(맥 한글 12.30: 예창패 채움
+        // «1. 문제인식» 제목표 아래 그림이 한/글은 같은 쪽 · rhwp는 다음 쪽).
+        let synthetic = crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY;
         if let Some(seg) = line_segs.first_mut() {
             seg.line_height = picture_height_hu;
             seg.text_height = picture_height_hu;
             seg.baseline_distance = baseline;
+            seg.tag |= synthetic;
         } else {
             line_segs.push(crate::model::paragraph::LineSeg {
                 line_height: picture_height_hu,
                 text_height: picture_height_hu,
                 baseline_distance: baseline,
                 line_spacing: 600,
+                tag: crate::model::paragraph::LineSeg::TAG_SINGLE_SEGMENT_LINE | synthetic,
                 ..Default::default()
             });
         }
@@ -2291,6 +2297,12 @@ mod issue_1151_cell_picture_insert_tests {
         assert_eq!(
             core.document.sections[0].paragraphs[0].line_segs[0].line_height, pic_h as i32,
             "TAC 그림만 남은 첫 문단은 그림 높이를 줄 높이로 유지해야 한다"
+        );
+        assert_ne!(
+            core.document.sections[0].paragraphs[0].line_segs[0].tag
+                & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY,
+            0,
+            "rhwp 가 지은 그림 줄은 합성 줄이다 — 저장 태그로 남으면 vpos 0 자리표시가 쪽 경계로 읽힌다"
         );
         assert!(
             core.document.sections[0].paragraphs[1].line_segs[0].line_height < pic_h as i32 / 2,

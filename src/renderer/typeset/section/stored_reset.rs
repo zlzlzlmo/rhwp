@@ -281,11 +281,21 @@ impl TypesetEngine {
                             None => false,
                         }
                     };
+                // 🔴 rhwp 가 다시 조판한 줄(합성 태그)의 vpos 0 은 한컴의 쪽 경계가 아니라 **rhwp 자신의 앞선 판정**이다 —
+                // 그 뒤 편집(표 미루기 등)으로 앞 내용이 옮겨 가면 낡은 경계가 되어, 방금 새 쪽으로 옮긴 표 뒤에서 또
+                // 쪽을 넘겼다(맥 한글 12.30: 예창패 채움 «1. 문제인식» 제목표만 선 쪽 · 한/글은 그 아래 그림까지 한 쪽).
+                // 단일 단은 지금 조판이 그 경계를 다시 정하므로 따르지 않는다(다단의 단 경계 인코딩은 그대로).
+                let synthetic_reset = st.col_count == 1
+                    && para
+                        .line_segs
+                        .first()
+                        .is_some_and(crate::renderer::typeset::is_synthetic_line_seg);
                 let trigger = trigger
                     && !omit_pushed_empty_page
                     && !hangul2024_refit
                     && !overlay_columndef_separator_break
-                    && !session_stale_reset_override;
+                    && !session_stale_reset_override
+                    && !synthetic_reset;
                 if trigger {
                     // [Task #724] wrap_around active 시 강제 종료 — anchor cs=0
                     // (HWP5 변환본 caption-style) 한정. 일반 wrap_around (anchor cs>0)
