@@ -18,6 +18,12 @@ use crate::model::table::{Table, TablePageBreak};
 /// 20·22행 체크 목록의 저장 줄 4200HU가 칸 선언 2695·237HU를 넘어 선언 829px보다 큰 933.8px).
 /// 행 선언 합이 이미 표 선언을 넘는 표(선언끼리 어긋난 표 — multiline_cell_zero_positions 계약)는 `None` 이다.
 pub(crate) fn stored_layout_table_height_hu(table: &crate::model::table::Table) -> Option<i32> {
+    let spacing = i32::from(table.cell_spacing) * (table.row_count as i32 - 1).max(0);
+    stored_layout_row_heights_hu(table).map(|rows| rows.iter().sum::<i32>() + spacing)
+}
+
+/// [`stored_layout_table_height_hu`] 의 행별 값(칸 간격 제외).
+fn stored_layout_row_heights_hu(table: &crate::model::table::Table) -> Option<Vec<i32>> {
     let row_count = table.row_count as usize;
     let row_max = |r: usize, height_of: &dyn Fn(&crate::model::table::Cell) -> i32| -> i32 {
         table
@@ -39,7 +45,7 @@ pub(crate) fn stored_layout_table_height_hu(table: &crate::model::table::Table) 
     if declared_rows_total > common.saturating_add(threshold) {
         return None;
     }
-    let stored_rows_total: i32 = (0..row_count)
+    let stored_rows: Vec<i32> = (0..row_count)
         .map(|r| {
             row_max(r, &|c| {
                 let stored = !c.paragraphs.is_empty()
@@ -65,9 +71,8 @@ pub(crate) fn stored_layout_table_height_hu(table: &crate::model::table::Table) 
                 }
             })
         })
-        .sum::<i32>()
-        + spacing;
-    Some(stored_rows_total)
+        .collect();
+    Some(stored_rows)
 }
 
 /// A stored Square table fits between its host line and the next visible paragraph.
@@ -1871,15 +1876,17 @@ impl HeightMeasurer {
     /// 보기 표가 이 경우다. 복원한 병합 묶음은 그대로 보존하고, 단일행 셀의
     /// 저장 내용+여백 하한 위에 남은 몫만 줄인다. 하한 합이 선언을 넘으면
     /// 필요한 초과 높이는 유지한다. 거대 overfill의 균일 축소에는 적용하지 않는다.
+    /// `target` 은 첫 축소의 목표(표 선언 또는 한컴 저장 조판 합 `stored_layout_table_height_hu`)다 — 선언까지 되누르면
+    /// 저장 조판대로 자란 표의 빈 행이 내용 하한까지 눌린다(맥 한글 12.30: 여성창업자 시제품계획서 채움 표 894.4px ·
+    /// «시제품명»·«시제품 소개» 빈 행이 선언 높이 그대로인데 rhwp 는 797px 로 눌러 표를 제목 아래 1쪽에 남겼다).
     fn reclaim_unmerged_row_slack(
         table: &Table,
         row_heights: &mut [f64],
         row_floors: &[f64],
         cell_spacing: f64,
-        dpi: f64,
+        target: f64,
     ) {
         let row_count = row_heights.len();
-        let target = hwpunit_to_px(table.common.height as i32, dpi);
         let mut excess = row_heights.iter().sum::<f64>()
             + cell_spacing * row_count.saturating_sub(1) as f64
             - target;
@@ -3654,12 +3661,40 @@ impl HeightMeasurer {
         // 편집으로 셀이 자란 성장분까지 선언높이로 눌러 다른 행의 몫을 잠식한다
         // (셀 Enter 재현: 표가 선언 높이에 고정된 채 행 경계만 위로 밀림).
         // 편집 세션은 실측을 신뢰한다.
+        // 쪽을 나누지 않는 표의 목표가 한컴 저장 조판 합이면(선언보다 크다) 행마다 저장 조판 값이 곧 한/글의 행이다 —
+        // 2% 면제 창 안의 초과(마지막 줄 간격 등)도 걷는다(맥 한글 12.30: e7ff70da 신청서 «기업명» 표 20·22행 저장 줄
+        // 범위 44.8pt · rhwp 는 마지막 줄 간격까지 세 50.8pt — 표 초과 16px 이 면제 창 18px 안이라 그대로 두었다).
+        // 쪽을 나누는 표는 조판이 host 줄(= 선언)로 흘리므로(`stored_host_line_growth_hu`) 대상이 아니다 — 렌더만 키우면
+        // 뒤 글과 겹친다(간장 기증자 중간진도보고서 hwpx 9쪽 RowBreak 표 +7.6px → 글 겹침 2건).
+        let stored_growth = table.page_break == crate::model::table::TablePageBreak::None
+            && shrink_target > common_h + 0.5;
         let table_height = if table.common.treat_as_char
             && !self.session_edited
             && common_h > 0.0
-            && raw_table_height > shrink_target + shrink_threshold
+            && (raw_table_height > shrink_target + shrink_threshold
+                || (stored_growth && raw_table_height > shrink_target + 0.5))
             && raw_table_height <= common_h * TAC_SHRINK_MAX_OVERFLOW_RATIO
         {
+            // 목표가 한컴 저장 조판 합이면(`stored_growth`) 먼저 행마다 저장 조판 값 위로 잰 몫을 걷는다 — 한/글은 행을
+            // «선언 · 저장 줄 범위 + 여백» 중 큰 값으로 그린다(맥 한글 12.30: 여성창업자 시제품계획서 채움 표 동의서 행
+            // 저장 394.2px · rhwp 실측 410.5px — 부족분을 다른 행의 여유에서 걷으면 빈 행이 눌려 행 경계가 12pt 갈렸다).
+            // 그 밖의 표는 종전대로 선언까지 되누른다.
+            let reclaim_target = if stored_growth {
+                shrink_target
+            } else {
+                common_h
+            };
+            let mut deficit = raw_table_height - shrink_target;
+            if stored_growth {
+                if let Some(stored_rows) = stored_layout_row_heights_hu(table) {
+                    for (h, stored) in row_heights.iter_mut().zip(stored_rows) {
+                        let cut =
+                            (*h - hwpunit_to_px(stored, self.dpi)).clamp(0.0, deficit.max(0.0));
+                        *h -= cut;
+                        deficit -= cut;
+                    }
+                }
+            }
             // [#5748] 비례 축소가 '내용이 딱 맞는 행'까지 누르면 그 행의 글자가
             // 칸 클립에 잘린다(156682735 제목 셋째 줄 8.3px 잘림). 한글은 저장
             // 좌표에 여유가 있는 행에서만 부족분을 흡수한다 — 행별 하한을 저장
@@ -3730,7 +3765,6 @@ impl HeightMeasurer {
                     floors[r] = floor;
                 }
             }
-            let deficit = raw_table_height - shrink_target;
             let total_slack: f64 = row_heights
                 .iter()
                 .zip(floors.iter())
@@ -3760,16 +3794,18 @@ impl HeightMeasurer {
                     &mut row_heights,
                     &floors,
                     cell_spacing,
-                    self.dpi,
+                    reclaim_target,
                 );
                 row_heights.iter().sum::<f64>() + cell_spacing * row_count.saturating_sub(1) as f64
             } else if deficit <= TAC_FLOOR_OVERFLOW_NOSHRINK_CAP_PX {
                 // [#6030] 선택지·심사서식처럼 하한 합이 선언을 반 줄 미만으로
                 // 넘는 표는 균일 축소하지 않는다. 거대 overfill 표는 종전
                 // 비례 축소를 유지한다 (overflow_cell_baseline).
-                raw_table_height
+                row_heights.iter().sum::<f64>() + cell_spacing * row_count.saturating_sub(1) as f64
             } else {
-                let scale = shrink_target / raw_table_height.max(0.5);
+                let current = row_heights.iter().sum::<f64>()
+                    + cell_spacing * row_count.saturating_sub(1) as f64;
+                let scale = shrink_target / current.max(0.5);
                 for h in &mut row_heights {
                     *h *= scale;
                 }
