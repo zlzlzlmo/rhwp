@@ -638,10 +638,17 @@ impl DocumentCore {
                                 ) {
                                     // 셀 내용 상자 — 열이 없으므로 원점은 셀 왼쪽
                                     // 끝이고 기하 피치를 적용하지 않는다. 스냅하면
-                                    // 표 소유자가 이미 확정한 셀 폭을 흔든다.
+                                    // 표 소유자가 이미 확정한 셀 폭을 흔든다. 문단 좌우
+                                    // 여백은 한/글처럼 뺀다(on-demand 와 같은 상자).
+                                    let para_style =
+                                        styles.para_styles.get(cell_para.para_shape_id as usize);
                                     reflow_line_segs(
                                         cell_para,
-                                        ParagraphBox::content_width_px(cell_inner_width, dpi),
+                                        ParagraphBox::cell_for_style(
+                                            cell_inner_width,
+                                            para_style,
+                                            dpi,
+                                        ),
                                         styles,
                                         dpi,
                                     );
@@ -1170,9 +1177,10 @@ impl DocumentCore {
                         && child_para.controls.is_empty()
                         && Self::needs_line_seg_reflow_in_scope(child_para, true, section_sized)
                     {
+                        let para_style = styles.para_styles.get(child_para.para_shape_id as usize);
                         reflow_line_segs(
                             child_para,
-                            ParagraphBox::content_width_px(inner_width, dpi),
+                            ParagraphBox::cell_for_style(inner_width, para_style, dpi),
                             styles,
                             dpi,
                         );
@@ -3097,12 +3105,9 @@ mod validate_linesegs_tests {
 
         let line = short_table_frame_target_line(&document);
         assert_eq!(
-            line.segment_width,
-            crate::renderer::px_to_hwpunit(
-                crate::renderer::hwpunit_to_px(RESOLVED_LAST_TRACK_WIDTH, DEFAULT_DPI),
-                DEFAULT_DPI,
-            ),
-            "eager reflow must use the table-owned frame width and the table's zero padding"
+            line.segment_width, RESOLVED_LAST_TRACK_WIDTH,
+            "eager reflow must use the table-owned frame width and the table's zero padding, \
+             rounded to HWPUNIT rather than truncated through px"
         );
     }
 
