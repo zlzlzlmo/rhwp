@@ -1416,6 +1416,8 @@ struct FillCursor {
     width_at_last_break: i32,
     space_savings_at_last_break: i32,
     fs_at_last_break: f64,
+    /// 마지막 끊는 자리가 줄 머리 글자 뒤다 — 한 줄보다 긴 낱말 앞에서만 쓴다(`fill_one_interval`).
+    last_break_at_line_head: bool,
     finished: bool,
     emitted_any: bool,
 }
@@ -1436,6 +1438,7 @@ impl FillCursor {
             width_at_last_break: 0,
             space_savings_at_last_break: 0,
             fs_at_last_break: 0.0,
+            last_break_at_line_head: false,
             finished: false,
             emitted_any: false,
         }
@@ -1662,6 +1665,7 @@ fn fill_one_interval(
                 cursor.width_at_last_break = cursor.lw;
                 cursor.space_savings_at_last_break = cursor.line_space_savings;
                 cursor.fs_at_last_break = cursor.line_max_fs;
+                cursor.last_break_at_line_head = false;
                 cursor.lw = next_tab_hwp;
                 cursor.token_index += 1;
             }
@@ -1714,6 +1718,7 @@ fn fill_one_interval(
                 cursor.width_at_last_break = cursor.lw;
                 cursor.space_savings_at_last_break = cursor.line_space_savings;
                 cursor.fs_at_last_break = cursor.line_max_fs;
+                cursor.last_break_at_line_head = false;
                 cursor.lw += space_hwp;
                 cursor.line_space_savings +=
                     condense_space_savings_hwp(space_hwp, condense_min_space);
@@ -1820,8 +1825,16 @@ fn fill_one_interval(
                 let tail_all_line_start_forbidden = text_chars[*start_idx + 1..*end_idx]
                     .iter()
                     .all(|c| is_line_start_forbidden(*c));
-                if tail_all_line_start_forbidden && *start_idx > cursor.line_start_idx && token_fits
-                {
+                let glyph_break_after = tail_all_line_start_forbidden && {
+                    let c = text_chars[*start_idx];
+                    if is_hangul(c) {
+                        // [#2185] bit7=1 = 글자 단위 break 허용 (위 주석 참조)
+                        korean_break_unit == 1
+                    } else {
+                        is_cjk_ideograph(c)
+                    }
+                };
+                if glyph_break_after && token_fits {
                     // 글자 모드의 후행 금칙 흡수분도 같은 "줄 끝 자리"로 본다.
                     //
                     // 한컴은 줄 끝 금칙 문자를 상자 밖에 매달지 않고 **그 줄 안에** 넣는다
@@ -1830,22 +1843,29 @@ fn fill_one_interval(
                     // 줄 끝 후보에서 배제해, 줄이 묶음 **앞** 한 글자로 되감겼다 — 원본이
                     // `…상호 협력·` 로 끝내는 자리에서 우리는 `…상호 협` 으로 끝나 두 글자를 잃었다.
                     // 1글자 토큰은 아래 슬라이스가 비어 `all()` 이 참이라 종전 동작 그대로다.
-                    let c = text_chars[*start_idx];
-                    let allow_break = if is_hangul(c) {
-                        // [#2185] bit7=1 = 글자 단위 break 허용 (위 주석 참조)
-                        korean_break_unit == 1
-                    } else {
-                        is_cjk_ideograph(c)
-                    };
-                    if allow_break {
-                        cursor.last_break_token_idx = Some(ti);
-                        cursor.last_break_char_idx = *end_idx; // 이 글자 다음 (이 글자 포함)
-                        cursor.width_at_last_break = cursor.lw + w_hwp; // 이 글자 폭 포함
-                        cursor.space_savings_at_last_break = cursor.line_space_savings;
-                        cursor.fs_at_last_break = cursor.line_max_fs;
-                    }
+                    cursor.last_break_token_idx = Some(ti);
+                    cursor.last_break_char_idx = *end_idx; // 이 글자 다음 (이 글자 포함)
+                    cursor.width_at_last_break = cursor.lw + w_hwp; // 이 글자 폭 포함
+                    cursor.space_savings_at_last_break = cursor.line_space_savings;
+                    cursor.fs_at_last_break = cursor.line_max_fs;
+                    cursor.last_break_at_line_head = *start_idx == cursor.line_start_idx;
                 }
                 if !token_fits {
+                    // 줄 머리 글자 뒤는 **한 줄보다 긴 낱말** 앞에서만 끊는 자리다. 한 줄에 드는 낱말은
+                    // 넘기지 않고 그 줄에서 글자로 쪼갠다 — 맥 한글 12.30 이 줄 조판을 걷은 09feca8a 제안서를
+                    // 그렇게 짓는다: 6쪽 «직위»(66.7px 칸, 낱말 `15_1_2_` 60.3px)는 `채움표|식15_1_|2_가나`,
+                    // 7쪽 «직위»(59.15px 칸, 낱말 `16_1_3_` 60.3px)는 `채움표|식|16_1_3|_가나`.
+                    if cursor.last_break_at_line_head
+                        && text_token_fits_line_hwp(
+                            0,
+                            w_hwp_fit.with_pair_adjustment(pair_adjustment_hwp),
+                            0,
+                            eff_w(false),
+                            *max_font_size,
+                        )
+                    {
+                        cursor.last_break_token_idx = None;
+                    }
                     if *start_idx > cursor.line_start_idx {
                         if let Some(break_token_idx) = cursor.last_break_token_idx {
                             let result = LineBreakResult {
@@ -1907,6 +1927,16 @@ fn fill_one_interval(
                                 *max_font_size,
                             ) {
                                 cursor.lw += w_hwp;
+                                // 새 줄 머리로 넘어온 글자 뒤도 (약한) 끊는 자리다 — 아래 `!token_fits`
+                                // 가 한 줄보다 긴 낱말 앞에서만 쓴다.
+                                if glyph_break_after {
+                                    cursor.last_break_token_idx = Some(ti);
+                                    cursor.last_break_char_idx = *end_idx;
+                                    cursor.width_at_last_break = cursor.lw;
+                                    cursor.space_savings_at_last_break = cursor.line_space_savings;
+                                    cursor.fs_at_last_break = cursor.line_max_fs;
+                                    cursor.last_break_at_line_head = true;
+                                }
                                 cursor.token_index += 1;
                                 cursor.emitted_any = true;
                                 return Some(FilledInterval {
@@ -4661,6 +4691,62 @@ mod fill_cursor_tests {
         assert_ne!(
             actual, before,
             "the frozen filler deferred the overflowing space"
+        );
+    }
+
+    /// 글자 단위 한글(kbu=1)에서 줄 머리 한글 글자 뒤는 **한 줄보다 긴** 영숫자 낱말 앞에서만 끊는
+    /// 자리다. 한 줄에 드는 낱말은 넘기지 않고 그 줄에서 글자로 쪼갠다.
+    ///
+    /// 맥 한글 12.30(줄 조판을 걷은 09feca8a 제안서, 13pt · 낱말 60.3px):
+    /// 7쪽 «직위» 칸 59.15px — `채움표|식|16_1_3|_가나|…` 6줄 · 6쪽 «직위» 칸 66.7px —
+    /// `채움표|식15_1_|2_가나|…` 5줄.
+    #[test]
+    fn line_head_hangul_glyph_breaks_only_before_a_word_wider_than_the_line() {
+        let text_chars = "채움표식16_1_3_가".chars().collect::<Vec<_>>();
+        let hangul = |i: usize| BreakToken::Text {
+            start_idx: i,
+            end_idx: i + 1,
+            base_width: 17.33,
+            width: 17.33,
+            max_font_size: 17.33,
+            base_char_widths: vec![],
+            char_widths: vec![],
+        };
+        let tokens = vec![
+            hangul(0),
+            hangul(1),
+            hangul(2),
+            hangul(3),
+            BreakToken::Text {
+                start_idx: 4,
+                end_idx: 11,
+                base_width: 8.61 * 7.0,
+                width: 8.61 * 7.0,
+                max_font_size: 17.33,
+                base_char_widths: vec![8.61; 7],
+                char_widths: vec![8.61; 7],
+            },
+            hangul(11),
+        ];
+
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 59.15, 0.0, 48.0, 1, 0, 0, true);
+        assert_eq!(
+            lines
+                .iter()
+                .map(|l| (l.start_idx, l.end_idx))
+                .collect::<Vec<_>>(),
+            vec![(0, 3), (3, 4), (4, 10), (10, 12)]
+        );
+
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 66.7, 0.0, 48.0, 1, 0, 0, true);
+        assert_eq!(
+            lines
+                .iter()
+                .map(|l| (l.start_idx, l.end_idx))
+                .collect::<Vec<_>>(),
+            vec![(0, 3), (3, 9), (9, 12)]
         );
     }
 }
