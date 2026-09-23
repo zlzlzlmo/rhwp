@@ -705,6 +705,12 @@ pub(super) fn decide_whole_fit(
         dpi,
         || st.available_height(),
     );
+    // 저장 전에 자란 표를 지난 구역의 저장 vpos 되감김은 편집 전 쪽 경계다 — `stored_reset` 의
+    // `predates_growth_reset` 과 같은 이유로 쪽 나눔 신호로 쓰지 않는다(맥 한글 12.30: c3fb5220 사업재편계획서 채움
+    // 16쪽 «자금조달 추진계획(안)» 제목 — 빈 양식에서 쪽 머리(vpos 0)였던 자리라 rhwp 는 제목만 17쪽에 홀로 세우고 표를
+    // 18쪽으로 밀었다. 한/글은 제목을 16쪽 끝에 두고 표를 17쪽에 세운다).
+    let stored_vpos_rewind_break =
+        stored_vpos_rewind_break && !(st.col_count == 1 && st.stored_ladder_predates_growth);
     if std::env::var("RHWP_DIAG_COMPAT24").is_ok()
         && stored_vpos_rewinds(preceding_stored_vpos(paragraphs, para_idx), para)
     {
