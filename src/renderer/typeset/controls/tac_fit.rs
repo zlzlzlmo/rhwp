@@ -23,6 +23,8 @@ pub(in crate::renderer::typeset) struct TacFitPlan {
     pub has_tac: bool,
     // 뒤쪽 저장 높이 cap도 동일한 편집 후 실측 결과를 소비한다.
     pub session_grown_tac_total: Option<f64>,
+    /// 저장 **전** 편집으로 자란 표다(`stored_host_line_growth_hu`) — 이 뒤의 저장 사다리도 낡았다.
+    pub grown_before_save: bool,
     pub advance_before_place: bool,
 }
 
@@ -67,7 +69,11 @@ pub(super) fn prepare(
     // 기반 fit 은 과소가 된다 — 실측(mt)을 하한으로 써야 넘친 표가 pre-flush
     // 로 새 쪽에 간다(셀 Enter 재현: 실측이 선언 fit 으로 1쪽에 남아 하단이
     // 잘림). 저장 bounds 특례도 성장 표에는 무효다(저장 좌표는 편집 전 형상).
-    let session_grown_tac_total = (has_tac && flow.session_edited())
+    // 🔴 저장 **전** 편집으로 자란 표도 같다 — 채움이 표 크기(선언 높이)를 키우고 host 줄을 다시 짜지 않은 저장본은
+    // 선언 틀이 저장 줄보다 크다(한컴 저장본은 둘이 같다). 한/글은 줄을 새로 짜므로 실측으로 흘린다(맥 한글 12.30:
+    // SMATEC 채움 4쪽 표 저장 줄 313.7px · 실측 374.9px — 저장 줄로 흘리면 뒤 문단이 그만큼 덜 밀린다).
+    let mut grown_before_save = false;
+    let session_grown_tac_total = has_tac
         .then(|| {
             para.controls.iter().enumerate().find_map(|(ci, ctrl)| {
                 let Control::Table(t) = ctrl else { return None };
@@ -75,11 +81,13 @@ pub(super) fn prepare(
                     return None;
                 }
                 let declared = hwpunit_to_px(t.common.height as i32, dpi);
-                measured_tables
+                let measured = measured_tables
                     .iter()
-                    .find(|m| m.para_index == para_idx && m.control_index == ci)
-                    .filter(|m| m.total_height > declared + 8.0)
-                    .map(|m| m.total_height)
+                    .find(|m| m.para_index == para_idx && m.control_index == ci)?;
+                let grown_in_session = flow.session_edited() && measured.total_height > declared + 8.0;
+                let predates = crate::renderer::typeset::stored_host_line_growth_hu(para, t).is_some();
+                grown_before_save |= predates;
+                (grown_in_session || predates).then_some(measured.total_height)
             })
         })
         .flatten();
@@ -218,6 +226,7 @@ pub(super) fn prepare(
         tac_count,
         has_tac,
         session_grown_tac_total,
+        grown_before_save,
         advance_before_place,
     }
 }

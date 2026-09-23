@@ -190,6 +190,10 @@ pub(in crate::renderer::typeset) struct StateView {
     pub(in crate::renderer::typeset) hidden_empty_page_idx: usize,
     /// [Task #362] hide_empty_line 으로 감춘 paragraph 인덱스 (PaginationResult 에 포함).
     pub(in crate::renderer::typeset) hidden_empty_paras: std::collections::HashSet<usize>,
+    /// 빈 문단이 제 줄로 본문 바닥을 실제로 넘어 새 쪽을 연 문단 — 그 쪽은 끝 빈 쪽 걷기가 남긴다.
+    pub(in crate::renderer::typeset) blank_overflow_page_opener: Option<usize>,
+    /// 이 구역에서 저장 **전** 편집으로 자란 글자처럼 표를 지났다 — 뒤 문단의 저장 vpos 사다리는 편집 전 조판이다.
+    pub(in crate::renderer::typeset) stored_ladder_predates_growth: bool,
     /// [#6146] 저장 vpos 리셋으로 다음 쪽에 넘어가는 문단의 **자리차지 밴드**를 떠나는
     /// 쪽의 흐름 말미에 남긴 (문단, 컨트롤) 집합. 컨트롤 순회에서 다시 배치하지 않는다.
     pub(in crate::renderer::typeset) page_tail_spilled_floats:

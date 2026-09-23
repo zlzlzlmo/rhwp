@@ -75,6 +75,8 @@ impl TypesetState {
                 hidden_empty_lines: 0,
                 hidden_empty_page_idx: usize::MAX,
                 hidden_empty_paras: std::collections::HashSet::new(),
+                blank_overflow_page_opener: None,
+                stored_ladder_predates_growth: false,
                 page_tail_spilled_floats: std::collections::HashSet::new(),
                 endnotes: Vec::new(),
                 endnote_paragraphs: Vec::new(),

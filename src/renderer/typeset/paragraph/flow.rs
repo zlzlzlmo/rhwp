@@ -126,6 +126,17 @@ pub(in crate::renderer::typeset) fn place(
         return;
     }
 
+    // 빈 문단이 반올림 오차(0.5px) 밖으로 본문 바닥을 넘으면 한/글도 그 문단 하나로 새 쪽을 연다(맥 한글
+    // 12.30: 예창패 채움 끝 빈 문단 1.7px 넘침 → 쪽 번호만 선 10쪽). 이미 넘친 쪽(표 행 넘침)에서 밀린 빈
+    // 문단과 0.1px 오차는 종전대로 끝 빈 쪽 걷기가 걷는다(상류 #2097 eogu_geumji · #6981 교육과정 지도).
+    if !crate::renderer::typeset::para_has_non_whitespace_text(para)
+        && para.controls.is_empty()
+        && st.current_height <= st.available_height()
+        && st.current_height + fmt.height_for_fit > st.available_height() + 0.5
+    {
+        st.note_blank_overflow_page_opener(para_idx);
+    }
+
     paragraph::place_after_failed_fit(
         st,
         para_idx,

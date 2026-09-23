@@ -1964,6 +1964,23 @@ fn is_synthetic_line_seg(ls: &LineSeg) -> bool {
     ls.tag & 0x80000000 != 0
 }
 
+/// 한 줄짜리 host 의 한컴 저장 줄보다 표 선언 틀(높이 + 바깥 여백)이 600HU(≈ 8px) 넘게 크면 그 차이 — 저장 줄을 짠
+/// 뒤 표 크기만 바뀌었다(채움이 행을 키우고 host 줄은 그대로 저장). 한컴 저장본의 host 줄은 선언 틀 이상이다
+/// (캡션이 있으면 캡션만큼 더 크다) — [#2279 stale-lh]의 성장 방향.
+fn stored_host_line_growth_hu(para: &Paragraph, table: &crate::model::table::Table) -> Option<i32> {
+    let [seg] = para.line_segs.as_slice() else {
+        return None;
+    };
+    if is_synthetic_line_seg(seg) {
+        return None;
+    }
+    let frame = (table.common.height as i32)
+        .saturating_add(i32::from(table.outer_margin_top))
+        .saturating_add(i32::from(table.outer_margin_bottom));
+    let growth = frame.saturating_sub(seg.line_height);
+    (growth > 600).then_some(growth)
+}
+
 /// [#6409] HWPX 가 글자처럼 취급 표를 쪽높이급 **한 줄**로 저장했으면, leftover
 /// 에 행 분할로 끼우지 않고 다음 쪽 상단에서 시작한다.
 ///
@@ -4258,6 +4275,14 @@ impl TypesetEngine {
             ft.total_height
         } else {
             table_height
+        };
+        // 🔴 저장 전에 자란 표는 저장 줄 대신 성장분만큼 더 흘린다 — 한/글은 host 줄을 새로 짠다(맥 한글 12.30: SMATEC
+        // 채움 4쪽 표 저장 줄 313.7px · 선언 374.9px, 저장 줄로 흘리면 뒤 문단이 그만큼 덜 밀린다).
+        let table_height = match stored_host_line_growth_hu(para, table) {
+            Some(growth) if tac_count == 1 && !owns_tac_band => {
+                table_height + hwpunit_to_px(growth, self.dpi)
+            }
+            _ => table_height,
         };
 
         // TAC 표는 분할하지 않고 통째로 배치

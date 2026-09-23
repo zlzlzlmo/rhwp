@@ -552,6 +552,15 @@ impl TypesetState {
         }
     }
 
+    pub(super) fn mark_stored_ladder_predates_growth(&mut self) {
+        self.data.stored_ladder_predates_growth = true;
+    }
+
+    /// 빈 문단이 넘쳐 다음 쪽을 연다는 판정만 기록한다 — 쪽 이동은 뒤의 분할 경로가 한다.
+    pub(super) fn note_blank_overflow_page_opener(&mut self, para_idx: usize) {
+        self.data.blank_overflow_page_opener = Some(para_idx);
+    }
+
     /// guide와 앞선 빈 문단 drift 경로: 항목·높이·횟수는 변경하지 않는다.
     pub(super) fn hide_empty_paragraph(&mut self, para_idx: usize) {
         self.data.hidden_empty_paras.insert(para_idx);

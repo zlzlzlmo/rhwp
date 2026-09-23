@@ -290,7 +290,11 @@ impl TypesetEngine {
                         .line_segs
                         .first()
                         .is_some_and(crate::renderer::typeset::is_synthetic_line_seg);
+                // 🔴 저장 전 편집으로 자란 표를 지난 구역의 저장 vpos 0 은 편집 전 쪽 경계다 — 표가 커져 앞 문단이 이미
+                // 다음 쪽으로 밀렸는데 한 번 더 넘겼다(맥 한글 12.30: SMATEC 채움 4쪽 표 뒤 «각종 인증서 현황»이 같은 쪽).
+                let predates_growth_reset = st.col_count == 1 && st.stored_ladder_predates_growth;
                 let trigger = trigger
+                    && !predates_growth_reset
                     && !omit_pushed_empty_page
                     && !hangul2024_refit
                     && !overlay_columndef_separator_break

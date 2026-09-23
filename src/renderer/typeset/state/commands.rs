@@ -10,7 +10,11 @@ impl TypesetState {
         &mut self,
         paragraphs: &[Paragraph],
     ) {
-        super::finalize::discard_terminal_blank_only_page(&mut self.data.pages, paragraphs);
+        super::finalize::discard_terminal_blank_only_page(
+            &mut self.data.pages,
+            paragraphs,
+            self.data.blank_overflow_page_opener,
+        );
     }
     pub(in crate::renderer::typeset) fn finalize_pages(
         &mut self,

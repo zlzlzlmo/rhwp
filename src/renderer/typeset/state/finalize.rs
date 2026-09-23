@@ -14,9 +14,14 @@ use crate::renderer::typeset::{
 /// [#5907] 앞뒤 문단이 둘 다 stored vpos 0 을 주장해 열린 쪽도 보존한다 —
 /// 넘침 잔재가 아니라 한/글이 저장한 쪽 경계 그 자체이므로, 한/글도 그 빈 쪽을
 /// 인쇄한다 (`samples/p122.hwp` 3쪽, 정본 `pdf/p122-2022.pdf`).
+///
+/// 빈 문단이 제 줄로 본문 바닥을 실제로 넘어 연 쪽(`blank_overflow_opener`)도 보존한다 — 저장 vpos
+/// 잔재가 아니라 흐름의 판정이고, 한/글도 그 쪽을 찍는다(맥 한글 12.30: 예창패 채움 끝 빈 문단이
+/// 1.7px 넘쳐 쪽 번호만 선 10쪽).
 pub(super) fn discard_terminal_blank_only_page(
     pages: &mut Vec<PageContent>,
     paragraphs: &[Paragraph],
+    blank_overflow_opener: Option<usize>,
 ) {
     if pages.len() <= 1 {
         return;
@@ -24,6 +29,15 @@ pub(super) fn discard_terminal_blank_only_page(
     let Some(last_page) = pages.last() else {
         return;
     };
+    let opened_by_blank_overflow = blank_overflow_opener.is_some_and(|opener| {
+        matches!(
+            last_page.column_contents.first().and_then(|column| column.items.first()),
+            Some(PageItem::FullParagraph { para_index }) if *para_index == opener
+        )
+    });
+    if opened_by_blank_overflow {
+        return;
+    }
     let mut has_item = false;
     let blank_only = last_page.column_contents.iter().all(|column| {
         if !column.wrap_around_paras.is_empty() {

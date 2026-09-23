@@ -55,6 +55,7 @@ pub(in crate::renderer::typeset) fn place(
         tac_count,
         has_tac,
         session_grown_tac_total,
+        grown_before_save,
         ..
     } = controls::prepare_tac_paragraph(
         st,
@@ -64,6 +65,9 @@ pub(in crate::renderer::typeset) fn place(
         measured_tables,
         engine.tac_flow_query(),
     );
+    if grown_before_save {
+        st.mark_stored_ladder_predates_growth();
+    }
 
     st.ensure_page();
 
