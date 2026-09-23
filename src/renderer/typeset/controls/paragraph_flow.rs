@@ -68,6 +68,20 @@ pub(in crate::renderer::typeset) fn place(
     if grown_before_save {
         st.mark_stored_ladder_predates_growth();
     }
+    let ladder_predates_growth = st.stored_ladder_predates_growth;
+    // 저장 전에 자란 표의 성장 상한은 host 줄 간격 몫까지 — 표 높이만 두면 흐름이 그 간격만큼 되감긴다.
+    let session_grown_tac_total = if grown_before_save {
+        session_grown_tac_total.map(|grown| {
+            grown
+                + para
+                    .line_segs
+                    .first()
+                    .map(|seg| crate::renderer::hwpunit_to_px(seg.line_spacing.max(0), engine.dpi))
+                    .unwrap_or(0.0)
+        })
+    } else {
+        session_grown_tac_total
+    };
 
     st.ensure_page();
 
@@ -242,7 +256,11 @@ pub(in crate::renderer::typeset) fn place(
             tac_count,
             height_before,
             session_grown_tac_total,
-            engine.tac_flow_query(),
+            if ladder_predates_growth {
+                engine.tac_flow_query_full_gap()
+            } else {
+                engine.tac_flow_query()
+            },
         );
     }
 }

@@ -5079,6 +5079,13 @@ impl TypesetEngine {
         controls::tac_flow::TacFlowQuery::new(self.dpi, &self.profile, self.mixed_ladder.get())
     }
 
+    /// 저장 전에 자란 글자처럼 표를 지난 구역(`stored_ladder_predates_growth`)은 섞인 구역처럼 표 줄 간격을 전부 센다 —
+    /// 낡은 저장 사다리로는 절반 규칙의 모자람이 메워지지 않는다(맥 한글 12.30: 09feca8a 제안서 3쪽, 상자·표마다 6px ·
+    /// 커진 표 뒤 12px 씩 모자라 «④ 기대성과» 제목을 쪽 바닥 밖에 세웠다 · 한/글은 4쪽으로 넘긴다).
+    fn tac_flow_query_full_gap(&self) -> controls::tac_flow::TacFlowQuery<'_> {
+        controls::tac_flow::TacFlowQuery::new(self.dpi, &self.profile, true)
+    }
+
     fn tac_table_line_index(
         &self,
         para: &Paragraph,
