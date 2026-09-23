@@ -327,7 +327,15 @@ impl HeightCursor {
             };
             let vpos_continuous =
                 matches!(curr_first_vpos, Some(v) if v <= prev_vpos_end + curr_sb_hu);
-            let trailing_ls_hu = if vpos_continuous && prev_has_text {
+            // 🔴 rhwp 가 다시 조판한(합성) 글자처럼 표 문단은 조판이 표 줄 간격을 **전부** 흐름에 싣는다
+            // (`tac_reconcile::measure`) — 여기서 또 다리를 놓으면 간격을 두 번 센다(36395325 결재 p28:
+            // 기준이 812HU 아래로 잡혀 뒤 문단이 +10.8px 밀리고 한/글 5쪽 문서가 6쪽이 됐다).
+            let prev_tac_gap_already_counted = crate::renderer::para_has_no_stored_line_segs(prev_para)
+                && prev_para
+                    .controls
+                    .iter()
+                    .any(|c| matches!(c, Control::Table(t) if t.common.treat_as_char));
+            let trailing_ls_hu = if (vpos_continuous && prev_has_text) || prev_tac_gap_already_counted {
                 0
             } else {
                 paragraphs

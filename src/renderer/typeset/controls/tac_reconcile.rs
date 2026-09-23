@@ -54,8 +54,19 @@ pub(super) fn measure(
                         .map(|mt| mt.total_height)
                         .unwrap_or(0.0);
                     let effective_h = crate::renderer::tac_table_effective_height(seg_lh, mt_h);
-                    let ls_half = hwpunit_to_px(seg.line_spacing, dpi) / 2.0;
-                    tac_seg_total += effective_h + ls_half;
+                    // 🔴 rhwp 가 다시 조판한 줄(합성 태그)은 줄 간격을 **전부** 센다 — 우리 사다리·렌더·한/글이
+                    // `표 줄 + 간격`으로 다음 문단을 놓는데 절반만 세면 흐름이 쪽마다 표 수 × 간격/2 씩 모자라
+                    // 쪽 끝 판정이 틀렸다(맥 한글 12.30: 예창패 (hwp파일) 채움 5쪽 «2-2.» 제목이 한/글은 6쪽 ·
+                    // rhwp는 5쪽 바닥에 1px 잘려 섰다 · 흐름 8.7px 부족 = 표 둘의 절반 간격 합). 한컴 저장 줄은
+                    // 상류 절반 규칙 그대로. 흐름에 이미 실은 간격을 lazy 기준 역산이 다시 잇지 않게
+                    // `height_cursor` 가 같은 조건으로 다리를 끈다.
+                    let ls_px = hwpunit_to_px(seg.line_spacing, dpi);
+                    let ls_part = if crate::renderer::para_has_no_stored_line_segs(para) {
+                        ls_px
+                    } else {
+                        ls_px / 2.0
+                    };
+                    tac_seg_total += effective_h + ls_part;
                 }
                 tac_idx += 1;
             }
