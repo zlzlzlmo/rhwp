@@ -1368,6 +1368,26 @@ impl DocumentCore {
         false
     }
 
+    /// 저장 줄이 없는 문단(본문·칸·칸 안 표)이 하나라도 있는가.
+    fn has_paragraph_without_linesegs(document: &Document) -> bool {
+        fn in_paragraphs(paragraphs: &[Paragraph]) -> bool {
+            paragraphs.iter().any(|para| {
+                para.line_segs.is_empty()
+                    || para.controls.iter().any(|ctrl| match ctrl {
+                        Control::Table(table) => table
+                            .cells
+                            .iter()
+                            .any(|cell| in_paragraphs(&cell.paragraphs)),
+                        _ => false,
+                    })
+            })
+        }
+        document
+            .sections
+            .iter()
+            .any(|section| in_paragraphs(&section.paragraphs))
+    }
+
     /// 표 하나의 칸 문단을 on-demand 로 다시 조판한다 (#177) — 한/글 저장 규약대로.
     ///
     /// - 상자: 칸 안쪽 폭에서 **문단 좌우 여백을 뺀** 구간([`ParagraphBox::cell_for_style`]).
@@ -1442,7 +1462,11 @@ impl DocumentCore {
     ///
     /// 반환값: 실제로 reflow 된 문단 개수 (본문 + 셀 내부 합계).
     pub fn reflow_linesegs_on_demand(&mut self) -> usize {
-        if self.validation_report.is_empty() {
+        // 검증 보고는 «글자가 있는데 줄이 없는» 문단만 센다. 표·그림만 든 문단이나 빈 문단에 줄이 없으면
+        // 보고가 비어도 할 일이 있다 — 그 문단들이 vpos 사다리에서 빠지면 쪽 나눔이 개체 높이를 모른다.
+        if self.validation_report.is_empty()
+            && !Self::has_paragraph_without_linesegs(&self.document)
+        {
             return 0;
         }
 
@@ -1463,6 +1487,7 @@ impl DocumentCore {
                 .unwrap_or(layout.body_area.width);
 
             let mut min_reflowed_idx: Option<usize> = None;
+            let mut reflowed_body: Vec<std::ops::Range<usize>> = Vec::new();
             let mut latest_non_tac_picture_host = None;
             let mut pi = 0usize;
             while pi < section.paragraphs.len() {
@@ -1523,6 +1548,7 @@ impl DocumentCore {
                             paragraph.replace_line_segs(line_segs);
                         }
                         reflowed += band_len;
+                        reflowed_body.push(paragraph_range.clone());
                         min_reflowed_idx =
                             Some(min_reflowed_idx.map_or(paragraph_range.start, |start| {
                                 start.min(paragraph_range.start)
@@ -1554,6 +1580,7 @@ impl DocumentCore {
                         dpi,
                     );
                     reflowed += 1;
+                    reflowed_body.push(pi..pi + 1);
                     min_reflowed_idx.get_or_insert(pi);
                 }
                 // 표 셀 내부 문단도 동일 처리 — 칸 안의 표까지 내려간다.
@@ -1574,16 +1601,23 @@ impl DocumentCore {
             // 빈 lineseg 였던 문단들은 reflow 시 vpos_start=0 으로 시작하여 후속 문단
             // 의 vpos 연속성이 깨짐. paginator 의 vpos_h 기반 current_height 조정이
             // 잘못된 값으로 적용되어 페이지가 과다 분할되는 회귀의 원인.
-            if let Some(start) = min_reflowed_idx {
-                crate::renderer::composer::recalculate_section_vpos(
-                    &mut section.paragraphs,
-                    start,
-                    None,
-                    None,
-                    &self.styles,
-                    self.dpi,
-                    doc_hwp3_layout,
-                );
+            //
+            // 다시 조판한 문단은 저마다 vpos 0 에서 새로 시작한 줄이다. 한 번의 재계산(start = 첫 문단)은
+            // 그 뒤의 재조판 문단을 «이동 없는 연속 문단»으로 보고 첫 문단의 delta 만 실어 날라, 사이에 낀
+            // 표만 든 문단이 엉뚱한 자리에 앉았다. 재조판 구간마다 오름차순으로 «새 문단» 으로 다시 잇는다
+            // (`ignore_reset_range`) — 한/글이 저장한 진짜 쪽·단 리셋은 그대로 지켜진다.
+            if min_reflowed_idx.is_some() {
+                for range in &reflowed_body {
+                    crate::renderer::composer::recalculate_section_vpos(
+                        &mut section.paragraphs,
+                        range.start,
+                        Some(range.clone()),
+                        None,
+                        &self.styles,
+                        self.dpi,
+                        doc_hwp3_layout,
+                    );
+                }
             }
         }
 
@@ -3323,6 +3357,95 @@ mod validate_linesegs_tests {
         assert!(
             !nested.cells[0].paragraphs[0].line_segs.is_empty(),
             "칸 안 표의 문단에도 줄이 있어야 한다"
+        );
+    }
+
+    /// 한/글이 조판한 본문 사이에 저장 줄이 없는 «표만 든 문단»이 끼어 있다(채움이 새로 넣은 제목 상자 꼴).
+    /// 앞뒤 문단의 저장 줄은 한/글 것이라 검증 보고가 비어 있다 — 그래도 그 문단은 줄을 받아야 하고,
+    /// 뒤 문단들은 표 높이만큼 밀려야 한다. 안 그러면 vpos 사다리에 표 높이가 빠져 쪽 나눔이
+    /// 그림을 쪽 밖으로 넘친다(한/글 7쪽 ↔ rhwp 쪽 넘침, 09-23 한컴독스 실측).
+    fn authentic_body_with_bare_table_host() -> DocumentCore {
+        use crate::model::control::Control;
+        use crate::model::table::{Cell, Table};
+
+        let stored = |vpos: i32| LineSeg {
+            text_start: 0,
+            vertical_pos: vpos,
+            line_height: 1000,
+            text_height: 1000,
+            baseline_distance: 850,
+            line_spacing: 600,
+            segment_width: 40000,
+            ..Default::default()
+        };
+        let text_para = |text: &str, vpos: i32| Paragraph {
+            text: text.to_string(),
+            char_offsets: (0..text.chars().count() as u32).collect(),
+            char_count: text.chars().count() as u32 + 1,
+            has_para_text: true,
+            line_segs: vec![stored(vpos)],
+            ..Default::default()
+        };
+        let mut table = Table::default();
+        table.row_count = 1;
+        table.col_count = 1;
+        table.common.treat_as_char = true;
+        table.common.width = 40000;
+        table.common.height = TABLE_HEIGHT as u32;
+        table.cells = vec![Cell {
+            row: 0,
+            col: 0,
+            row_span: 1,
+            col_span: 1,
+            width: 40000,
+            height: TABLE_HEIGHT as u32,
+            paragraphs: vec![text_para("제목", 0)],
+            ..Default::default()
+        }];
+        let mut host = Paragraph::default();
+        host.controls.push(Control::Table(Box::new(table)));
+
+        let mut section = Section::default();
+        section.paragraphs = vec![text_para("앞", 0), host, text_para("뒤", 1600)];
+        let mut document = Document::default();
+        document.sections.push(section);
+        let mut core = DocumentCore::new_empty();
+        core.set_document(document);
+        core.validation_report = DocumentCore::validate_linesegs(core.document(), false);
+        core
+    }
+
+    const TABLE_HEIGHT: i32 = 3000;
+
+    #[test]
+    fn on_demand_reflow_gives_bare_table_host_a_row_even_when_report_is_empty() {
+        let mut core = authentic_body_with_bare_table_host();
+        assert!(
+            core.validation_report.is_empty(),
+            "앞뒤 저장 줄은 멀쩡하다 — 보고는 비어 있다"
+        );
+
+        core.reflow_linesegs_on_demand();
+
+        let paragraphs = &core.document().sections[0].paragraphs;
+        let host = paragraphs[1]
+            .line_segs
+            .first()
+            .expect("표만 든 문단도 줄을 받는다");
+        assert!(
+            host.line_height >= TABLE_HEIGHT,
+            "줄 높이는 표 높이를 담는다: {}",
+            host.line_height
+        );
+        assert_eq!(
+            host.vertical_pos, 1600,
+            "앞 문단 끝(0 + 1000 + 600)에서 이어진다"
+        );
+        let after = &paragraphs[2].line_segs[0];
+        assert_eq!(
+            after.vertical_pos,
+            host.vertical_pos + host.line_height + host.line_spacing,
+            "뒤 문단은 표 줄 끝으로 밀린다"
         );
     }
 
