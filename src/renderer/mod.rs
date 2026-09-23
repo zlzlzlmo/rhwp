@@ -1364,6 +1364,26 @@ pub(crate) fn para_has_no_stored_line_segs(p: &crate::model::paragraph::Paragrap
     p.line_segs.is_empty() || p.line_segs.iter().all(|s| s.tag & 0x8000_0000 != 0)
 }
 
+/// 구역에 rhwp 가 다시 조판한 줄(합성 태그)과 한컴 저장 줄이 **함께** 있는가 — 채움·편집으로 사다리가 고쳐진
+/// 구역이다. 한컴이 통째로 저장한 구역(합성 줄 0)과 통째 합성 구역(저장 줄 0)은 거짓이다.
+/// 🔴 HWP5 바이너리에서만 이 뜻이다 — 한컴은 HWP5 문단마다 줄을 적으므로 합성 비트는 rhwp 가 쓴 것이다. HWPX 는
+/// 한컴이 줄을 안 적은 문단을 로더가 합성하므로(hwp3-sample16-hwp5.hwpx) 호출부가 hwpx 저장 조판에선 끈다.
+pub(crate) fn section_ladder_is_mixed(paragraphs: &[crate::model::paragraph::Paragraph]) -> bool {
+    let mut synthetic = false;
+    let mut stored = false;
+    for seg in paragraphs.iter().flat_map(|p| p.line_segs.iter()) {
+        if seg.tag & 0x8000_0000 != 0 {
+            synthetic = true;
+        } else {
+            stored = true;
+        }
+        if synthetic && stored {
+            return true;
+        }
+    }
+    false
+}
+
 /// 합성 Square 구간은 시작 위치까지의 왼쪽 여백을 이미 차지한다.
 /// 이를 본문 상자의 폭으로 환산해 측정과 배치가 같은 프레임을 사용하게 하며,
 /// 글꼴별 임의 허용 폭은 더하지 않는다.

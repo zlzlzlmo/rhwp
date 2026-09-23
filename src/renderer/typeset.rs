@@ -313,6 +313,8 @@ pub struct TypesetEngine {
     /// [#5854] 현재 구역의 저장 LINE_SEG 사다리가 통짜 합성값인지 — 구역 진입 시 set.
     /// 참이면 줄 metrics 를 저장값이 아니라 글꼴·문단 스타일에서 다시 뽑는다.
     uniform_filler_ladder: std::cell::Cell<bool>,
+    /// 현재 구역에 rhwp 합성 줄과 한컴 저장 줄이 섞였는지(`section_ladder_is_mixed`) — 구역 진입 시 set.
+    mixed_ladder: std::cell::Cell<bool>,
     /// [#6175] 현재 구역의 용지/쪽 기준 어울림 개체 흐름 증거 — 구역 진입 시 set.
     /// 폭과 세로 band가 모두 맞을 때만 저장 행 admission이 균일한 좁은 행을
     /// 문단 자신의 테두리 inset과 구분한다.
@@ -3376,6 +3378,7 @@ impl TypesetEngine {
             dpi,
             profile: std::cell::Cell::new(Default::default()),
             uniform_filler_ladder: std::cell::Cell::new(false),
+            mixed_ladder: std::cell::Cell::new(false),
             float_carve_evidence: std::cell::RefCell::new(Vec::new()),
             render_normalization: std::sync::Arc::new(
                 crate::renderer::render_normalization::RenderNormalizationOverlay::default(),
@@ -3408,6 +3411,8 @@ impl TypesetEngine {
             .set(crate::renderer::stored_line_ladder_is_uniform_filler(
                 paragraphs, styles,
             ));
+        self.mixed_ladder
+            .set(!profile.hwpx_stored_layout() && crate::renderer::section_ladder_is_mixed(paragraphs));
         *self.float_carve_evidence.borrow_mut() =
             crate::renderer::float_placement::paper_or_page_float_carve_evidence(paragraphs);
     }
@@ -5000,7 +5005,7 @@ impl TypesetEngine {
     }
 
     fn tac_flow_query(&self) -> controls::tac_flow::TacFlowQuery<'_> {
-        controls::tac_flow::TacFlowQuery::new(self.dpi, &self.profile)
+        controls::tac_flow::TacFlowQuery::new(self.dpi, &self.profile, self.mixed_ladder.get())
     }
 
     fn tac_table_line_index(

@@ -117,6 +117,9 @@ pub(crate) struct HeightCursor {
     /// 조판 좌표가 아니므로 앵커 스냅 자체를 끈다. 켜 두면 글꼴로 다시 뽑은 줄
     /// 진행을 매 항목마다 그 상수 사다리로 되돌려 놓는다.
     pub uniform_filler_ladder: bool,
+    /// rhwp 가 다시 조판한 줄과 한컴 저장 줄이 한 구역에 섞였다(`section_ladder_is_mixed`) — 글자처럼 표
+    /// 간격을 흐름이 전부 싣는 구역이라 lazy 역산이 꼬리 간격 다리를 놓지 않는다.
+    pub mixed_ladder: bool,
     /// [Task #1246] 현재 섹션 미주의 between-notes 마진(HU, 0=미적용). 새 미주 제목이 forward
     /// 흐름에서 이 마진보다 작은 간격을 가지면(다줄 풀이 끝 trailing 누락=문22) 끌어올린다.
     /// 생성자는 0 으로 두고 호출자(build_single_column)가 미주 흐름 컬럼에서만 설정한다.
@@ -182,6 +185,7 @@ impl HeightCursor {
             suppress_large_forward_jump,
             suppress_hwpx_stale_forward: false,
             uniform_filler_ladder: false,
+            mixed_ladder: false,
             endnote_between_notes_hu: 0,
             prev_item_content_bottom_y: None,
             last_compacted_endnote_title_gap: false,
@@ -330,7 +334,8 @@ impl HeightCursor {
             // 🔴 rhwp 가 다시 조판한(합성) 글자처럼 표 문단은 조판이 표 줄 간격을 **전부** 흐름에 싣는다
             // (`tac_reconcile::measure`) — 여기서 또 다리를 놓으면 간격을 두 번 센다(36395325 결재 p28:
             // 기준이 812HU 아래로 잡혀 뒤 문단이 +10.8px 밀리고 한/글 5쪽 문서가 6쪽이 됐다).
-            let prev_tac_gap_already_counted = crate::renderer::para_has_no_stored_line_segs(prev_para)
+            let prev_tac_gap_already_counted = (self.mixed_ladder
+                || crate::renderer::para_has_no_stored_line_segs(prev_para))
                 && prev_para
                     .controls
                     .iter()

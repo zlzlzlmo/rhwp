@@ -9,14 +9,26 @@ use std::cell::Cell;
 pub(in crate::renderer::typeset) struct TacFlowQuery<'a> {
     dpi: f64,
     profile: &'a Cell<LayoutCompatibilityProfile>,
+    mixed_ladder: bool,
 }
 
 impl<'a> TacFlowQuery<'a> {
     pub(in crate::renderer::typeset) fn new(
         dpi: f64,
         profile: &'a Cell<LayoutCompatibilityProfile>,
+        mixed_ladder: bool,
     ) -> Self {
-        Self { dpi, profile }
+        Self {
+            dpi,
+            profile,
+            mixed_ladder,
+        }
+    }
+
+    /// 글자처럼 표 줄 간격을 흐름에 **전부** 싣는가 — rhwp 가 지은 줄이거나, 합성 줄과 섞인 구역의 저장 줄.
+    /// 한컴이 통째로 저장한 구역의 저장 줄만 상류 절반 규칙이다.
+    pub(super) fn counts_full_tac_gap(&self, para: &Paragraph) -> bool {
+        self.mixed_ladder || crate::renderer::para_has_no_stored_line_segs(para)
     }
 
     pub(super) fn dpi(&self) -> f64 {

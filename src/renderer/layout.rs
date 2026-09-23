@@ -3083,6 +3083,8 @@ pub struct LayoutEngine {
     /// 참이면 줄 metrics 를 저장값이 아니라 글꼴·문단 스타일에서 다시 뽑고,
     /// `vertical_pos` 앵커 스냅을 끈다 (조판 경로와 같은 규칙).
     uniform_filler_ladder: std::cell::Cell<bool>,
+    /// 조판 경로와 같은 구역 판정 — rhwp 합성 줄과 한컴 저장 줄이 섞였는지.
+    mixed_ladder: std::cell::Cell<bool>,
     /// 렌더용 가상 미주 문단 시작 인덱스
     endnote_para_base: std::cell::Cell<usize>,
     /// 가상 미주 문단별 원본 위치
@@ -3254,6 +3256,7 @@ impl LayoutEngine {
             pre_emitted_host_paras: std::cell::RefCell::new(std::collections::HashSet::new()),
             pre_emitted_host_heights: std::cell::RefCell::new(std::collections::HashMap::new()),
             uniform_filler_ladder: std::cell::Cell::new(false),
+            mixed_ladder: std::cell::Cell::new(false),
             endnote_para_base: std::cell::Cell::new(usize::MAX),
             endnote_para_sources: std::cell::RefCell::new(Vec::new()),
             endnote_between_notes_hu: std::cell::Cell::new(0),
@@ -7042,8 +7045,13 @@ impl LayoutEngine {
                 .set(crate::renderer::stored_line_ladder_is_uniform_filler(
                     paragraphs, styles,
                 ));
+            self.mixed_ladder.set(
+                !self.profile.get().hwpx_stored_layout()
+                    && crate::renderer::section_ladder_is_mixed(paragraphs),
+            );
         }
         hcursor.uniform_filler_ladder = self.uniform_filler_ladder.get();
+        hcursor.mixed_ladder = self.mixed_ladder.get();
         hcursor.session_edited = self.profile.get().session_edited();
         // [Task #1246] 미주 흐름 컬럼에만 between-notes 마진(HU)을 주입 → HeightCursor 가 새 미주
         // 제목 forward 흐름의 min-gap 보정에 사용. 본문 컬럼은 0 (무영향).

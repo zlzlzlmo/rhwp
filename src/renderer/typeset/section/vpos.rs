@@ -59,6 +59,7 @@ impl TypesetEngine {
             suppress_large_forward_jump: false,
             suppress_hwpx_stale_forward: st.profile.hwpx_stored_layout(),
             uniform_filler_ladder: self.uniform_filler_ladder.get(),
+            mixed_ladder: self.mixed_ladder.get(),
             endnote_between_notes_hu: 0,
             prev_item_content_bottom_y: None,
             last_compacted_endnote_title_gap: false,
