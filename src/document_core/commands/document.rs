@@ -3350,7 +3350,10 @@ mod validate_linesegs_tests {
             paragraphs: vec![caption_para],
             ..Default::default()
         });
-        let mut host = Paragraph { char_count: 9, ..Default::default() };
+        let mut host = Paragraph {
+            char_count: 9,
+            ..Default::default()
+        };
         host.controls.push(Control::Table(Box::new(table)));
         let mut section = Section::default();
         section.paragraphs.push(host);
@@ -3363,10 +3366,18 @@ mod validate_linesegs_tests {
         core.reflow_linesegs_on_demand();
 
         let host = &core.document().sections[0].paragraphs[0];
-        let Control::Table(table) = &host.controls[0] else { panic!("table") };
+        let Control::Table(table) = &host.controls[0] else {
+            panic!("table")
+        };
         let caption_line = table.caption.as_ref().unwrap().paragraphs[0].line_segs[0].line_height;
-        assert!(caption_line > 400, "캡션 줄은 글자 크기로 짠다(기본값 400 아님): {caption_line}");
-        assert_eq!(host.line_segs[0].line_height, 5_644 + 282 + caption_line + 850);
+        assert!(
+            caption_line > 400,
+            "캡션 줄은 글자 크기로 짠다(기본값 400 아님): {caption_line}"
+        );
+        assert_eq!(
+            host.line_segs[0].line_height,
+            5_644 + 282 + caption_line + 850
+        );
     }
 
     const CELL_WIDTH: u32 = 20_000;

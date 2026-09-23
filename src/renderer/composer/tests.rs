@@ -1073,8 +1073,16 @@ fn test_reflow_last_line_includes_paragraph_end_mark_char_shape() {
     let styles = ResolvedStyleSet {
         hwp3_variant: false,
         char_styles: vec![
-            ResolvedCharStyle { font_size: px(9.0), ratio: 1.0, ..Default::default() },
-            ResolvedCharStyle { font_size: px(10.5), ratio: 1.0, ..Default::default() },
+            ResolvedCharStyle {
+                font_size: px(9.0),
+                ratio: 1.0,
+                ..Default::default()
+            },
+            ResolvedCharStyle {
+                font_size: px(10.5),
+                ratio: 1.0,
+                ..Default::default()
+            },
         ],
         para_styles: vec![ResolvedParaStyle::default()],
         ..Default::default()
@@ -1086,16 +1094,32 @@ fn test_reflow_last_line_includes_paragraph_end_mark_char_shape() {
         char_shapes: shapes,
         ..Default::default()
     };
-    let text_only = CharShapeRef { start_pos: 0, char_shape_id: 0 };
-    let end_mark = CharShapeRef { start_pos: 3, char_shape_id: 1 };
+    let text_only = CharShapeRef {
+        start_pos: 0,
+        char_shape_id: 0,
+    };
+    let end_mark = CharShapeRef {
+        start_pos: 3,
+        char_shape_id: 1,
+    };
 
     let mut with_mark = paragraph(vec![text_only.clone(), end_mark]);
-    reflow_line_segs(&mut with_mark, ParagraphBox::content_width_px(500.0, 96.0), &styles, 96.0);
+    reflow_line_segs(
+        &mut with_mark,
+        ParagraphBox::content_width_px(500.0, 96.0),
+        &styles,
+        96.0,
+    );
     assert_eq!(with_mark.line_segs.len(), 1);
     assert_eq!(with_mark.line_segs[0].line_height, 1050);
 
     let mut without_mark = paragraph(vec![text_only]);
-    reflow_line_segs(&mut without_mark, ParagraphBox::content_width_px(500.0, 96.0), &styles, 96.0);
+    reflow_line_segs(
+        &mut without_mark,
+        ParagraphBox::content_width_px(500.0, 96.0),
+        &styles,
+        96.0,
+    );
     assert_eq!(without_mark.line_segs[0].line_height, 900);
 }
 
@@ -2301,7 +2325,11 @@ fn reflow_tac_table_line_height_includes_top_bottom_caption() {
                 direction,
                 spacing: 850,
                 paragraphs: vec![Paragraph {
-                    line_segs: vec![LineSeg { line_height: 1_300, text_height: 1_300, ..Default::default() }],
+                    line_segs: vec![LineSeg {
+                        line_height: 1_300,
+                        text_height: 1_300,
+                        ..Default::default()
+                    }],
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -2313,11 +2341,21 @@ fn reflow_tac_table_line_height_includes_top_bottom_caption() {
     };
 
     let mut top = with_caption(CaptionDirection::Top);
-    reflow_line_segs(&mut top, ParagraphBox::content_width_px(700.0, 96.0), &styles, 96.0);
+    reflow_line_segs(
+        &mut top,
+        ParagraphBox::content_width_px(700.0, 96.0),
+        &styles,
+        96.0,
+    );
     assert_eq!(top.line_segs[0].line_height, 5_644 + 282 + 1_300 + 850);
 
     let mut left = with_caption(CaptionDirection::Left);
-    reflow_line_segs(&mut left, ParagraphBox::content_width_px(700.0, 96.0), &styles, 96.0);
+    reflow_line_segs(
+        &mut left,
+        ParagraphBox::content_width_px(700.0, 96.0),
+        &styles,
+        96.0,
+    );
     assert_eq!(left.line_segs[0].line_height, 5_644 + 282);
 }
 

@@ -3473,7 +3473,9 @@ impl TypesetEngine {
                 paragraphs, styles,
             ));
         self.mixed_ladder
-            .set(crate::renderer::section_ladder_is_mixed(paragraphs, &profile));
+            .set(crate::renderer::section_ladder_is_mixed(
+                paragraphs, &profile,
+            ));
         *self.float_carve_evidence.borrow_mut() =
             crate::renderer::float_placement::paper_or_page_float_carve_evidence(paragraphs);
     }
@@ -5203,7 +5205,13 @@ impl TypesetEngine {
         }
         if composed_host {
             if signed_hwpunit(table.common.vertical_offset) < 0
-                || !self.pre_emit_visible_rowbreak_host_text(st, para_idx, para, composed_all, styles)
+                || !self.pre_emit_visible_rowbreak_host_text(
+                    st,
+                    para_idx,
+                    para,
+                    composed_all,
+                    styles,
+                )
             {
                 return;
             }

@@ -2423,7 +2423,10 @@ fn tac_table_caption_extent_hu(table: &crate::model::table::Table) -> i32 {
     let Some(caption) = table.caption.as_ref() else {
         return 0;
     };
-    if matches!(caption.direction, CaptionDirection::Left | CaptionDirection::Right) {
+    if matches!(
+        caption.direction,
+        CaptionDirection::Left | CaptionDirection::Right
+    ) {
         return 0;
     }
     let height = super::caption_height_hu(&table.caption);

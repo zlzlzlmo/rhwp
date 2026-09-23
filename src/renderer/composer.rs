@@ -688,7 +688,11 @@ pub fn caption_height_hu(caption: &Option<Caption>) -> i32 {
         } else {
             for (i, line) in composed.lines.iter().enumerate() {
                 // 마지막 줄은 line_spacing 제외
-                let spacing = if i < composed.lines.len() - 1 { line.line_spacing } else { 0 };
+                let spacing = if i < composed.lines.len() - 1 {
+                    line.line_spacing
+                } else {
+                    0
+                };
                 composed_height += line.line_height + spacing;
             }
         }

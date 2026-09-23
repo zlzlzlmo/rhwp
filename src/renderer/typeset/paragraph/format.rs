@@ -655,8 +655,14 @@ mod tac_margin_tests {
         let table_px = hwpunit_to_px(7200, dpi);
         let margin_px = hwpunit_to_px(566, dpi);
 
-        assert_eq!(tac_outer_margin_deficit_px(&table, table_px, dpi), margin_px);
-        assert_eq!(tac_outer_margin_deficit_px(&table, table_px + margin_px, dpi), 0.0);
+        assert_eq!(
+            tac_outer_margin_deficit_px(&table, table_px, dpi),
+            margin_px
+        );
+        assert_eq!(
+            tac_outer_margin_deficit_px(&table, table_px + margin_px, dpi),
+            0.0
+        );
         let half = tac_outer_margin_deficit_px(&table, table_px + margin_px / 2.0, dpi);
         assert!((half - margin_px / 2.0).abs() < 1e-9);
     }

@@ -344,15 +344,16 @@ impl HeightCursor {
                     Control::Shape(s) => s.common().treat_as_char,
                     _ => false,
                 });
-            let trailing_ls_hu = if (vpos_continuous && prev_has_text) || prev_tac_gap_already_counted {
-                0
-            } else {
-                paragraphs
-                    .get(prev_pi)
-                    .and_then(|p| p.line_segs.last())
-                    .map(|s| s.line_spacing.max(0))
-                    .unwrap_or(0)
-            };
+            let trailing_ls_hu =
+                if (vpos_continuous && prev_has_text) || prev_tac_gap_already_counted {
+                    0
+                } else {
+                    paragraphs
+                        .get(prev_pi)
+                        .and_then(|p| p.line_segs.last())
+                        .map(|s| s.line_spacing.max(0))
+                        .unwrap_or(0)
+                };
             // [#6753] 역산 기준을 **트림 이전의 흐름 위치**로 맞춘다.
             //
             // `y_offset` 은 직전 문단이 `#2279 ①` 트림으로 `sb` 를 빼고 전진한 결과다.
