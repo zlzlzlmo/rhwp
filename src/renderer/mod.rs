@@ -1367,15 +1367,29 @@ pub(crate) fn para_has_no_stored_line_segs(p: &crate::model::paragraph::Paragrap
 /// 구역에 rhwp 가 다시 조판한 줄(합성 태그)과 한컴 저장 줄이 **함께** 있는가 — 채움·편집으로 사다리가 고쳐진
 /// 구역이다. 한컴이 통째로 저장한 구역(합성 줄 0)과 통째 합성 구역(저장 줄 0)은 거짓이다.
 /// 🔴 HWP5 바이너리에서만 이 뜻이다 — 한컴은 HWP5 문단마다 줄을 적으므로 합성 비트는 rhwp 가 쓴 것이다. HWPX 는
-/// 한컴이 줄을 안 적은 문단을 로더가 합성하므로(hwp3-sample16-hwp5.hwpx) 호출부가 hwpx 저장 조판에선 끈다.
-pub(crate) fn section_ladder_is_mixed(paragraphs: &[crate::model::paragraph::Paragraph]) -> bool {
+/// 한컴이 줄을 안 적은 문단을 로더가 합성하므로(hwp3-sample16-hwp5.hwpx) hwpx 저장 조판에선 거짓이다.
+/// rhwp 가 HWP5 에서 내보낸 HWPX(`hwp5_origin_hwpx`)는 합성 줄 배열을 통째로 생략해 싣는다(#5847 — 한/글이 다시
+/// 계산하게) — 다시 읽으면 줄 배열 없는 문단이 곧 rhwp 가 조판한 문단이다(채운 제출본의 hwpx 받기).
+pub(crate) fn section_ladder_is_mixed(
+    paragraphs: &[crate::model::paragraph::Paragraph],
+    profile: &crate::model::provenance::LayoutCompatibilityProfile,
+) -> bool {
+    if profile.hwpx_stored_layout() {
+        return false;
+    }
+    let omitted_is_synthetic = profile.hwp5_origin_hwpx();
     let mut synthetic = false;
     let mut stored = false;
-    for seg in paragraphs.iter().flat_map(|p| p.line_segs.iter()) {
-        if seg.tag & 0x8000_0000 != 0 {
-            synthetic = true;
-        } else {
-            stored = true;
+    for para in paragraphs {
+        if para.line_segs.is_empty() {
+            synthetic |= omitted_is_synthetic;
+        }
+        for seg in &para.line_segs {
+            if seg.tag & 0x8000_0000 != 0 {
+                synthetic = true;
+            } else {
+                stored = true;
+            }
         }
         if synthetic && stored {
             return true;

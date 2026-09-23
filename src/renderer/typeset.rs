@@ -3412,7 +3412,7 @@ impl TypesetEngine {
                 paragraphs, styles,
             ));
         self.mixed_ladder
-            .set(!profile.hwpx_stored_layout() && crate::renderer::section_ladder_is_mixed(paragraphs));
+            .set(crate::renderer::section_ladder_is_mixed(paragraphs, &profile));
         *self.float_carve_evidence.borrow_mut() =
             crate::renderer::float_placement::paper_or_page_float_carve_evidence(paragraphs);
     }

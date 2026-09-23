@@ -7045,10 +7045,8 @@ impl LayoutEngine {
                 .set(crate::renderer::stored_line_ladder_is_uniform_filler(
                     paragraphs, styles,
                 ));
-            self.mixed_ladder.set(
-                !self.profile.get().hwpx_stored_layout()
-                    && crate::renderer::section_ladder_is_mixed(paragraphs),
-            );
+            self.mixed_ladder
+                .set(crate::renderer::section_ladder_is_mixed(paragraphs, &self.profile.get()));
         }
         hcursor.uniform_filler_ladder = self.uniform_filler_ladder.get();
         hcursor.mixed_ladder = self.mixed_ladder.get();

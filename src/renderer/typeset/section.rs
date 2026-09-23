@@ -56,7 +56,7 @@ impl TypesetEngine {
             ));
         // rhwp 합성 줄과 한컴 저장 줄이 섞인 구역인가 — 구역당 한 번(글자처럼 표 간격 계상 · lazy 다리).
         self.mixed_ladder
-            .set(!profile.hwpx_stored_layout() && crate::renderer::section_ladder_is_mixed(paragraphs));
+            .set(crate::renderer::section_ladder_is_mixed(paragraphs, &profile));
         // [#6175] 용지/쪽 기준 어울림 개체의 폭과 세로 band - 구역당 한 번.
         *self.float_carve_evidence.borrow_mut() =
             crate::renderer::float_placement::paper_or_page_float_carve_evidence(paragraphs);
