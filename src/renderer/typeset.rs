@@ -3196,6 +3196,8 @@ pub(crate) struct DumpFormattedParagraphHeight {
 mod controls;
 #[path = "typeset/inline_flow.rs"]
 mod inline_flow;
+#[cfg(test)]
+mod keep_tests;
 mod notes;
 mod paragraph;
 mod section;

@@ -1,6 +1,62 @@
 //! 구역 문단 처리의 keep_heading_with_following_block 단계. 조건·예약·발행 순서를 유지한다.
+use crate::renderer::composer::ComposedParagraph;
+use crate::renderer::style_resolver::ResolvedStyleSet;
 use crate::renderer::typeset::{PageItem, Paragraph, TypesetEngine, TypesetState};
 impl TypesetEngine {
+    /// 한/글 «다음 문단과 함께»(문단 모양) — 이 문단이 다음 문단의 **첫 줄**과 같은 쪽에 서야 한다.
+    ///
+    /// 맥 한글 12.30 쓸기 실측(채움 줄 34~42 · 한 줄 제목 + 7줄 본문, 2026-09-23): 본문 첫 줄이 이 쪽에 들어가면
+    /// 본문이 갈려도 제목은 그대로다(1/6 분할까지 같음). 본문 첫 줄이 못 들어가면 제목이 본문과 함께 다음 쪽으로
+    /// 간다 — 보호가 없으면 제목만 쪽 끝에 홀로 남는 자리다.
+    /// 사슬(«다음 문단과 함께»가 잇달아 걸린 문단들)은 앞머리에서 통째로 잰다 — 사슬 전부 + 마지막 다음 문단의 첫 줄.
+    /// 사슬이 한 쪽보다 크면 넘겨도 소용없으니 그대로 둔다. 이 쪽에 이미 무엇이 있을 때만 넘긴다.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn keep_paragraph_with_next(
+        &self,
+        st: &mut TypesetState,
+        para_idx: usize,
+        para: &Paragraph,
+        paragraphs: &[Paragraph],
+        composed: &[ComposedParagraph],
+        styles: &ResolvedStyleSet,
+    ) {
+        let keeps = |p: &Paragraph| {
+            styles
+                .para_styles
+                .get(p.para_shape_id as usize)
+                .is_some_and(|style| style.keep_with_next)
+        };
+        if !keeps(para)
+            || st.current_items.is_empty()
+            || st.col_count != 1
+            || st.wrap_around_cs >= 0
+            || (para_idx > 0 && keeps(&paragraphs[para_idx - 1]))
+        {
+            return;
+        }
+        let col_w = st
+            .layout
+            .column_areas
+            .get(st.current_column as usize)
+            .map(|a| a.width)
+            .unwrap_or(st.layout.body_area.width);
+        let mut need = 0.0;
+        let mut j = para_idx;
+        while let Some(p) = paragraphs.get(j) {
+            let fmt = self.format_paragraph(p, composed.get(j), styles, Some(col_w));
+            if keeps(p) && j + 1 < paragraphs.len() {
+                need += fmt.total_height;
+                j += 1;
+                continue;
+            }
+            need += fmt.spacing_before + fmt.line_heights.first().copied().unwrap_or(0.0);
+            break;
+        }
+        if need <= st.base_available_height() && st.current_height + need > st.available_height() {
+            st.advance_column_or_new_page();
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn keep_heading_with_following_block(
         &self,

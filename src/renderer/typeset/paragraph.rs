@@ -57,6 +57,7 @@ pub(super) fn place_split_paragraph(
     native_hwp5_existing_footnote_reset_line: Option<usize>,
     current_page_vpos_base: Option<i32>,
     is_tac_picture_stack: bool,
+    keep: ParagraphKeep,
     dpi: f64,
 ) {
     // 줄 단위 분할 루프
@@ -124,6 +125,27 @@ pub(super) fn place_split_paragraph(
                 cumulative,
             },
         );
+
+        let split::SplitBoundary {
+            end_line,
+            cumulative,
+        } = match keep.adjust(
+            fmt,
+            cursor_line,
+            line_count,
+            base_available,
+            !st.current_items.is_empty(),
+            split::SplitBoundary {
+                end_line,
+                cumulative,
+            },
+        ) {
+            Some(boundary) => boundary,
+            None => {
+                st.advance_column_or_new_page();
+                continue;
+            }
+        };
 
         let Some(fragment) = placement::plan_fragment(
             fmt,
@@ -414,8 +436,74 @@ pub(super) fn place_after_failed_fit(
         native_hwp5_existing_footnote_reset_line,
         current_page_vpos_base,
         is_tac_picture_stack,
+        ParagraphKeep::of(para, styles),
         dpi,
     );
+}
+
+/// 한/글 문단 모양의 쪽 나눔 보호 두 가지 — 분할 경계를 고르거나 문단째 넘긴다.
+///
+/// 맥 한글 12.30 쓸기 실측(채움 줄 34~42 + 7줄 문단, 2026-09-23):
+/// - «외톨이줄 보호»: 쪽 끝에 첫 줄 하나만 남으면 문단째 넘기고(1/6 → 0/7), 끝 줄 하나만 다음 쪽이면
+///   한 줄을 더 넘긴다(6/1 → 5/2). 둘 사이(2~5줄이 이 쪽)는 보호가 없을 때와 같다.
+/// - «문단 보호»: 쪽을 넘겨 갈릴 문단은 통째 다음 쪽으로 — 한 쪽보다 크면 어쩔 수 없이 가른다.
+///
+/// 두 규칙 모두 이 쪽에 이미 무엇이 있을 때만 넘긴다(빈 쪽에서 또 넘기면 끝없이 돈다).
+#[derive(Clone, Copy, Default)]
+pub(super) struct ParagraphKeep {
+    widow_orphan: bool,
+    keep_lines: bool,
+}
+
+impl ParagraphKeep {
+    fn of(para: &Paragraph, styles: &ResolvedStyleSet) -> Self {
+        styles
+            .para_styles
+            .get(para.para_shape_id as usize)
+            .map(|s| Self {
+                widow_orphan: s.widow_orphan,
+                keep_lines: s.keep_lines,
+            })
+            .unwrap_or_default()
+    }
+
+    /// 확정 경계를 보호 규칙으로 고친다. `None`이면 이 쪽에 한 줄도 두지 말고 넘긴다.
+    fn adjust(
+        self,
+        fmt: &FormattedParagraph,
+        cursor_line: usize,
+        line_count: usize,
+        page_body: f64,
+        page_has_items: bool,
+        boundary: split::SplitBoundary,
+    ) -> Option<split::SplitBoundary> {
+        let split::SplitBoundary {
+            mut end_line,
+            mut cumulative,
+        } = boundary;
+        if end_line >= line_count {
+            return Some(split::SplitBoundary {
+                end_line,
+                cumulative,
+            });
+        }
+        if self.keep_lines && cursor_line == 0 && page_has_items && fmt.total_height <= page_body {
+            return None;
+        }
+        if self.widow_orphan && line_count >= 2 {
+            if line_count - end_line == 1 && end_line > cursor_line + 1 {
+                end_line -= 1;
+                cumulative = fmt.line_advances_sum(cursor_line..end_line);
+            }
+            if cursor_line == 0 && end_line < cursor_line + 2 && page_has_items {
+                return None;
+            }
+        }
+        Some(split::SplitBoundary {
+            end_line,
+            cumulative,
+        })
+    }
 }
 
 /// 문단 진입 조정과 1회성 fit 예산 소비 결과. 실제 분할 경계는 이후에 계산한다.

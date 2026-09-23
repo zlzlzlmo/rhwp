@@ -344,6 +344,11 @@ impl TypesetEngine {
 
             st.ensure_page();
 
+            if !has_table {
+                self.keep_paragraph_with_next(
+                    &mut st, para_idx, para, paragraphs, composed, styles,
+                );
+            }
             self.keep_heading_with_following_block(&mut st, para_idx, para, paragraphs);
 
             let picture_host_origin = (st.pages.len(), st.current_column, st.current_height);
