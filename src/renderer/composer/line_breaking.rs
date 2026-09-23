@@ -2356,6 +2356,22 @@ fn paragraph_font_size_px(para: &Paragraph, styles: &ResolvedStyleSet) -> Option
         })
 }
 
+/// 문단 끝 표시의 글자 모양 크기 — 글자 뒤(문단 끝 위치)에서 시작하는 글자 모양 구간이 있으면 그 첫 구간의 크기.
+/// 한/글은 마지막 줄 높이에 문단 끝 표시를 넣는다(한컴 저장 hwpx 1b824865: 「업체명」 9pt 런 뒤 빈 런 10.5pt →
+/// 줄 높이 1050). 같은 위치의 구간이 둘이면 한/글은 앞의 것을 쓴다(수정 d2b089cd 실측).
+fn paragraph_end_mark_font_size_px(
+    para: &Paragraph,
+    styles: &ResolvedStyleSet,
+    text_utf16_len: u32,
+) -> Option<f64> {
+    para.char_shapes
+        .iter()
+        .find(|cs| cs.start_pos >= text_utf16_len)
+        .and_then(|cs| styles.char_styles.get(cs.char_shape_id as usize))
+        .map(|style| style.font_size)
+        .filter(|fs| *fs > 0.0)
+}
+
 fn inline_control_line_height_hwp(para: &Paragraph) -> Option<i32> {
     para.controls
         .iter()
@@ -2396,6 +2412,25 @@ fn inline_control_size_hwp(ctrl: &Control) -> Option<(i32, i32)> {
         Some((width, height))
     } else {
         None
+    }
+}
+
+/// 글자처럼 취급한 표의 위·아래 캡션이 표 줄에 더하는 높이(HWPUNIT) — 캡션 + 캡션-표 간격.
+/// 한컴은 표 줄 높이(vertsize)에 캡션을 담는다(예창패 배포본 「< 팀 구성(안) >」: 표 7490 + 바깥 여백 +
+/// 캡션 줄 1300 + 간격 850 → 9920). 왼쪽·오른쪽 캡션은 표 높이에 영향이 없다(`height_measurer` 와 같은 규칙).
+fn tac_table_caption_extent_hu(table: &crate::model::table::Table) -> i32 {
+    use crate::model::shape::CaptionDirection;
+    let Some(caption) = table.caption.as_ref() else {
+        return 0;
+    };
+    if matches!(caption.direction, CaptionDirection::Left | CaptionDirection::Right) {
+        return 0;
+    }
+    let height = super::caption_height_hu(&table.caption);
+    if height > 0 {
+        height.saturating_add(caption.spacing as i32)
+    } else {
+        0
     }
 }
 
@@ -2848,6 +2883,11 @@ fn layout_paragraph_in_frame_impl(
             Some((height_hwp, baseline_distance_hwp))
         })
         .flatten();
+    let end_mark_fs = paragraph_end_mark_font_size_px(
+        para,
+        styles,
+        char_index_to_utf16_offset(para, text_chars.len()),
+    );
     // Fresh rows inherit only provenance. Page/column-first, empty, indent,
     // paragraph-head, and FIRST/LAST are properties of the newly projected
     // physical row and must not leak from the cached first row.
@@ -2944,6 +2984,12 @@ fn layout_paragraph_in_frame_impl(
                     };
                     let line = &filled.line;
                     maximum_font_size = maximum_font_size.max(line.max_font_size);
+                    // 마지막 줄은 문단 끝 표시의 글자 모양까지 잰다(`paragraph_end_mark_font_size_px`).
+                    if filled.termination == FillTermination::ParagraphEnd {
+                        if let Some(mark) = end_mark_fs {
+                            maximum_font_size = maximum_font_size.max(mark);
+                        }
+                    }
                     for control in inline_controls.iter().filter(|control| {
                         (line.start_idx..line.end_idx).contains(&control.char_position)
                             || (line.end_idx == text_chars.len()
@@ -3733,7 +3779,8 @@ fn reflow_line_segs_impl(
                     let height = match ctrl {
                         Control::Table(table) => height
                             .saturating_add(i32::from(table.outer_margin_top))
-                            .saturating_add(i32::from(table.outer_margin_bottom)),
+                            .saturating_add(i32::from(table.outer_margin_bottom))
+                            .saturating_add(tac_table_caption_extent_hu(table)),
                         _ => height,
                     };
                     (start, (width, height))
@@ -4017,6 +4064,8 @@ fn reflow_line_segs_impl(
         .flatten();
     let preserved_prefix_len = preserved_prefix.len();
     let mut new_line_segs: Vec<LineSeg> = preserved_prefix;
+    let end_mark_fs =
+        paragraph_end_mark_font_size_px(para, styles, char_index_to_utf16_offset(para, text_len));
     for (line_idx, lb) in line_breaks.iter().enumerate() {
         let utf16_start = if new_line_segs.is_empty() {
             0 // 첫 번째 줄의 text_start는 항상 0 (문단 시작)
@@ -4027,6 +4076,11 @@ fn reflow_line_segs_impl(
             lb.max_font_size
         } else {
             paragraph_font_size_px(para, styles).unwrap_or(12.0)
+        };
+        // 마지막 줄은 문단 끝 표시의 글자 모양까지 잰다(`paragraph_end_mark_font_size_px`).
+        let fs = match end_mark_fs {
+            Some(mark) if line_idx + 1 == line_breaks.len() => fs.max(mark),
+            _ => fs,
         };
         let mut text_seg = make_line_seg(utf16_start, fs);
         if forced_inline_line.is_some_and(|(position, _)| position == lb.start_idx) {

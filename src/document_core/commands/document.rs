@@ -1388,6 +1388,39 @@ impl DocumentCore {
             .any(|section| in_paragraphs(&section.paragraphs))
     }
 
+    /// 표 캡션 문단을 on-demand 로 조판한다 — 줄이 없는 캡션만(골든 전처리가 조판 캐시를 걷은 양식).
+    /// 상자는 캡션 최대 폭(없으면 표 폭)이다. 반환값: reflow 한 캡션 문단 수.
+    fn reflow_table_caption_on_demand(
+        table: &mut crate::model::table::Table,
+        styles: &ResolvedStyleSet,
+        dpi: f64,
+    ) -> usize {
+        let table_width = table.common.width;
+        let Some(caption) = table.caption.as_mut() else {
+            return 0;
+        };
+        let width_hu = if caption.max_width > 0 {
+            caption.max_width
+        } else {
+            table_width
+        };
+        let width_px = crate::renderer::hwpunit_to_px(width_hu as i32, dpi);
+        let mut reflowed = 0usize;
+        for para in &mut caption.paragraphs {
+            if Self::needs_reflow_broadly(para) {
+                let para_style = styles.para_styles.get(para.para_shape_id as usize);
+                reflow_line_segs(
+                    para,
+                    ParagraphBox::body_for_style(width_px, para_style, dpi),
+                    styles,
+                    dpi,
+                );
+                reflowed += 1;
+            }
+        }
+        reflowed
+    }
+
     /// 표 하나의 칸 문단을 on-demand 로 다시 조판한다 (#177) — 한/글 저장 규약대로.
     ///
     /// - 상자: 칸 안쪽 폭에서 **문단 좌우 여백을 뺀** 구간([`ParagraphBox::cell_for_style`]).
@@ -1495,6 +1528,13 @@ impl DocumentCore {
                     matches!(control, Control::Picture(picture) if !picture.common.treat_as_char)
                 }) {
                     latest_non_tac_picture_host = Some(pi);
+                }
+                // 표 캡션을 호스트 줄보다 먼저 짠다 — 글자처럼 표의 줄 높이는 캡션 줄 + 간격을 담는다
+                // (`tac_table_caption_extent_hu`). 캡션 줄이 없으면 캡션 높이가 기본값(400)으로 떨어진다.
+                for ctrl in &mut section.paragraphs[pi].controls {
+                    if let Control::Table(ref mut table) = ctrl {
+                        reflowed += Self::reflow_table_caption_on_demand(table, &styles, dpi);
+                    }
                 }
                 if Self::needs_reflow_broadly(&section.paragraphs[pi]) {
                     // A damaged successor can still belong to a stored
@@ -3281,6 +3321,52 @@ mod validate_linesegs_tests {
         core.set_document(document);
         core.validation_report = DocumentCore::validate_linesegs(core.document(), false);
         core
+    }
+
+    /// 줄 없는 캡션(골든 전처리가 조판 캐시를 걷은 양식)도 요청 시 reflow 가 짠다 — 호스트 줄보다 먼저 짜야
+    /// 글자처럼 표의 줄 높이가 실제 캡션 줄을 담는다(예창패 배포본 「< 팀 구성(안) >」: 캡션 줄이 없으면 기본값 400).
+    #[test]
+    fn on_demand_reflows_table_caption_before_its_tac_host() {
+        use crate::model::shape::{Caption, CaptionDirection};
+        use crate::model::table::Table;
+
+        let caption_text = "< 팀 구성(안) >";
+        let caption_para = Paragraph {
+            text: caption_text.to_string(),
+            char_offsets: (0..caption_text.chars().count() as u32).collect(),
+            char_count: caption_text.chars().count() as u32 + 1,
+            has_para_text: true,
+            ..Default::default()
+        };
+        let mut table = Table::default();
+        table.outer_margin_top = 141;
+        table.outer_margin_bottom = 141;
+        table.common.treat_as_char = true;
+        table.common.width = 48_000;
+        table.common.height = 5_644;
+        table.caption = Some(Caption {
+            direction: CaptionDirection::Top,
+            spacing: 850,
+            paragraphs: vec![caption_para],
+            ..Default::default()
+        });
+        let mut host = Paragraph { char_count: 9, ..Default::default() };
+        host.controls.push(Control::Table(Box::new(table)));
+        let mut section = Section::default();
+        section.paragraphs.push(host);
+        let mut document = Document::default();
+        document.sections.push(section);
+        let mut core = DocumentCore::new_empty();
+        core.set_document(document);
+        core.validation_report = DocumentCore::validate_linesegs(core.document(), false);
+
+        core.reflow_linesegs_on_demand();
+
+        let host = &core.document().sections[0].paragraphs[0];
+        let Control::Table(table) = &host.controls[0] else { panic!("table") };
+        let caption_line = table.caption.as_ref().unwrap().paragraphs[0].line_segs[0].line_height;
+        assert!(caption_line > 400, "캡션 줄은 글자 크기로 짠다(기본값 400 아님): {caption_line}");
+        assert_eq!(host.line_segs[0].line_height, 5_644 + 282 + caption_line + 850);
     }
 
     const CELL_WIDTH: u32 = 20_000;

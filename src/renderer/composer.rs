@@ -655,39 +655,41 @@ pub(crate) fn stored_tac_lines(para: &Paragraph) -> Option<Vec<StoredTacLine>> {
 /// (`2d973021c`가 `samples/rowbreak-problem-pages.hwpx`에서 고친 오버랩이 이 경우다).
 /// `line_segs`가 비어 있으면(레이아웃 전/미저장 캡션) `compose_paragraph`로만 계산한다.
 pub fn caption_height_px(caption: &Option<Caption>, dpi: f64) -> f64 {
+    hwpunit_to_px(caption_height_hu(caption), dpi)
+}
+
+/// [`caption_height_px`]의 HWPUNIT 판 — 같은 산식이다. 글자처럼 취급한 표의 줄 높이(재조판)가 캡션을
+/// 담을 때 쓴다(한컴 저장 줄은 표 + 바깥 여백 + 캡션 + 캡션 간격을 한 줄 높이로 적는다).
+pub fn caption_height_hu(caption: &Option<Caption>) -> i32 {
     let caption = match caption {
         Some(c) => c,
-        None => return 0.0,
+        None => return 0,
     };
 
     if caption.paragraphs.is_empty() {
-        return 0.0;
+        return 0;
     }
 
     // line_segs가 비어 컴포즈로 대체할 때 쓰는 기본 줄 높이(HWPUNIT).
     const DEFAULT_LINE_HEIGHT_HWPUNIT: i32 = 400;
 
-    let mut line_seg_height = 0.0f64;
-    let mut composed_height = 0.0f64;
+    let mut line_seg_height = 0i32;
+    let mut composed_height = 0i32;
     for para in &caption.paragraphs {
         if let (Some(first), Some(last)) = (para.line_segs.first(), para.line_segs.last()) {
             let para_top = first.vertical_pos.min(0);
             let para_bottom = last.vertical_pos.saturating_add(last.line_height);
-            line_seg_height = line_seg_height.max(hwpunit_to_px(para_bottom - para_top, dpi));
+            line_seg_height = line_seg_height.max(para_bottom - para_top);
         }
 
         let composed = compose_paragraph(para);
         if composed.lines.is_empty() {
-            composed_height += hwpunit_to_px(DEFAULT_LINE_HEIGHT_HWPUNIT, dpi); // 기본 줄 높이
+            composed_height += DEFAULT_LINE_HEIGHT_HWPUNIT; // 기본 줄 높이
         } else {
             for (i, line) in composed.lines.iter().enumerate() {
-                let line_h = hwpunit_to_px(line.line_height, dpi);
-                let spacing = if i < composed.lines.len() - 1 {
-                    hwpunit_to_px(line.line_spacing, dpi)
-                } else {
-                    0.0 // 마지막 줄은 line_spacing 제외
-                };
-                composed_height += line_h + spacing;
+                // 마지막 줄은 line_spacing 제외
+                let spacing = if i < composed.lines.len() - 1 { line.line_spacing } else { 0 };
+                composed_height += line.line_height + spacing;
             }
         }
     }

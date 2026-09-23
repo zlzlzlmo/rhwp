@@ -1064,6 +1064,41 @@ fn test_reflow_long_text_multi_line() {
     assert_eq!(para.line_segs[1].text_start, 5); // 6번째 글자부터 2번째 줄
 }
 
+/// 문단 끝 표시의 글자 모양이 마지막 줄 높이에 든다 — 한컴 저장 hwpx(1b824865 「업체명」): 9pt 런 뒤
+/// `<hp:run charPrIDRef="10.5pt"/>` 빈 런이면 한/글은 줄 높이 1050 을 적는다.
+#[test]
+fn test_reflow_last_line_includes_paragraph_end_mark_char_shape() {
+    use crate::renderer::style_resolver::{ResolvedCharStyle, ResolvedParaStyle};
+    let px = |pt: f64| pt * 96.0 / 72.0;
+    let styles = ResolvedStyleSet {
+        hwp3_variant: false,
+        char_styles: vec![
+            ResolvedCharStyle { font_size: px(9.0), ratio: 1.0, ..Default::default() },
+            ResolvedCharStyle { font_size: px(10.5), ratio: 1.0, ..Default::default() },
+        ],
+        para_styles: vec![ResolvedParaStyle::default()],
+        ..Default::default()
+    };
+    let paragraph = |shapes: Vec<CharShapeRef>| Paragraph {
+        text: "업체명".to_string(),
+        char_offsets: vec![0, 1, 2],
+        char_count: 4,
+        char_shapes: shapes,
+        ..Default::default()
+    };
+    let text_only = CharShapeRef { start_pos: 0, char_shape_id: 0 };
+    let end_mark = CharShapeRef { start_pos: 3, char_shape_id: 1 };
+
+    let mut with_mark = paragraph(vec![text_only.clone(), end_mark]);
+    reflow_line_segs(&mut with_mark, ParagraphBox::content_width_px(500.0, 96.0), &styles, 96.0);
+    assert_eq!(with_mark.line_segs.len(), 1);
+    assert_eq!(with_mark.line_segs[0].line_height, 1050);
+
+    let mut without_mark = paragraph(vec![text_only]);
+    reflow_line_segs(&mut without_mark, ParagraphBox::content_width_px(500.0, 96.0), &styles, 96.0);
+    assert_eq!(without_mark.line_segs[0].line_height, 900);
+}
+
 /// 빈 텍스트 → 기본 LineSeg 1개
 #[test]
 fn test_reflow_empty_text() {
@@ -2241,6 +2276,49 @@ fn issue4149_fit_judgment_is_cached_without_rewrap() {
         1,
         "정합 단일줄은 재래핑하지 않아야 함"
     );
+}
+
+/// 글자처럼 취급한 표의 위·아래 캡션은 표 줄 높이에 든다 — 한컴 저장 hwpx(예창패 배포본 「< 팀 구성(안) >」):
+/// 표 + 바깥 여백 + 캡션 줄 + 캡션 간격이 한 줄 높이다. 왼쪽·오른쪽 캡션은 표 높이에 영향이 없다.
+#[test]
+fn reflow_tac_table_line_height_includes_top_bottom_caption() {
+    use crate::model::control::Control;
+    use crate::model::shape::{Caption, CaptionDirection};
+    use crate::model::table::Table;
+
+    let styles = make_styles_with_font_size(16.0);
+    let with_caption = |direction| Paragraph {
+        controls: vec![Control::Table(Box::new(Table {
+            outer_margin_top: 141,
+            outer_margin_bottom: 141,
+            common: crate::model::shape::CommonObjAttr {
+                treat_as_char: true,
+                width: 48_047,
+                height: 5_644,
+                ..Default::default()
+            },
+            caption: Some(Caption {
+                direction,
+                spacing: 850,
+                paragraphs: vec![Paragraph {
+                    line_segs: vec![LineSeg { line_height: 1_300, text_height: 1_300, ..Default::default() }],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            ..Default::default()
+        }))],
+        char_count: 9,
+        ..Default::default()
+    };
+
+    let mut top = with_caption(CaptionDirection::Top);
+    reflow_line_segs(&mut top, ParagraphBox::content_width_px(700.0, 96.0), &styles, 96.0);
+    assert_eq!(top.line_segs[0].line_height, 5_644 + 282 + 1_300 + 850);
+
+    let mut left = with_caption(CaptionDirection::Left);
+    reflow_line_segs(&mut left, ParagraphBox::content_width_px(700.0, 96.0), &styles, 96.0);
+    assert_eq!(left.line_segs[0].line_height, 5_644 + 282);
 }
 
 #[test]
