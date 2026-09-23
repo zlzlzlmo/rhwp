@@ -1066,7 +1066,8 @@ fn compose_lines(para: &Paragraph) -> Vec<ComposedLine> {
         );
 
         // 강제 줄넘김(\n) + TAC 표 문단 처리 (Task #19/Task #20)
-        let newline_pos = line_text.find('\n');
+        // 글자 인덱스다 — `str::find` 의 바이트 위치를 쓰면 한글(3바이트) 앞 글이 `\n` 을 지나 줄 끝까지 삼킨다.
+        let newline_pos = line_text.chars().position(|c| c == '\n');
         if let (true, Some(nl_pos)) = (has_tac, newline_pos) {
             let pre_text: String = line_text.chars().take(nl_pos).collect();
             let pre_end = text_start + nl_pos;
@@ -1077,13 +1078,21 @@ fn compose_lines(para: &Paragraph) -> Vec<ComposedLine> {
             // 개체일 때만 경계를 유지한다. 같은 저장 줄 안의 `\n`+표(Task #20)는
             // 기존처럼 `\n` 앞 텍스트를 이전 줄에 합친다. 이 가드 밖의 `\n` 은
             // off-canvas·overflow-cell 래칫을 키우지 않는다.
+            // `\n` 이 저장 줄의 마지막 유닛(뒤에 개체도 없다)이면 저장 사다리가 이미 거기서 끊었다 — 앞 글은 이 줄
+            // 자신이다(맥 한글 12.30: c3fb5220 «재무 부문 성과 목표» 표 줄 다음 «※ [* 표시 목표] … 기재 필수» 줄을
+            // 표 줄에 합쳐 어디에도 안 그렸다).
+            let newline_ends_stored_line = para
+                .char_offsets
+                .get(pre_end)
+                .is_some_and(|&off| off + 1 >= utf16_end);
             let keep_stored_boundary = post_text_clean.is_empty()
                 && line_idx + 1 < line_seg_count
-                && tac_inline_object_starts_at(para, text_end)
-                // The first stored row also owns its terminating break.
-                // Requiring a previous row creates an extra empty row before
-                // the already stored next table row (#7165).
-                && lines.last().is_none_or(|prev| prev.char_start != text_start);
+                && ((tac_inline_object_starts_at(para, text_end)
+                    // The first stored row also owns its terminating break.
+                    // Requiring a previous row creates an extra empty row before
+                    // the already stored next table row (#7165).
+                    && lines.last().is_none_or(|prev| prev.char_start != text_start))
+                    || (newline_ends_stored_line && !pre_text.is_empty()));
 
             if !pre_text.is_empty() && !lines.is_empty() && !keep_stored_boundary {
                 // \n 앞 텍스트를 이전 ComposedLine에 합침 (한컴 방식: \n 전 전체가 한 줄)

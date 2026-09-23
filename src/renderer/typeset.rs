@@ -4359,11 +4359,13 @@ impl TypesetEngine {
         };
         // 🔴 저장 전에 자란 표는 저장 줄 대신 성장분만큼 더 흘린다 — 한/글은 host 줄을 새로 짠다(맥 한글 12.30: SMATEC
         // 채움 4쪽 표 저장 줄 313.7px · 선언 374.9px, 저장 줄로 흘리면 뒤 문단이 그만큼 덜 밀린다).
-        let table_height =
-            match stored_host_line_growth_hu(para, table, tac_table_line_idx, ctrl_idx) {
-                Some(growth) if !owns_tac_band => table_height + hwpunit_to_px(growth, self.dpi),
-                _ => table_height,
-            };
+        // 높이가 낡아 짝(`tac_table_line_idx`)을 못 찾은 다중 host 는 개수 매핑(`tac_seg_idx`)으로 잰다 — 맥 한글 12.30:
+        // c3fb5220 채움 27쪽 «재무 부문 성과 목표» 표(선언 110mm → 채움 481.9mm, 저장 줄 419.7px)는 제목 줄 뒤 둘째 줄이다.
+        let growth_line = tac_table_line_idx.or((tac_count > 1).then_some(tac_seg_idx));
+        let table_height = match stored_host_line_growth_hu(para, table, growth_line, ctrl_idx) {
+            Some(growth) if !owns_tac_band => table_height + hwpunit_to_px(growth, self.dpi),
+            _ => table_height,
+        };
 
         // TAC 표는 분할하지 않고 통째로 배치
         let column = st.inline_flow_column();
@@ -4615,11 +4617,21 @@ impl TypesetEngine {
             let om_top = hwpunit_to_px(table.outer_margin_top as i32, self.dpi);
             let om_bot = hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi);
             let tbl_line_h = hwpunit_to_px(table.common.height as i32, self.dpi) + om_top + om_bot;
+            // 채움이 표를 키워 높이 짝이 없으면 글자 위치로 표 줄을 찾는다 — 0 으로 두면 표 앞 글 줄이 어디에도 안
+            // 그려진다(맥 한글 12.30: c3fb5220 38쪽 «☐ 미래사업재편(…) / 공급망 안정» 제목).
             para.line_segs
                 .iter()
                 .enumerate()
                 .find(|(_, ls)| (hwpunit_to_px(ls.line_height, self.dpi) - tbl_line_h).abs() < 1.0)
                 .map(|(i, _)| i)
+                .or_else(|| {
+                    let line = crate::renderer::layout::control_line_seg_index(para, ctrl_idx)?;
+                    let seg = para.line_segs.get(line)?;
+                    // 표를 담던 저장 줄이 표보다 낮을 때(= 저장 뒤 표가 자랐다)만 — 한/글 저장 줄은 표 이상이다.
+                    // 표를 담지 않는 글 줄 높이(HWPX 쪽 나누는 표: 13px 줄 · 168px 표)는 이 형상이 아니다.
+                    let lh = hwpunit_to_px(seg.line_height, self.dpi);
+                    (lh + 1.0 < tbl_line_h && lh >= tbl_line_h * 0.5).then_some(line)
+                })
                 .unwrap_or(0)
         } else {
             0
@@ -5016,8 +5028,20 @@ impl TypesetEngine {
         let has_post_text = !para.text.is_empty()
             && total_lines > post_table_start
             && !whitespace_only_single_tac_host_line;
-        let should_add_post_text =
-            is_last_table && tac_table_count <= 1 && has_post_text && !pre_text_exists;
+        // 글자처럼 표 여럿이 줄마다 선 host 는 마지막 표 줄 뒤의 글 줄을 표 아래에 잇는다 — 방출하지 않으면 그 글이
+        // 어느 쪽에도 안 그려진다(맥 한글 12.30: c3fb5220 «재무 부문 성과 목표» 표 아래 «※ [* 표시 목표] … 기재 필수»).
+        let multi_tac_post_start = (is_last_table
+            && tac_table_count > 1
+            && table.common.treat_as_char
+            && has_substantive_text
+            && !pre_text_exists)
+            .then(|| crate::renderer::layout::control_line_seg_index(para, ctrl_idx))
+            .flatten()
+            .map(|line| line + 1)
+            .filter(|&start| start < total_lines && total_lines == para.line_segs.len());
+        let post_table_start = multi_tac_post_start.unwrap_or(post_table_start);
+        let should_add_post_text = multi_tac_post_start.is_some()
+            || (is_last_table && tac_table_count <= 1 && has_post_text && !pre_text_exists);
         if should_add_post_text {
             let post_height: f64 = fmt.line_advances_sum(post_table_start..total_lines);
             if let Some(origin) = st
@@ -5057,7 +5081,8 @@ impl TypesetEngine {
                 && !table.common.treat_as_char
                 && is_para_topbottom_float(&table.common);
             if (self.tac_table_line_index(para, table, fmt) == Some(0)
-                || session_grown_topbottom_spill)
+                || session_grown_topbottom_spill
+                || multi_tac_post_start.is_some())
                 && st.current_height + post_height > st.available_height() + 0.5
                 && !st.current_items.is_empty()
             {
