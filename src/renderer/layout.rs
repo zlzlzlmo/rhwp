@@ -13887,10 +13887,18 @@ impl LayoutEngine {
                             } else {
                                 (vpos_accounts_for_height, pic_y)
                             };
+                            // 문단 기준 가로의 원점은 단이 아니라 **문단 상자**(단 − 문단 왼쪽·오른쪽 여백)다 — 맥 한글
+                            // 12.30: 오른쪽 정렬 서명 문단(왼 여백 30pt·10pt)의 0 오프셋 도장이 단 왼쪽이 아니라 여백만큼
+                            // 오른쪽에 선다(1b824865·c15e24a6). 들여쓰기는 원점에 안 든다.
+                            let (para_margin_left, para_margin_right) = paragraphs
+                                .get(para_index)
+                                .and_then(|p| styles.para_styles.get(p.para_shape_id as usize))
+                                .map_or((0.0, 0.0), |s| (s.margin_left, s.margin_right));
                             let pic_container = LayoutRect {
-                                x: col_area.x,
+                                x: col_area.x + para_margin_left,
                                 y: pic_y,
-                                width: col_area.width,
+                                width: (col_area.width - para_margin_left - para_margin_right)
+                                    .max(0.0),
                                 height: col_area.height - (pic_y - col_area.y),
                             };
                             result_y = self.layout_body_picture(

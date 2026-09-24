@@ -1962,6 +1962,64 @@ mod issue_1151_cell_picture_insert_tests {
         ]
     }
 
+    /// 문단 기준 떠 있는 그림의 가로 원점은 단이 아니라 **문단 상자**(단 + 문단 왼쪽 여백)다 — 맥 한글 12.30:
+    /// 오른쪽 정렬 서명 문단(왼 여백 30pt)의 0 오프셋 도장이 단 왼쪽이 아니라 여백만큼 오른쪽에 선다(1b824865).
+    #[test]
+    fn para_relative_float_picture_starts_at_the_paragraph_left_margin() {
+        let mut core = make_test_core();
+        core.insert_text_native(0, 0, 0, "성명 (서명 또는 인)")
+            .unwrap();
+        core.apply_para_format_native(0, 0, r#"{"marginLeft":6000}"#)
+            .unwrap();
+        let inserted = core
+            .insert_picture_native(
+                0,
+                0,
+                0,
+                &[],
+                &minimal_png(),
+                3600,
+                3600,
+                1,
+                1,
+                "png",
+                "",
+                None,
+                None,
+            )
+            .unwrap();
+        let inserted: serde_json::Value = serde_json::from_str(&inserted).unwrap();
+        let control = inserted["controlIdx"].as_u64().unwrap() as usize;
+        core.set_picture_properties_native(
+            0,
+            0,
+            control,
+            r#"{"treatAsChar":false,"textWrap":"InFrontOfText","vertRelTo":"Para","horzRelTo":"Para","vertOffset":0,"horzOffset":0}"#,
+        )
+        .unwrap();
+        let margin = core
+            .styles
+            .para_styles
+            .get(core.document.sections[0].paragraphs[0].para_shape_id as usize)
+            .map(|style| style.margin_left)
+            .unwrap();
+        assert!(margin > 10.0, "여백이 서야 시험이 뜻을 가진다 — {margin}");
+        let layout: serde_json::Value =
+            serde_json::from_str(&core.get_page_control_layout_native(0).unwrap()).unwrap();
+        let image = layout["controls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["type"] == "image")
+            .expect("그림 조판");
+        let column_left = crate::renderer::hwpunit_to_px(8504, core.dpi);
+        let x = image["x"].as_f64().unwrap();
+        assert!(
+            (x - (column_left + margin)).abs() < 0.6,
+            "그림 x {x} ≠ 단 {column_left} + 여백 {margin}"
+        );
+    }
+
     fn collect_picture_transparencies(doc: &Document) -> Vec<u8> {
         let mut values = Vec::new();
         for section in &doc.sections {
