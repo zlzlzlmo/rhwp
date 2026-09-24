@@ -208,15 +208,21 @@ impl DocumentCore {
             }
         };
 
+        let mut cell_resized = false;
         if let (Some(required_height), Some(cell)) =
             (required_height, table.cells.get_mut(cell_idx))
         {
             let synced_height = required_height.max(MIN_SHAPE_SIZE);
             if cell.height != synced_height {
                 cell.height = synced_height;
+                cell_resized = true;
             }
         }
-        table.update_ctrl_dimensions();
+        // 칸도 host 줄도 안 바뀌면 표 크기를 다시 적지 않는다 — 행 높이 합으로 다시 적으면 한/글이 저장한 표 높이가
+        // 바뀌어 표가 움직인다(맥 한글 12.30: 패션 신청서 칸 안 도장의 오프셋만 고쳐도 표지 줄이 3.6px 내려갔다).
+        if cell_resized || line_seg_update.is_some() {
+            table.update_ctrl_dimensions();
+        }
         let new_table_height = table.common.height as i32;
         if let Some((vertical_pos, line_height_extra)) = line_seg_update {
             if let Some(seg) = para.line_segs.first_mut() {
@@ -1689,6 +1695,49 @@ mod tests {
                 cell.col
             );
         }
+    }
+
+    /// 칸 안 «쪽 영역 제한» 끈 글앞 그림의 오프셋만 고치면 표 크기를 다시 적지 않는다 — 한/글이 저장한 표 높이(행 높이
+    /// 합과 다를 수 있다)가 그대로여야 표가 안 움직인다(맥 한글 12.30: 패션 신청서 도장 오프셋만 고쳐도 표지 줄 3.6px 이동).
+    #[test]
+    fn overlay_cell_picture_offset_keeps_the_stored_table_height() {
+        use crate::model::image::Picture;
+        use crate::model::shape::{CommonObjAttr, TextWrap, VertRelTo};
+        let mut core = DocumentCore::new_empty();
+        core.create_blank_document_native().unwrap();
+        let created: serde_json::Value =
+            serde_json::from_str(&core.create_table_native(0, 0, 0, 2, 2).unwrap()).unwrap();
+        let pi = created["paraIdx"].as_u64().unwrap() as usize;
+        let ci = created["controlIdx"].as_u64().unwrap() as usize;
+        let stored_height = {
+            let Control::Table(table) = &mut core.document.sections[0].paragraphs[pi].controls[ci]
+            else {
+                panic!("표");
+            };
+            table.common.height += 500;
+            table.cells[0].paragraphs[0]
+                .controls
+                .push(Control::Picture(Box::new(Picture {
+                    common: CommonObjAttr {
+                        treat_as_char: false,
+                        text_wrap: TextWrap::InFrontOfText,
+                        vert_rel_to: VertRelTo::Para,
+                        flow_with_text: false,
+                        width: 1500,
+                        height: 1500,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })));
+            table.common.height
+        };
+        let path = format!("[{{\"controlIndex\":{ci},\"cellIndex\":0,\"cellParaIndex\":0}}]");
+        core.set_cell_picture_properties_by_path_native(0, pi, &path, 0, r#"{"vertOffset":1000}"#)
+            .unwrap();
+        let Control::Table(table) = &core.document.sections[0].paragraphs[pi].controls[ci] else {
+            panic!("표");
+        };
+        assert_eq!(table.common.height, stored_height);
     }
 
     #[test]
