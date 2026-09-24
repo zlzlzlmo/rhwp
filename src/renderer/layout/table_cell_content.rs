@@ -1040,11 +1040,25 @@ impl LayoutEngine {
                 self.resolve_cell_padding(cell, table);
 
             // 셀 내 문단 레이아웃
-            let composed_paras: Vec<_> = cell
+            let mut composed_paras: Vec<_> = cell
                 .paragraphs
                 .iter()
                 .map(|p| crate::renderer::composer::compose_paragraph_in_context(p, styles))
                 .collect();
+            if cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE {
+                let inner_width = crate::renderer::composer::cell_inner_text_width(
+                    cell_w, pad_left, pad_right, self.dpi,
+                );
+                for (comp, para) in composed_paras.iter_mut().zip(&cell.paragraphs) {
+                    crate::renderer::composer::collapse_squeeze_cell_lines_unless_stored(
+                        comp,
+                        para,
+                        inner_width,
+                        styles,
+                        self.dpi,
+                    );
+                }
+            }
 
             // 텍스트 오버플로우 시 좌우 패딩 축소
             let (new_pl, new_pr) = self.shrink_cell_padding_for_overflow(
@@ -1163,6 +1177,9 @@ impl LayoutEngine {
                 };
                 let numbered_comp = self.apply_paragraph_numbering(Some(composed), para, styles, 0);
                 let composed_for_layout = numbered_comp.as_ref().unwrap_or(composed);
+                let squeeze_scope = self
+                    .squeeze_cell_line
+                    .replace(cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE);
                 para_y = self.layout_composed_paragraph(
                     tree,
                     &mut cell_node,
@@ -1186,6 +1203,7 @@ impl LayoutEngine {
                     Some(bin_data_content),
                     None, // 셀 컨텍스트 — wrap zone 무관
                 );
+                self.squeeze_cell_line.set(squeeze_scope);
 
                 // 셀 내 그림/도형 컨트롤 렌더링
                 for (ctrl_idx, ctrl) in para.controls.iter().enumerate() {

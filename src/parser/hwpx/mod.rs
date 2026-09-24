@@ -489,6 +489,11 @@ pub fn parse_hwpx(data: &[u8]) -> Result<Document, HwpxError> {
         .iter()
         .any(|(path, _)| path == crate::model::document::HWP3_ORIGIN_HWPX_MARKER_PATH);
     let _hwp5_origin_guard = section::Hwp5OriginSourceGuard::set(has_hwp5_origin);
+    let _secpr_axis_guard =
+        section::SecPrOccupiesAxisGuard::set(hwpx_aux_entries.iter().any(|(path, bytes)| {
+            path == crate::model::document::HWP5_ORIGIN_HWPX_MARKER_PATH
+                && bytes.as_slice() == crate::model::document::HWP5_ORIGIN_HANGUL_AXIS_MARKER
+        }));
     // 원본 HWP3→HWPX 만 — 변환본 HWPX(hwp5-origin)는 8유닛 슬롯과 기존 HWP5
     // TAC 계약을 쓴다.
     let _hwp3_origin_guard =

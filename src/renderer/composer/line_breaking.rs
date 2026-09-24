@@ -4275,6 +4275,7 @@ pub(crate) fn recalculate_section_vpos(
         p.line_segs
             .last()
             .map(|ls| ls.vertical_pos.saturating_add(seg_advance(ls)))
+            .map(|end| para_top_and_bottom_objects_end(p).map_or(end, |objects| end.max(objects)))
     };
     let is_ignored = |pi: usize| {
         ignore_reset_range
@@ -4381,9 +4382,49 @@ pub(crate) fn paragraph_flow_end(para: &Paragraph) -> Option<i32> {
         } else {
             ls.line_height
         };
-        ls.vertical_pos
-            .saturating_add(height.saturating_add(ls.line_spacing))
+        let end = ls
+            .vertical_pos
+            .saturating_add(height.saturating_add(ls.line_spacing));
+        para_top_and_bottom_objects_end(para).map_or(end, |objects| end.max(objects))
     })
+}
+
+/// 문단 기준 자리차지(위아래) 개체가 흐름에서 차지하는 끝(HWPUNIT) — 한/글은 다음 문단을 줄 끝이 아니라 이 아래에 둔다.
+/// 맥 한글 12.30 저장 실측(oath-seal-or-sign 문단 20): 66048 = 앵커 첫 줄 56220 + 세로 오프셋 271 + 표 높이 8991 + 바깥 여백
+/// 283×2. 줄 끝만 이으면 표 다음 문단에 글자 하나만 쳐도 그 문단이 표 위로 올라가 쪽이 는다(1→2쪽).
+fn para_top_and_bottom_objects_end(para: &Paragraph) -> Option<i32> {
+    use crate::model::shape::{TextWrap, VertRelTo};
+    let first = para.line_segs.first()?.vertical_pos;
+    para.controls
+        .iter()
+        .filter_map(|ctrl| {
+            let (common, margin_top, margin_bottom) = match ctrl {
+                Control::Table(table) => (
+                    &table.common,
+                    i32::from(table.outer_margin_top),
+                    i32::from(table.outer_margin_bottom),
+                ),
+                Control::Picture(pic) => (
+                    &pic.common,
+                    i32::from(pic.common.margin.top),
+                    i32::from(pic.common.margin.bottom),
+                ),
+                _ => return None,
+            };
+            (!common.treat_as_char
+                && matches!(common.text_wrap, TextWrap::TopAndBottom)
+                && matches!(common.vert_rel_to, VertRelTo::Para))
+            .then(|| {
+                first
+                    .saturating_add(crate::renderer::float_placement::signed_hwpunit(
+                        common.vertical_offset,
+                    ))
+                    .saturating_add(common.height as i32)
+                    .saturating_add(margin_top)
+                    .saturating_add(margin_bottom)
+            })
+        })
+        .max()
 }
 
 /// font_size(px)를 LineSeg의 line_height(HWPUNIT)로 변환한다.

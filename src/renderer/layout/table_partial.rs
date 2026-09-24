@@ -1359,6 +1359,15 @@ impl LayoutEngine {
                                 self.profile.get().native_hwp5_layout(),
                                 &self.single_line_overflow_cache,
                             );
+                            if cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE {
+                                crate::renderer::composer::collapse_squeeze_cell_lines_unless_stored(
+                                    comp,
+                                    para,
+                                    inner_width_for_recompose,
+                                    styles,
+                                    self.dpi,
+                                );
+                            }
                         } else {
                             crate::renderer::composer::recompose_cell_lines_in_frame(
                                 comp,
@@ -2306,6 +2315,9 @@ impl LayoutEngine {
                     self.keep_continuation_column_top_spacing_before
                         .set(keep_spacing);
                     let wrap_anchor = stored_square_picture_wrap_anchor_for_para(cell, cp_idx);
+                    let squeeze_scope = self
+                        .squeeze_cell_line
+                        .replace(cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE);
                     para_y = self.layout_composed_paragraph(
                         tree,
                         &mut cell_node,
@@ -2326,6 +2338,7 @@ impl LayoutEngine {
                         Some(bin_data_content),
                         wrap_anchor.as_ref(),
                     );
+                    self.squeeze_cell_line.set(squeeze_scope);
                     if collapse_stored_wrap_spacers && start_line == 0 && end_line > start_line {
                         if let Some(step) = stored_square_picture_empty_anchor_advance(
                             cell, cp_idx, styles, self.dpi,

@@ -3172,6 +3172,11 @@ pub struct LayoutEngine {
     /// cell width. This lives for the layout session and is cleared at the same
     /// source/style invalidation boundary as the other pointer-keyed caches.
     single_line_overflow_cache: super::composer::SingleLineOverflowCache,
+    /// 지금 짜는 칸 문단이 «한 줄로 입력»(`lineWrap=SQUEEZE`) 칸의 것인가 — 칸 경로가 문단마다 세우고 되돌린다.
+    squeeze_cell_line: std::cell::Cell<bool>,
+    /// 지금 짜는 본문 표(깊이 0)를 단 문단의 원점 — (단 왼쪽 + 문단 왼쪽 여백, 문단 위(앞 간격 전)).
+    /// 칸 안 «쪽 영역 안으로 제한» 끈 글앞·글뒤 그림(문단 기준)은 칸 문단이 아니라 이 문단에 선다.
+    cell_float_host_origin: std::cell::Cell<Option<(f64, Option<f64>)>>,
     /// Issue #2214 test-only: cache miss가 실제 table-wide scan으로 이어진 횟수.
     #[cfg(test)]
     table_nested_text_flag_scan_count: std::cell::Cell<usize>,
@@ -3282,6 +3287,8 @@ impl LayoutEngine {
             table_nested_text_flag_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
             cursor_probe_block_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
             single_line_overflow_cache: Default::default(),
+            squeeze_cell_line: std::cell::Cell::new(false),
+            cell_float_host_origin: std::cell::Cell::new(None),
             #[cfg(test)]
             table_nested_text_flag_scan_count: std::cell::Cell::new(0),
         }
@@ -13215,7 +13222,28 @@ impl LayoutEngine {
                 })
             })
             .unwrap_or(false);
-        if has_prior_non_picture_tac {
+        // 글자처럼이 아닌(떠 있는) 개체의 세로 기준은 앵커 줄 위다(#6879) — 선행 글자처럼 표와 **같은 줄**에 선 떠 있는
+        // 그림은 표 아래가 아니라 그 줄(= 표) 위에서 잰다(맥 한글 12.30: 74e0ad0b 신청서 칸 «(인)» 서명 — 표 host 문단에
+        // 단 글앞 그림을 표 뒤 y 에서 재면 한/글에서 표 위 62pt 로, rhwp 에서만 표지 위에 섰다).
+        let float_on_prior_tac_line = paragraphs.get(para_index).is_some_and(|p| {
+            let floating = match p.controls.get(control_index) {
+                Some(Control::Picture(pic)) => !pic.common.treat_as_char,
+                Some(Control::Shape(s)) => !s.common().treat_as_char,
+                _ => false,
+            };
+            let first_tac = p.controls.iter().take(control_index).position(|c| match c {
+                Control::Table(t) => t.common.treat_as_char,
+                Control::Shape(s) => s.common().treat_as_char,
+                _ => false,
+            });
+            floating
+                && first_tac.is_some_and(|tac| {
+                    control_line_seg_index(p, tac).is_some()
+                        && control_line_seg_index(p, tac)
+                            == control_line_seg_index(p, control_index)
+                })
+        });
+        if has_prior_non_picture_tac && !float_on_prior_tac_line {
             // 선행 TAC Table/Shape 가 있는 경우만 진행된 y_offset 으로 갱신.
             let needs_update = para_start_y
                 .get(&para_index)

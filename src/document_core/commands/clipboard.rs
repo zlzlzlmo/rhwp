@@ -88,6 +88,21 @@ fn clipboard_paragraphs_contain_field(paragraphs: &[Paragraph]) -> bool {
     paragraphs.iter().any(|para| !para.field_ranges.is_empty())
 }
 
+/// 글앞·글뒤 그림만 담은 클립보드인가 — 한/글은 이런 개체를 문단에 넣어도 줄 나눔을 다시 짜지 않는다
+/// (흐름을 밀지 않는다). 맥 한글 12.30: 칸 문단에 도장 그림을 붙인 뒤 문단을 다시 흘려 한 줄을 두 줄로
+/// 저장하자, 한/글이 그 저장 줄을 따라 칸을 한 줄 키워 표가 다음 쪽으로 밀렸다(웰컴투팁스 7→9쪽).
+fn clipboard_holds_only_overlay_pictures(paragraphs: &[Paragraph]) -> bool {
+    matches!(paragraphs, [para] if para.text.is_empty()
+    && !para.controls.is_empty()
+    && para.controls.iter().all(|ctrl| matches!(ctrl, Control::Picture(pic)
+        if !pic.common.treat_as_char
+            && matches!(
+                pic.common.text_wrap,
+                crate::model::shape::TextWrap::BehindText
+                    | crate::model::shape::TextWrap::InFrontOfText
+            ))))
+}
+
 fn clipboard_control_char_code(ctrl: &Control) -> u16 {
     match ctrl {
         Control::SectionDef(_) | Control::ColumnDef(_) => 0x0002,
@@ -720,6 +735,17 @@ impl DocumentCore {
         }
 
         // 다중 문단 또는 컨트롤 포함 붙여넣기
+        // 글앞·글뒤 그림만 붙이면 한/글처럼 줄 나눔을 지킨다 — 칸 경로
+        // `paste_into_cell_paragraphs_keeping_overlay_lines` 와 같은 계약.
+        let kept_overlay_lines = clipboard_holds_only_overlay_pictures(&clip_paras).then(|| {
+            let para = &self.document.sections[section_idx].paragraphs[para_idx];
+            let insert_pos = para
+                .char_offsets
+                .get(char_offset)
+                .copied()
+                .unwrap_or(para.char_count.saturating_sub(1));
+            (para.line_segs.clone(), insert_pos, para.char_count)
+        });
         // 1. 현재 문단을 캐럿 위치에서 분할
         let right_half =
             self.document.sections[section_idx].paragraphs[para_idx].split_at(char_offset);
@@ -751,23 +777,38 @@ impl DocumentCore {
         }
 
         // 5. 영향받는 모든 문단 리플로우
-        for i in para_idx..=last_para_idx {
-            self.reflow_paragraph(section_idx, i);
+        let overlay_only = kept_overlay_lines.is_some();
+        if let Some((mut line_segs, insert_pos, count_before)) = kept_overlay_lines {
+            let para = &mut self.document.sections[section_idx].paragraphs[para_idx];
+            let inserted = para.char_count.saturating_sub(count_before);
+            for seg in &mut line_segs {
+                if seg.text_start > insert_pos {
+                    seg.text_start += inserted;
+                }
+            }
+            para.line_segs = line_segs;
+        } else {
+            for i in para_idx..=last_para_idx {
+                self.reflow_paragraph(section_idx, i);
+            }
         }
 
         // [Task #2299] 삽입 문단들의 vpos 를 흐름에 연결한다. 클립보드 클론의
         // 원본 좌표/placeholder 를 방치하면 이후 편집의 vpos 재계산이 이를 저장
         // 단/쪽 리셋으로 오인해 영구 고착시킨다 — 신규 구간은 리셋 보존에서 제외.
-        let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
-        crate::renderer::composer::recalculate_section_vpos(
-            &mut self.document.sections[section_idx].paragraphs,
-            para_idx,
-            Some(para_idx + 1..last_para_idx + 1),
-            None,
-            &self.styles,
-            self.dpi,
-            doc_hwp3_layout,
-        );
+        // 글앞·글뒤 그림만 붙였으면 줄이 그대로라 흐름도 그대로다 — 다시 이으면 저장 간격이 스타일 간격으로 바뀐다.
+        if !overlay_only {
+            let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
+            crate::renderer::composer::recalculate_section_vpos(
+                &mut self.document.sections[section_idx].paragraphs,
+                para_idx,
+                Some(para_idx + 1..last_para_idx + 1),
+                None,
+                &self.styles,
+                self.dpi,
+                doc_hwp3_layout,
+            );
+        }
 
         // 6. 선택적 재구성: 삽입된 문단 composed 추가 + 영향 문단 재구성
         self.recompose_paragraph(section_idx, para_idx);
@@ -838,6 +879,44 @@ impl DocumentCore {
         Ok((last_para_idx, merge_point))
     }
 
+    /// `paste_paragraphs_into_cell_paragraphs` + 글앞·글뒤 그림만 붙일 때는 붙이기 전 줄 기록을 그대로 두고
+    /// 넣은 자리 뒤 줄 시작만 넣은 길이(개체당 8)만큼 민다 — 한/글의 개체 넣기와 같은 줄 나눔.
+    fn paste_into_cell_paragraphs_keeping_overlay_lines(
+        cell_paras: &mut Vec<Paragraph>,
+        cell_para_idx: usize,
+        char_offset: usize,
+        clip_paras: &[Paragraph],
+    ) -> Result<(usize, usize), HwpError> {
+        let kept = clipboard_holds_only_overlay_pictures(clip_paras)
+            .then(|| cell_paras.get(cell_para_idx))
+            .flatten()
+            .map(|para| {
+                let insert_pos = para
+                    .char_offsets
+                    .get(char_offset)
+                    .copied()
+                    .unwrap_or(para.char_count.saturating_sub(1));
+                (para.line_segs.clone(), insert_pos, para.char_count)
+            });
+        let out = Self::paste_paragraphs_into_cell_paragraphs(
+            cell_paras,
+            cell_para_idx,
+            char_offset,
+            clip_paras,
+        )?;
+        if let Some((mut line_segs, insert_pos, count_before)) = kept {
+            let para = &mut cell_paras[cell_para_idx];
+            let inserted = para.char_count.saturating_sub(count_before);
+            for seg in &mut line_segs {
+                if seg.text_start > insert_pos {
+                    seg.text_start += inserted;
+                }
+            }
+            para.line_segs = line_segs;
+        }
+        Ok(out)
+    }
+
     /// 내부 클립보드의 내용을 표 셀 내부에 붙여넣는다.
     pub fn paste_internal_in_cell_native(
         &mut self,
@@ -888,7 +967,7 @@ impl DocumentCore {
                 }
                 _ => return Err(HwpError::RenderError("표/글상자/캡션이 아님".to_string())),
             };
-            Self::paste_paragraphs_into_cell_paragraphs(
+            Self::paste_into_cell_paragraphs_keeping_overlay_lines(
                 cell_paras,
                 cell_para_idx,
                 char_offset,
@@ -896,8 +975,10 @@ impl DocumentCore {
             )?
         };
 
-        for i in cell_para_idx..=last_para_idx {
-            self.reflow_cell_paragraph(section_idx, parent_para_idx, control_idx, cell_idx, i);
+        if !clipboard_holds_only_overlay_pictures(&clip_paras) {
+            for i in cell_para_idx..=last_para_idx {
+                self.reflow_cell_paragraph(section_idx, parent_para_idx, control_idx, cell_idx, i);
+            }
         }
         self.mark_cell_control_dirty(section_idx, parent_para_idx, control_idx);
         self.document.sections[section_idx].raw_stream = None;
@@ -936,7 +1017,7 @@ impl DocumentCore {
         let (last_para_idx, merge_point) = {
             let cell_paras =
                 self.get_cell_paragraphs_mut_by_path(section_idx, parent_para_idx, path)?;
-            Self::paste_paragraphs_into_cell_paragraphs(
+            Self::paste_into_cell_paragraphs_keeping_overlay_lines(
                 cell_paras,
                 cell_para_idx,
                 char_offset,
@@ -949,8 +1030,10 @@ impl DocumentCore {
         // 없어 깊이 ≥2 중첩 셀에 붙여넣은 문단이 이전 line_segs 를 그대로 유지했다.
         // #2755 가 delete/split/merge by_path 에 도입한 reflow_cell_paragraph_by_path
         // 를 붙여넣기 경로에도 동일하게 적용한다.
-        for i in cell_para_idx..=last_para_idx {
-            self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, path, i);
+        if !clipboard_holds_only_overlay_pictures(&clip_paras) {
+            for i in cell_para_idx..=last_para_idx {
+                self.reflow_cell_paragraph_by_path(section_idx, parent_para_idx, path, i);
+            }
         }
 
         let outer_ctrl = path[0].0;
@@ -2305,6 +2388,62 @@ mod cell_control_export_tests {
             }],
             ..Default::default()
         }
+    }
+
+    /// 글앞 그림만 칸 문단에 붙이면 저장 줄 나눔을 지키고 넣은 자리 뒤 줄 시작만 8 민다 — 한/글의 개체 넣기와
+    /// 같다. 다시 흘리면 한/글이 그 저장 줄을 따라 칸을 키운다(웰컴투팁스 도장 7→9쪽, 맥 한글 12.30).
+    #[test]
+    fn overlay_picture_paste_keeps_cell_line_breaks() {
+        use crate::model::paragraph::LineSeg;
+        use crate::model::shape::TextWrap;
+        let mut cell_para = Paragraph::default();
+        cell_para.text = "가나다라마바사아자차".to_string();
+        cell_para.char_offsets = (0..10).collect();
+        cell_para.char_count = 11;
+        let seg = |text_start| LineSeg {
+            text_start,
+            line_height: 1000,
+            text_height: 1000,
+            baseline_distance: 850,
+            segment_width: 4000,
+            ..Default::default()
+        };
+        cell_para.line_segs = vec![seg(0), seg(6)];
+        let (mut core, pi, ci, cell) = core_with_body_table(cell_para);
+
+        let mut clip_para = Paragraph::default();
+        clip_para.char_count = 9;
+        clip_para.controls.push(Control::Picture(Box::new(Picture {
+            common: CommonObjAttr {
+                treat_as_char: false,
+                text_wrap: TextWrap::InFrontOfText,
+                width: 1500,
+                height: 1500,
+                ..Default::default()
+            },
+            image_attr: ImageAttr::default(),
+            ..Default::default()
+        })));
+        core.clipboard = Some(crate::document_core::ClipboardData {
+            paragraphs: vec![clip_para],
+            plain_text: String::new(),
+            copied_table_text_reflowed: false,
+        });
+
+        core.paste_internal_in_cell_native(0, pi, ci, cell, 0, 3)
+            .expect("붙여넣기");
+
+        let Control::Table(table) = &core.document.sections[0].paragraphs[pi].controls[ci] else {
+            panic!("표");
+        };
+        let para = &table.cells[cell].paragraphs[0];
+        assert_eq!(para.controls.len(), 1);
+        let starts: Vec<u32> = para.line_segs.iter().map(|s| s.text_start).collect();
+        assert_eq!(
+            starts,
+            vec![0, 14],
+            "넣은 자리(3) 뒤 줄 시작만 개체 길이 8만큼 민다"
+        );
     }
 
     /// [적대적 검증 대조군] 내부 클립보드(같은 문서)는 원래 셀의 컨트롤을

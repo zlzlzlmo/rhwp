@@ -809,9 +809,15 @@ pub(crate) fn render_paragraph_parts(
     // 단 **HWPX 출처는 손대지 않는다**. `LineSeg::text_start` 는 파서가 파일 값을 그대로
     // 담으므로 출처마다 축이 다르다 — HWPX 원본의 `textpos` 는 이미 HWPX 축이라 한 번 더
     // 빼면 왕복이 깨진다(aift.hwpx 문단 0: `textpos 24 → 8`).
-    if ctx.line_segs_on_hwpx_axis {
-        hwp5_only_slot_positions.clear();
-    }
+    //
+    // 🔴 **HWP5 출처도 `secd`·`cold` 를 빼지 않는다**(맥 한글 12.30 · 한/글 제 쌍둥이 실측). 우리가 쓰는 구역 첫
+    // 문단은 첫 run 에 `hp:secPr` 과 `hp:ctrl/hp:colPr` 을 **싣고**, 한/글은 그 둘을 8씩 센다 — 한/글이 저장한
+    // `hwpx-h-01` 쌍둥이는 같은 모양(secPr · colPr · pageNum · 표, 글자 없음)에서 HWP `ts=24` 를 HWPX `textpos=24`
+    // 로 그대로 적었다(두 슬롯을 안 센다면 문단 길이 16 을 넘는 값이라 제 파일을 폐기했을 것이다). 16 을 빼 `8`
+    // 로 내면 한/글은 그 문단을 다시 짠다: 패션기업 신청서는 1쪽 조판 줄(40.8pt 높이·vpos 1.6pt)을 버리고 표 전체가
+    // 54pt 내려가 7→8쪽, `24` 로 되돌리면 원본 hwp 와 쪽 끝 0 차이였다. #5943 의 02502 실측(48·40 실패, 32 복원)은
+    // 쪽번호 넷 중 한/글이 하나만 세서다 — 접은 쪽번호는 아래 `#6871` 이 뺀다.
+    hwp5_only_slot_positions.clear();
     // [#6871] 우리가 **접은** 슬롯은 출처와 무관하게 축에서 뺀다.
     //
     // 위 게이트가 다루는 `secd`·`cold` 는 HWPX 축에 **원래 없던** 자리라, HWPX 출처면

@@ -14,6 +14,9 @@ use super::*;
 /// HWP5 원본을 따라야 한다. 한컴은 미지의 ZIP 엔트리를 무시하며, 한컴에서 다시 저장하면
 /// 마커가 사라져 native HWPX로 취급된다.
 pub const HWP5_ORIGIN_HWPX_MARKER_PATH: &str = "META-INF/rhwp-hwp5-origin";
+/// 그 마커의 내용 `2` — 줄 `textpos` 를 한/글 축(구역 첫 문단 `hp:secPr`·`hp:ctrl/hp:colPr` 도 8씩 센다)으로 냈다.
+/// 옛 산출(`1`)은 `secd`·`cold` 16 을 뺀 축이라 파서가 마커 내용으로 가른다(맥 한글 12.30 은 `1` 축 첫 문단을 다시 짠다).
+pub const HWP5_ORIGIN_HANGUL_AXIS_MARKER: &[u8] = b"2";
 
 /// HWP3 원본에서 HWPX 로 export 한 산출물 마커 — 재열람 시 hwp3_lineage 를
 /// 복원해 직파싱 HWP3 와 같은 레이아웃 계약(저장-스텝 등)을 밟게 한다.

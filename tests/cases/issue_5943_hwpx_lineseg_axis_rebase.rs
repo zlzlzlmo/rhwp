@@ -148,8 +148,15 @@ fn textpos_values(xml: &str) -> Vec<u32> {
     out
 }
 
-/// 방출되지 않는 슬롯만큼 축을 내려야 한다 — 이 픽스처는 `secd`·`cold` 둘에
-/// [#6869] 이 접는 `pgnp` 셋을 더해 다섯이므로 표는 48 이 아니라 **8** 이다.
+/// 방출되지 않는 슬롯만큼 축을 내려야 한다 — 이 픽스처에서 방출하지 않는 슬롯은 [#6869] 이 접는 `pgnp`
+/// 셋뿐이므로 표는 48 이 아니라 **24** 다.
+///
+/// [2026-09-24] 기대값을 8 → 24 로 옮겼다. `secd`·`cold` 는 우리가 구역 첫 문단 첫 run 에 `hp:secPr`·`hp:ctrl/hp:colPr`
+/// 로 **싣는** 슬롯이고 한/글은 둘을 8씩 센다 — 맥 한글 12.30 은 `8` 로 낸 패션기업 신청서의 첫 문단을 다시 짜 표를
+/// 54pt 내리고(7→8쪽), `24` 로 낸 같은 파일은 원본 hwp 와 쪽 끝 0 차이로 그렸다. 한/글 데스크톱이 저장한 표본도
+/// (8.5·9.1·11.0.0.2129/4585·12.0.0.x — `hwpx-h-01` 쌍둥이는 secPr·colPr·pageNum·표 문단 표 줄이 HWP `ts=24` =
+/// HWPX `textpos=24`) 같은 축이다. 02502 실측(48·40 폐기, 32 복원)도 쪽번호 넷을 하나로 세는 이 축과 맞는다(표 24,
+/// 문단 끝 32).
 ///
 /// [#6869] 기대값을 32 → 8 로 옮겼다. 이 픽스처는 구역 첫 문단에 `pgnp` 를 **넷** 두고
 /// 종전에는 그 넷이 모두 방출된다고 보아 `secd`·`cold` 두 슬롯만 뺐다(48−16=32).
@@ -167,10 +174,13 @@ fn section_first_paragraph_line_seg_rebases_to_the_hwpx_axis() {
     let positions = textpos_values(&xml);
 
     assert!(
-        positions.contains(&8),
-        "구역 첫 문단 lineseg 가 HWPX 축으로 내려오지 않았다 (#5943 회귀). \
-         `secd`·`cold` 와 접힌 `pgnp` 셋은 HWPX 문단 축을 차지하지 않으므로 표는 8 이다. \
-         실측 textpos={positions:?}\n{xml}"
+        positions.contains(&24),
+        "구역 첫 문단 lineseg 가 한/글 축(접은 `pgnp` 셋만 뺀 24)으로 나가지 않았다. \
+         `secd`·`cold` 는 방출되는 슬롯이라 빼지 않는다. 실측 textpos={positions:?}\n{xml}"
+    );
+    assert!(
+        !positions.contains(&8),
+        "`secd`·`cold` 몫 16 까지 뺐다 — 맥 한글 12.30 은 그 문단을 다시 짠다. 실측 textpos={positions:?}"
     );
     assert!(
         !positions.contains(&48),

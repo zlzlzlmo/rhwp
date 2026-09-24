@@ -852,6 +852,7 @@ pub(crate) fn resolved_to_text_style(
             inline_tabs: Vec::new(),
             extra_word_spacing: 0.0,
             extra_char_spacing: 0.0,
+            squeeze_unclamped: false,
             extra_dash_advance: 0.0,
             outline_type: cs.outline_type,
             shadow_type: cs.shadow_type,
@@ -1457,7 +1458,7 @@ pub(crate) fn char_width_decision<'a>(
         final_width_px += style.extra_dash_advance;
     }
     let mut negative_spacing_clamped = false;
-    if style.letter_spacing + style.extra_char_spacing < 0.0 {
+    if style.letter_spacing + style.extra_char_spacing < 0.0 && !style.squeeze_unclamped {
         let min_width = base_width_px * ratio * 0.5;
         if final_width_px < min_width {
             final_width_px = min_width;
@@ -1566,7 +1567,7 @@ pub(crate) fn hancom_regenerated_space_width(style: &TextStyle) -> Option<f64> {
         + glyph_letter_spacing(style.letter_spacing, base_w * ratio, font_size)
         + style.extra_char_spacing
         + style.extra_word_spacing;
-    if style.letter_spacing + style.extra_char_spacing < 0.0 {
+    if style.letter_spacing + style.extra_char_spacing < 0.0 && !style.squeeze_unclamped {
         width = width.max(base_w * ratio * 0.5);
     }
     let stored_width = estimate_text_width_unrounded(" ", style);

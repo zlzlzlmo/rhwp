@@ -251,6 +251,10 @@ pub struct TextStyle {
     pub extra_word_spacing: f64,
     /// 배분/나눔 정렬용: 글자당 추가 간격 (px)
     pub extra_char_spacing: f64,
+    /// «한 줄로 입력»(`lineWrap=SQUEEZE`) 칸 줄 — 음수 자간을 글자 폭 절반에서 멈추지 않는다. 한/글은 글자가 겹쳐도
+    /// 자간을 줄여 한 줄을 지킨다(맥 한글 12.30: c3fb5220 채움 5쪽 매출 비중 칸 — 숫자 advance 가 음수로 되돌아간다).
+    #[serde(skip)]
+    pub squeeze_unclamped: bool,
     /// Task #352: dash leader (3+ 연속 '-') 시퀀스의 글자당 추가 간격 (px).
     /// PDF 와 같이 라인 슬랙을 dash leader 가 흡수하도록 하여, 공백 분배
     /// 부담을 줄이고 자연스러운 단어 간격을 유지한다. 0 이면 미적용.
@@ -445,6 +449,7 @@ impl Default for TextStyle {
             inline_tabs: Vec::new(),
             extra_word_spacing: 0.0,
             extra_char_spacing: 0.0,
+            squeeze_unclamped: false,
             extra_dash_advance: 0.0,
             outline_type: 0,
             shadow_type: 0,

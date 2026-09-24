@@ -785,7 +785,9 @@ fn parse_paragraph_body(
                         // 모든 chars 를 line 0 에 packing. \u{0002} 추가로 8 utf16 정합.
                         para.controls.push(Control::SectionDef(Box::new(sd)));
                         text_parts.push("\u{0002}".to_string());
-                        hwp5_only_leading_slots += 1;
+                        if !HWPX_SECPR_OCCUPIES_AXIS.with(|c| c.get()) {
+                            hwp5_only_leading_slots += 1;
+                        }
                         // colPr이 있으면 ColumnDef 컨트롤 추가 (초기 단 정의) + 8 utf16.
                         if let Some(cd) = col_def_opt {
                             para.controls.push(Control::ColumnDef(cd));
@@ -5735,6 +5737,25 @@ thread_local! {
     static HWPX_HWP5_ORIGIN_SOURCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// 원본 HWP3→HWPX (hwp3-origin 마커, hwp5-origin 없음).
     static HWPX_HWP3_ORIGIN_SOURCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// rhwp 자기 산출인데 줄 `textpos` 를 한/글 축(`hp:secPr` 도 8)으로 낸 판(hwp5-origin 마커 `2`)인가.
+    static HWPX_SECPR_OCCUPIES_AXIS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// [2026-09-24] rhwp 가 한/글 축으로 낸 HWPX(hwp5-origin 마커 `2`)를 파싱하는 구간 표식 — 그 파일의 `textpos` 는
+/// 구역 첫 문단의 `hp:secPr` 을 8 로 센 값이라 앞머리 보정에서 뺀다(마커 `1` 인 옛 산출은 `secd`·`cold` 를 뺀 축이다).
+pub(crate) struct SecPrOccupiesAxisGuard;
+
+impl SecPrOccupiesAxisGuard {
+    pub(crate) fn set(active: bool) -> Self {
+        HWPX_SECPR_OCCUPIES_AXIS.with(|c| c.set(active));
+        SecPrOccupiesAxisGuard
+    }
+}
+
+impl Drop for SecPrOccupiesAxisGuard {
+    fn drop(&mut self) {
+        HWPX_SECPR_OCCUPIES_AXIS.with(|c| c.set(false));
+    }
 }
 
 fn hwpx_hwp3_origin_source() -> bool {

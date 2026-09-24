@@ -2772,7 +2772,14 @@ impl DocumentCore {
         let cell_width_px = hwpunit_to_px(cell_width, self.dpi);
         let pad_left_px = hwpunit_to_px(pad_left as i32, self.dpi);
         let pad_right_px = hwpunit_to_px(pad_right as i32, self.dpi);
-        let available_width = (cell_width_px - pad_left_px - pad_right_px).max(0.0);
+        // 렌더·측정과 같은 칸 글 상자(최소 줄 폭 · 4 HWPUNIT 격자) — 채움이 적는 줄 기록이 한/글 저장과 같아야
+        // 한/글이 그 줄을 다시 짜지 않는다.
+        let available_width = crate::renderer::composer::cell_inner_text_width(
+            cell_width_px,
+            pad_left_px,
+            pad_right_px,
+            self.dpi,
+        );
 
         // 문단 여백 계산
         let para_shape_id = {
@@ -2799,6 +2806,10 @@ impl DocumentCore {
             .get_mut(control_idx)
         {
             Some(Control::Table(table)) => {
+                let squeeze = cell_idx != 65534
+                    && table.cells.get(cell_idx).is_some_and(|cell| {
+                        cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE
+                    });
                 let cell_para = if cell_idx == 65534 {
                     table
                         .caption
@@ -2890,6 +2901,9 @@ impl DocumentCore {
                                 self.dpi,
                             );
                         }
+                    }
+                    if squeeze {
+                        crate::renderer::composer::merge_squeeze_line_segs(cell_para);
                     }
                 }
             }
@@ -3093,6 +3107,39 @@ impl DocumentCore {
         None
     }
 
+    /// path 의 최내곽이 «한 줄로 입력»(`lineWrap=SQUEEZE`) 표 칸인가.
+    fn innermost_cell_squeezes(
+        &self,
+        section_idx: usize,
+        parent_para_idx: usize,
+        path: &[(usize, usize, usize)],
+    ) -> bool {
+        let Some(mut para) = self
+            .document
+            .sections
+            .get(section_idx)
+            .and_then(|section| section.paragraphs.get(parent_para_idx))
+        else {
+            return false;
+        };
+        for (i, &(ctrl_idx, cell_idx, cell_para_idx)) in path.iter().enumerate() {
+            let Some(Control::Table(table)) = para.controls.get(ctrl_idx) else {
+                return false;
+            };
+            let Some(cell) = table.cells.get(cell_idx) else {
+                return false;
+            };
+            if i + 1 == path.len() {
+                return cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE;
+            }
+            let Some(next) = cell.paragraphs.get(cell_para_idx) else {
+                return false;
+            };
+            para = next;
+        }
+        false
+    }
+
     /// [#2755] path 기반 셀 리플로우 (깊이 ≥ 2 중첩 표 지원).
     ///
     /// `reflow_cell_paragraph`(flat)는 최외곽 표만 리플로우한다. 이 변형은 path 의
@@ -3112,12 +3159,18 @@ impl DocumentCore {
         else {
             return;
         };
+        let squeeze = self.innermost_cell_squeezes(section_idx, parent_para_idx, path);
         let styles = self.resolve_render_styles();
         let dpi = self.dpi;
         let cell_width_px = hwpunit_to_px(cell_width, dpi);
         let pad_left_px = hwpunit_to_px(pad_left as i32, dpi);
         let pad_right_px = hwpunit_to_px(pad_right as i32, dpi);
-        let available_width = (cell_width_px - pad_left_px - pad_right_px).max(0.0);
+        let available_width = crate::renderer::composer::cell_inner_text_width(
+            cell_width_px,
+            pad_left_px,
+            pad_right_px,
+            dpi,
+        );
 
         let Ok(paras) = self.get_cell_paragraphs_mut_by_path(section_idx, parent_para_idx, path)
         else {
@@ -3137,6 +3190,9 @@ impl DocumentCore {
             &styles,
             dpi,
         );
+        if squeeze {
+            crate::renderer::composer::merge_squeeze_line_segs(cell_para);
+        }
     }
 
     /// [#2755] path 기반 셀 문단 vpos 재계산 (깊이 ≥ 2 중첩 표 지원).
@@ -4302,18 +4358,17 @@ impl DocumentCore {
             .copied()
             .unwrap_or(0);
         self.remove_composed_paragraph(section_idx, para_idx);
-        // [Task #2299] 리셋 판별용 — reflow 이전 저장 흐름 end 캡처.
+        // 이웃 문단은 글이 그대로라 다시 흘리지 않는다 — 한/글은 문단을 지워도 앞 문단의 저장 줄·간격을 그대로 두고
+        // 뒤 문단만 그 자리로 당긴다. 앞 문단을 다시 흘려 스타일 간격으로 이으면 저장 사다리가 바뀌어 쪽이 흔들렸다
+        // (문서 끝 임시 문단을 지우자 표 다음 문단이 표 위로 올라가 1→2쪽, 맥 한글 12.30은 1쪽).
         let stored_end_for_reset = self.document.sections[section_idx]
             .paragraphs
-            .get(reflow_idx)
+            .get(para_idx)
             .and_then(crate::renderer::composer::paragraph_flow_end);
-        if reflow_idx < self.document.sections[section_idx].paragraphs.len() {
-            self.reflow_paragraph(section_idx, reflow_idx);
-        }
         let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
         crate::renderer::composer::recalculate_section_vpos(
             &mut self.document.sections[section_idx].paragraphs,
-            reflow_idx,
+            para_idx,
             None,
             stored_end_for_reset,
             &self.styles,
@@ -4335,18 +4390,14 @@ impl DocumentCore {
             if new_col == old_col {
                 break;
             }
-            // [Task #2299] 리셋 판별용 — reflow 이전 저장 흐름 end 캡처.
             let stored_end_for_reset = self.document.sections[section_idx]
                 .paragraphs
-                .get(reflow_idx)
+                .get(para_idx)
                 .and_then(crate::renderer::composer::paragraph_flow_end);
-            if reflow_idx < self.document.sections[section_idx].paragraphs.len() {
-                self.reflow_paragraph(section_idx, reflow_idx);
-            }
             let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
             crate::renderer::composer::recalculate_section_vpos(
                 &mut self.document.sections[section_idx].paragraphs,
-                reflow_idx,
+                para_idx,
                 None,
                 stored_end_for_reset,
                 &self.styles,
@@ -4427,10 +4478,11 @@ impl DocumentCore {
             .copied()
             .unwrap_or(0);
         self.reflow_paragraph(section_idx, para_idx);
+        // 새 문단부터 잇는다 — 앞 문단은 그대로다(한/글: 문단을 끼워도 앞 문단의 저장 간격을 스타일 간격으로 바꾸지 않는다).
         let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
         crate::renderer::composer::recalculate_section_vpos(
             &mut self.document.sections[section_idx].paragraphs,
-            reflow_target,
+            para_idx,
             Some(para_idx..para_idx + 1),
             None,
             &self.styles,
@@ -4454,7 +4506,7 @@ impl DocumentCore {
             let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
             crate::renderer::composer::recalculate_section_vpos(
                 &mut self.document.sections[section_idx].paragraphs,
-                reflow_target,
+                para_idx,
                 Some(para_idx..para_idx + 1),
                 None,
                 &self.styles,
@@ -6792,10 +6844,12 @@ mod tests {
     }
 
     fn resolved_table_frame_segment_width(dpi: f64) -> i32 {
-        crate::renderer::px_to_hwpunit(
+        let width = crate::renderer::px_to_hwpunit(
             crate::renderer::hwpunit_to_px(RESOLVED_TABLE_FRAME_WIDTH, dpi),
             dpi,
-        )
+        );
+        // 한/글 칸 글 상자는 4 HWPUNIT 격자다(`cell_inner_text_width`).
+        width - width % 4
     }
 
     #[test]

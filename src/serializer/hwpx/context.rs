@@ -147,16 +147,6 @@ pub struct SerializeContext {
     pub body_coldef_template_pending: bool,
     /// [#5943] 저장 lineseg 의 `textpos` 가 이미 HWPX 슬롯 축인지 여부.
     ///
-    /// `LineSeg::text_start` 는 파서가 파일 값을 그대로 담으므로 **출처마다 축이 다르다**
-    /// — HWP5·HWP3·HML 출처는 확장 제어 하나당 8유닛을 주는 HWP5 축이고, HWPX 출처는
-    /// `hp:secPr`·`hp:colPr` 을 세지 않는 HWPX 축이다. 이 값이 참이면 재기준화하지
-    /// 않는다(이중으로 빼면 aift.hwpx 왕복이 `textpos 24 → 8` 로 깨진다).
-    /// 판정은 "이 lineseg 가 HWPX 컨테이너에서 나왔는가" — 출처 포맷이 HWPX 이거나
-    /// rhwp HWPX→HWP5 변환본(`hwpx_lineage`)이다. `hwpx_stored_layout()` 은 쓸 수 없다.
-    /// 그쪽은 rhwp 가 HWP5 에서 낸 HWPX(`META-INF/rhwp-hwp5-origin`)를 제외하는데, 그
-    /// 파일의 `textpos` 는 이 수정 이후 **HWPX 축**이라 다시 내리면 재수출 고정점이
-    /// 깨진다(02502 재수출: 32 → 16 실측).
-    pub line_segs_on_hwpx_axis: bool,
     /// 이번 HWPX 산출물에서 발생한 사용자 내용 손실 (#4430).
     ///
     /// ID 풀과 마찬가지로 한 번의 직렬화 생명주기에만 속하며, 완료 시 바이트와 함께
@@ -168,7 +158,6 @@ impl Default for SerializeContext {
     fn default() -> Self {
         Self {
             char_shape_ids: IdPool::default(),
-            line_segs_on_hwpx_axis: false,
             para_shape_ids: IdPool::default(),
             border_fill_ids: IdPool::default(),
             tab_pr_ids: IdPool::default(),
@@ -201,9 +190,6 @@ impl SerializeContext {
     /// 각 writer가 추가되면서 `reference()` 호출과 스캔 범위가 확장된다.
     pub fn collect_from_document(doc: &Document) -> Self {
         let mut ctx = Self::default();
-        ctx.line_segs_on_hwpx_axis = doc.provenance.format
-            == crate::model::provenance::SourceFormat::Hwpx
-            || doc.provenance.hwpx_lineage;
 
         // CharShape, ParaShape, BorderFill, TabDef, Numbering, Style, Font
         // 목록은 배열 인덱스가 곧 HWPX `id` 속성이 된다.

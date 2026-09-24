@@ -1910,7 +1910,7 @@ fn regenerated_half_space_width(style: &TextStyle) -> f64 {
         style.letter_spacing
     };
     let mut width = base + tracking + style.extra_char_spacing + style.extra_word_spacing;
-    if style.letter_spacing + style.extra_char_spacing < 0.0 {
+    if style.letter_spacing + style.extra_char_spacing < 0.0 && !style.squeeze_unclamped {
         width = width.max(base * 0.5);
     }
     width
@@ -2345,6 +2345,96 @@ pub(crate) fn recompose_horizontal_cell_lines_for_width(
             dpi,
             Some(overflow_cache),
         );
+    }
+}
+
+/// 저장 줄 폭(`segment_width`)이 한/글이 이 칸에서 잴 글 상자 폭과 같은가 — 같으면 한/글은 저장 줄을 그대로 그리고
+/// 다르면 문단을 다시 짠다(맥 한글 12.30 대조 실험: c3fb5220 채움 5쪽 칸 sw 3661≠3660 은 엉뚱한 저장 줄 나눔도 버리고
+/// 제 조판으로, 6쪽 칸 3728=3728 은 엉뚱한 줄 나눔까지 저장대로 그렸다).
+pub(crate) fn stored_rows_match_cell_box(
+    para: &Paragraph,
+    inner_width_px: f64,
+    styles: &ResolvedStyleSet,
+    dpi: f64,
+) -> bool {
+    let style = styles.para_styles.get(para.para_shape_id as usize);
+    let expected = ParagraphBox::cell_for_style(inner_width_px, style, dpi).width_hwp();
+    !para.line_segs.is_empty()
+        && para
+            .line_segs
+            .iter()
+            .all(|seg| seg.segment_width == expected)
+}
+
+/// «한 줄로 입력» 칸 문단을 한/글처럼 한 줄로 모으되, 한/글이 저장 줄을 그대로 쓰는 문단(`stored_rows_match_cell_box`)은
+/// 둔다 — 6쪽 칸은 저장 5줄 그대로였다.
+pub(crate) fn collapse_squeeze_cell_lines_unless_stored(
+    composed: &mut ComposedParagraph,
+    para: &Paragraph,
+    inner_width_px: f64,
+    styles: &ResolvedStyleSet,
+    dpi: f64,
+) {
+    if !stored_rows_match_cell_box(para, inner_width_px, styles, dpi) {
+        collapse_squeeze_cell_lines(composed);
+    }
+}
+
+/// «한 줄로 입력»(`lineWrap=SQUEEZE`) 칸 문단은 강제 줄바꿈 사이를 한 줄로 모은다 — 한/글이 다시 짜는 문단은
+/// 자간을 줄여 한 줄을 지킨다(맥 한글 12.30: c3fb5220 채움 5쪽 매출 비중 칸 — 저장 5줄을 한 줄에 겹쳐 그린다).
+/// 글자처럼 개체가 선 문단은 줄 번호가 개체 자리와 묶여 있어 그대로 둔다.
+pub(crate) fn collapse_squeeze_cell_lines(composed: &mut ComposedParagraph) {
+    if composed.lines.len() <= 1
+        || !composed.inline_controls.is_empty()
+        || !composed.tac_controls.is_empty()
+    {
+        return;
+    }
+    let mut merged: Vec<ComposedLine> = Vec::with_capacity(composed.lines.len());
+    for line in std::mem::take(&mut composed.lines) {
+        match merged.last_mut() {
+            Some(prev) if !prev.has_line_break => {
+                prev.line_height = prev.line_height.max(line.line_height);
+                prev.baseline_distance = prev.baseline_distance.max(line.baseline_distance);
+                prev.runs.extend(line.runs);
+                prev.has_line_break = line.has_line_break;
+            }
+            _ => merged.push(line),
+        }
+    }
+    composed.lines = merged;
+}
+
+/// «한 줄로 입력»(`lineWrap=SQUEEZE`) 칸 문단을 다시 짠 뒤 자동 줄나눔 줄을 앞 줄에 합친다 — 한/글은 이 칸에 강제
+/// 줄바꿈 사이마다 한 줄만 저장한다. 채움이 여러 줄로 저장하면 행 높이가 한/글과 갈린다.
+pub(crate) fn merge_squeeze_line_segs(para: &mut Paragraph) {
+    if para.line_segs.len() <= 1 {
+        return;
+    }
+    let chars: Vec<char> = para.text.chars().collect();
+    let forced_break_before = |ts: u32| {
+        let i = para.char_offsets.partition_point(|&o| o < ts);
+        i > 0 && chars.get(i - 1) == Some(&'\n') && para.char_offsets[i - 1] + 1 == ts
+    };
+    let mut merged: Vec<LineSeg> = Vec::with_capacity(para.line_segs.len());
+    for (k, seg) in para.line_segs.iter().enumerate() {
+        match merged.last_mut() {
+            Some(prev) if !forced_break_before(para.line_seg_text_start(k)) => {
+                prev.line_height = prev.line_height.max(seg.line_height);
+                prev.text_height = prev.text_height.max(seg.text_height);
+                prev.baseline_distance = prev.baseline_distance.max(seg.baseline_distance);
+            }
+            _ => {
+                let mut seg = seg.clone();
+                if let Some(prev) = merged.last() {
+                    seg.vertical_pos = prev.vertical_pos + prev.line_height + prev.line_spacing;
+                }
+                merged.push(seg);
+            }
+        }
+    }
+    if merged.len() < para.line_segs.len() {
+        para.replace_line_segs(merged);
     }
 }
 
@@ -3068,9 +3158,18 @@ pub(crate) fn floored_cell_line_width_padding(
 /// 복사돼 있었다. 하한선을 그중 일부에만 넣으면 측정 줄 수와 렌더 줄 수가 갈려 행 높이가
 /// 어긋난다(#2279 가 겪은 것이 정확히 그 발산이다). 계산을 한 자리로 모아 호출부가
 /// 규칙을 고를 수 없게 한다.
+///
+/// 한/글은 칸 글 상자 폭을 본문 단 폭과 같은 4 HWPUNIT 격자로 내려 자른 뒤 문단 여백을 뺀다
+/// (`COLUMN_WIDTH_QUANTUM_HWP`). 한/글 저장 칸 줄의 `segment_width` 는 전부 `⌊(칸 폭 − 안 여백)/4⌋×4 − 문단 여백`
+/// 이다(c3fb5220 빈 양식 50여 짝: 4244−282=3962 → 3960−300=3660, 5043−282=4761 → 4760−300−639=3821). 자르지 않고
+/// 저장하면 한/글은 그 문단을 다시 짠다 — 채움 3661 을 적은 5쪽 «한 줄로 입력» 칸만 한 줄로 눌렸고 3728(=격자)인
+/// 6쪽 칸은 저장 줄대로 그렸다(맥 한글 12.30 대조 실험).
 pub(crate) fn cell_inner_text_width(cell_w: f64, pad_left: f64, pad_right: f64, dpi: f64) -> f64 {
     let (pad_left, pad_right) = floored_cell_line_width_padding(pad_left, pad_right, cell_w, dpi);
-    (cell_w - pad_left - pad_right).max(0.0)
+    let width = (cell_w - pad_left - pad_right).max(0.0);
+    let hu = (width * 7200.0 / dpi).round() as i32;
+    let quantum = crate::renderer::layout_frame::COLUMN_WIDTH_QUANTUM_HWP;
+    f64::from(hu - hu.rem_euclid(quantum)) * dpi / 7200.0
 }
 
 pub(crate) fn shrunk_cell_horizontal_padding(

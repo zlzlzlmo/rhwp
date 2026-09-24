@@ -5706,11 +5706,24 @@ impl LayoutEngine {
                     .map(|(pos, _, _)| *pos)
                     .max(),
             );
+            // «한 줄로 입력»(SQUEEZE) 칸 줄은 넘치는 폭을 글자 사이(N-1곳)에 고르게 줄인다 — 한/글은 바닥 없이
+            // 줄여 글자가 겹쳐도 한 줄을 지킨다(맥 한글 12.30: c3fb5220 채움 5쪽 매출 비중 칸, 자간 −8.04pt/12pt).
+            let squeeze_line = self.squeeze_cell_line.get()
+                && cell_ctx.is_some()
+                && total_char_count > 1
+                && !has_tabs
+                && total_text_width > available_width + 0.01;
             let (extra_word_sp, extra_char_sp, extra_dash_sp) = if is_hancom_company_pua_logo_line {
                 // 이 줄의 trailing space는 뒤의 treat-as-char logo 그림 앞 공백이다.
                 // 회사명 자체에는 자간을 추가하지 않고 이 공백 하나가 남는 폭을 전부
                 // 흡수하게 해야 Hancom PDF의 좌측 회사명·우측 logo 배치가 유지된다.
                 ((available_width - total_text_width).max(0.0), 0.0, 0.0)
+            } else if squeeze_line {
+                (
+                    0.0,
+                    (available_width - total_text_width) / (total_char_count - 1) as f64,
+                    0.0,
+                )
             } else if runs_all_whitespace
                 && !is_last_line_of_para
                 && !has_forced_break
@@ -5764,7 +5777,9 @@ impl LayoutEngine {
             // 셀 overflow/underflow 분기로 자간 보정된 경우 정렬 기준 폭은 실제 렌더 폭이어야 함.
             // 특히 #1285 답안지 `수험번호` 라벨은 음수 자간으로 압축된 텍스트를 자연 폭 기준으로
             // 정렬하면 압축 후 남은 폭만큼 왼쪽에 붙는다. 일반 셀은 기존 단순 보정 경로를 유지한다.
-            let effective_text_width = if is_answer_sheet_number_label
+            let effective_text_width = if squeeze_line {
+                available_width
+            } else if is_answer_sheet_number_label
                 && extra_char_sp.abs() > 0.001
                 && cell_ctx.is_some()
                 && !needs_justify
@@ -6990,6 +7005,8 @@ impl LayoutEngine {
             text_style.line_x_offset = x - col_area.x;
             text_style.extra_word_spacing = extra_word_sp;
             text_style.extra_char_spacing = extra_char_sp;
+            // 음수 자간은 «한 줄로 입력» 칸에서 squeeze 분기만 만든다(넘치면 늘 그 분기다).
+            text_style.squeeze_unclamped = self.squeeze_cell_line.get() && extra_char_sp < 0.0;
             text_style.extra_dash_advance = extra_dash_sp;
             // [Task #874 #2] composer lang split (예: "F3→Alt+I" → "F3"/"→"/"Alt+I")
             // 으로 auto_tab_right post-tab 콘텐츠가 후속 run 으로 흩어진 경우, 현재

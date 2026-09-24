@@ -2345,6 +2345,17 @@ impl LayoutEngine {
         if common.treat_as_char {
             return 0.0;
         }
+        // «쪽 영역 안으로 제한»을 끈 글앞·글뒤 개체(문단 기준)는 칸이 아니라 표를 단 본문 문단에 서서 칸을 키우지
+        // 않는다 — 맥 한글 12.30: 칸 문단에 그런 도장 그림(15pt)을 단 서명 원장 39종의 쪽 수가 원본과 전부 같다.
+        if !common.flow_with_text
+            && matches!(common.vert_rel_to, VertRelTo::Para)
+            && matches!(
+                common.text_wrap,
+                TextWrap::InFrontOfText | TextWrap::BehindText
+            )
+        {
+            return 0.0;
+        }
         if !matches!(
             common.text_wrap,
             TextWrap::Square
@@ -2689,6 +2700,10 @@ impl LayoutEngine {
     ) -> f64 {
         // [#6929] 진입 시점의 단 상태 — 이후 이 함수가 자식을 붙이므로 먼저 찍어 둔다.
         let column_is_empty_on_entry = col_node.children.is_empty();
+        if depth == 0 {
+            self.cell_float_host_origin
+                .set(Some((col_area.x + host_margin_left, para_y)));
+        }
         if table.cells.is_empty() {
             if depth == 0 {
                 return y_start;
@@ -5948,6 +5963,9 @@ impl LayoutEngine {
                 if snap_anchored_with_spacing_before {
                     self.reapply_snap_anchored_spacing_before.set(true);
                 }
+                let squeeze_scope = self
+                    .squeeze_cell_line
+                    .replace(cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE);
                 para_y = self.layout_composed_paragraph(
                     tree,
                     cell_node,
@@ -5968,6 +5986,7 @@ impl LayoutEngine {
                     Some(bin_data_content),
                     stored_square_picture_wrap_anchor.as_ref(),
                 );
+                self.squeeze_cell_line.set(squeeze_scope);
                 if self.profile.get().hwp5_stored_pagination_layout()
                     && !table.common.treat_as_char
                     && matches!(table.page_break, TablePageBreak::RowBreak)
@@ -6043,6 +6062,9 @@ impl LayoutEngine {
                     let composed_for_layout = numbered_comp.as_ref().unwrap_or(composed);
                     // 반환값(다음 문단 y)은 버린다 — 흐름 전진은 저장 vpos 계약 그대로.
                     // 이 문단의 블록 표는 아래 `layout_table` 이 저장 좌표로 배치한다.
+                    let squeeze_scope = self
+                        .squeeze_cell_line
+                        .replace(cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE);
                     let _ = self.layout_composed_paragraph(
                         tree,
                         cell_node,
@@ -6063,6 +6085,7 @@ impl LayoutEngine {
                         Some(bin_data_content),
                         stored_square_picture_wrap_anchor.as_ref(),
                     );
+                    self.squeeze_cell_line.set(squeeze_scope);
                     has_preceding_text |= host_has_visible_text;
                 }
             }
@@ -6501,7 +6524,56 @@ impl LayoutEngine {
                                 );
                             let detached_from_inline_table_flow = inline_table_flow_y_shift > 0.0
                                 && unrestricted_take_place_cell_float;
-                            let picture_anchor_y = if detached_from_inline_table_flow {
+                            // 칸 안 «쪽 영역 안으로 제한» 끈 글앞·글뒤 그림(문단 기준)의 원점은 칸 문단이 아니라 **표를 단 본문
+                            // 문단**이다 — 가로 = 단 왼쪽 + 문단 왼쪽 여백, 세로 = 그 문단 위(글자처럼 표면 표가 앉은 줄 위
+                            // = 표 상자 − 바깥 여백). 맥 한글 12.30: 서명 원장 39종 82곳에 폭이 다른 0 오프셋 그림을 칸 문단에
+                            // 달아 재면 칸 문단 줄과는 수백 pt 어긋나고, 가운데 정렬 표(성남)도 가로는 단 왼쪽 40.0pt에 선다.
+                            let table_frame_origin = (overlay_para
+                                && !pic.common.flow_with_text
+                                && matches!(pic.common.horz_rel_to, HorzRelTo::Para)
+                                && enclosing_cell_ctx.is_none())
+                            .then(|| {
+                                // 세로는 표 상자에서 거꾸로 잰다 — 한/글은 문단 기준 표를 «문단 위 + 세로 오프셋 + 바깥
+                                // 여백 위»에 두므로 문단 위 = 표 위 − 바깥 여백 위 − 오프셋. 문단 위를 흐름 y 로 따로 재면
+                                // 표 배치와 어긋나(consent 1.4pt) 도장이 표지에서 빗나간다. 글자처럼 표는 문단 앞 간격 전의
+                                // 문단 위다(칠곡 297: 앞 간격 4pt 위 = 맥 168.4pt).
+                                let para_rel_offset = if !table.common.treat_as_char
+                                    && matches!(table.common.vert_rel_to, VertRelTo::Para)
+                                {
+                                    hwpunit_to_px(
+                                        signed_hwpunit(table.common.vertical_offset),
+                                        self.dpi,
+                                    )
+                                } else {
+                                    0.0
+                                };
+                                let para_top = table_node.bbox.y
+                                    - hwpunit_to_px(i32::from(table.outer_margin_top), self.dpi)
+                                    - para_rel_offset;
+                                match self.cell_float_host_origin.get() {
+                                    Some((host_x, host_y)) => (
+                                        host_x,
+                                        if matches!(table.common.vert_rel_to, VertRelTo::Para)
+                                            && !table.common.treat_as_char
+                                        {
+                                            para_top
+                                        } else {
+                                            host_y.unwrap_or(para_top)
+                                        },
+                                    ),
+                                    None => (
+                                        table_node.bbox.x
+                                            - hwpunit_to_px(
+                                                i32::from(table.outer_margin_left),
+                                                self.dpi,
+                                            ),
+                                        para_top,
+                                    ),
+                                }
+                            });
+                            let picture_anchor_y = if let Some((_, frame_y)) = table_frame_origin {
+                                frame_y
+                            } else if detached_from_inline_table_flow {
                                 anchor_y - inline_table_flow_y_shift - row_y[r].max(0.0)
                             } else if unrestricted_take_place_cell_float {
                                 // 한컴의 셀 내부 자리차지 그림은 제한이 꺼지면
@@ -6515,6 +6587,7 @@ impl LayoutEngine {
                                 anchor_y
                             };
                             let cell_area = LayoutRect {
+                                x: table_frame_origin.map_or(inner_area.x, |(frame_x, _)| frame_x),
                                 y: picture_anchor_y,
                                 height: (inner_area.height - (picture_anchor_y - inner_area.y))
                                     .max(0.0),
@@ -6761,7 +6834,11 @@ impl LayoutEngine {
                                 let cell_bottom = (content_cell_y + cell_h)
                                     .min(inner_area.y + inner_area.height)
                                     .max(cell_top);
-                                if pic_h <= (cell_bottom - cell_top) + 0.5 {
+                                // 표 상자 원점 그림(위 `table_frame_origin`)은 봉쇄하지 않는다 — 맥 한글 12.30은
+                                // 그 그림을 칸 밖(표 상자 좌상단)에 그대로 둔다(서명 원장 39종 82곳 실측).
+                                if table_frame_origin.is_none()
+                                    && pic_h <= (cell_bottom - cell_top) + 0.5
+                                {
                                     pic_y.clamp(cell_top, (cell_bottom - pic_h).max(cell_top))
                                 } else {
                                     pic_y
@@ -8184,6 +8261,15 @@ impl LayoutEngine {
                             self.profile.get().native_hwp5_layout(),
                             &self.single_line_overflow_cache,
                         );
+                        if cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE {
+                            crate::renderer::composer::collapse_squeeze_cell_lines_unless_stored(
+                                comp,
+                                para,
+                                inner_width,
+                                styles,
+                                self.dpi,
+                            );
+                        }
                     } else {
                         crate::renderer::composer::recompose_cell_lines_in_frame(
                             comp,

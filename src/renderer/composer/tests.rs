@@ -2399,3 +2399,115 @@ fn owned_rowbreak_tac_height_selects_current_or_multirow_frames() {
     let undersized = para_with_rows(4, 32_338);
     assert_eq!(owned_rowbreak_tac_height(&undersized, 0), None);
 }
+
+/// «한 줄로 입력»(SQUEEZE) 칸 — 한/글은 강제 줄바꿈 사이마다 한 줄만 저장한다(표본 HWPX 9,276 문단 전수: 여러 줄은
+/// 전부 `lineBreak` 수 + 1). 자동 줄나눔 줄은 앞 줄에 합치고, 강제 줄바꿈 뒤 줄은 남긴다.
+#[test]
+fn squeeze_cell_keeps_one_stored_line_per_forced_break_segment() {
+    let seg = |text_start: u32, vertical_pos: i32, line_height: i32| LineSeg {
+        text_start,
+        vertical_pos,
+        line_height,
+        text_height: line_height,
+        baseline_distance: line_height * 85 / 100,
+        line_spacing: 600,
+        ..Default::default()
+    };
+    // "가나다라\n마바사아" — 자동 줄나눔 2, 강제 줄바꿈 뒤 5, 자동 줄나눔 7.
+    let mut para = Paragraph {
+        text: "가나다라\n마바사아".to_string(),
+        char_offsets: (0..9).collect(),
+        char_count: 10,
+        line_segs: vec![
+            seg(0, 0, 1000),
+            seg(2, 1600, 1200),
+            seg(5, 3400, 1000),
+            seg(7, 5000, 1000),
+        ],
+        ..Default::default()
+    };
+    merge_squeeze_line_segs(&mut para);
+    let got: Vec<(u32, i32, i32)> = para
+        .line_segs
+        .iter()
+        .map(|s| (s.text_start, s.vertical_pos, s.line_height))
+        .collect();
+    assert_eq!(got, vec![(0, 0, 1200), (5, 1800, 1000)]);
+
+    let line = |char_start: usize, line_height: i32, has_line_break: bool| ComposedLine {
+        runs: vec![],
+        line_height,
+        baseline_distance: line_height * 85 / 100,
+        segment_width: 3661,
+        column_start: 0,
+        line_spacing: 600,
+        has_line_break,
+        char_start,
+    };
+    let mut composed = ComposedParagraph {
+        lines: vec![
+            line(0, 1000, false),
+            line(2, 1200, true),
+            line(5, 1000, false),
+        ],
+        para_style_id: 0,
+        inline_controls: vec![],
+        numbering_text: None,
+        tac_controls: vec![],
+        footnote_positions: vec![],
+        tab_extended: vec![],
+        horizontal_shaping: None,
+    };
+    collapse_squeeze_cell_lines(&mut composed);
+    let lines: Vec<(usize, i32, bool)> = composed
+        .lines
+        .iter()
+        .map(|l| (l.char_start, l.line_height, l.has_line_break))
+        .collect();
+    assert_eq!(lines, vec![(0, 1200, true), (5, 1000, false)]);
+}
+
+/// 문단 기준 자리차지 표를 단 문단 다음 문단은 줄 끝이 아니라 **표 아래**에서 잇는다 — 한/글 저장 사다리와 같다
+/// (맥 한글 12.30 저장 oath-seal-or-sign 문단 20: 66048 = 앵커 첫 줄 56220 + 세로 오프셋 271 + 표 8991 + 바깥 여백 283×2).
+/// 줄 끝(56220 + 1800)으로 이으면 표 다음 문단에 글자 하나만 쳐도 그 문단이 표 위로 올라가 쪽이 는다.
+#[test]
+fn recalculated_vpos_after_a_para_relative_top_and_bottom_table_starts_below_the_table() {
+    use crate::model::shape::{CommonObjAttr, TextWrap, VertRelTo};
+    use crate::model::table::Table;
+    let seg = |vertical_pos| LineSeg {
+        vertical_pos,
+        line_height: 1200,
+        text_height: 1200,
+        baseline_distance: 1020,
+        line_spacing: 600,
+        ..Default::default()
+    };
+    let host = Paragraph {
+        line_segs: vec![seg(56_220)],
+        controls: vec![Control::Table(Box::new(Table {
+            common: CommonObjAttr {
+                treat_as_char: false,
+                text_wrap: TextWrap::TopAndBottom,
+                vert_rel_to: VertRelTo::Para,
+                vertical_offset: 271,
+                height: 8_991,
+                ..Default::default()
+            },
+            outer_margin_top: 283,
+            outer_margin_bottom: 283,
+            ..Default::default()
+        }))],
+        ..Default::default()
+    };
+    let next = Paragraph {
+        text: "가".to_string(),
+        char_offsets: vec![0],
+        char_count: 2,
+        line_segs: vec![seg(66_048)],
+        ..Default::default()
+    };
+    let mut paragraphs = vec![host, next];
+    let styles = crate::renderer::style_resolver::ResolvedStyleSet::default();
+    recalculate_section_vpos(&mut paragraphs, 1, None, None, &styles, 96.0, false);
+    assert_eq!(paragraphs[1].line_segs[0].vertical_pos, 66_048);
+}

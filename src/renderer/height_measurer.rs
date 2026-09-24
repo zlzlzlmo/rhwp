@@ -1201,6 +1201,17 @@ impl HeightMeasurer {
         if common.treat_as_char {
             return 0.0;
         }
+        // «쪽 영역 안으로 제한»을 끈 글앞·글뒤 개체(문단 기준)는 칸이 아니라 표를 단 본문 문단에 서서 칸을 키우지
+        // 않는다 — 맥 한글 12.30: 칸 문단에 그런 도장 그림(15pt)을 단 서명 원장 39종의 쪽 수가 원본과 전부 같다.
+        if !common.flow_with_text
+            && matches!(common.vert_rel_to, VertRelTo::Para)
+            && matches!(
+                common.text_wrap,
+                TextWrap::InFrontOfText | TextWrap::BehindText
+            )
+        {
+            return 0.0;
+        }
         if !matches!(
             common.text_wrap,
             TextWrap::Square

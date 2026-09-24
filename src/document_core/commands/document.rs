@@ -1448,6 +1448,7 @@ impl DocumentCore {
                 cell_w_px, pad_left, pad_right, dpi,
             );
             let mut cell_reflowed = false;
+            let squeeze = cell.line_wrap == crate::model::table::CELL_LINE_WRAP_SQUEEZE;
             for cell_para in &mut cell.paragraphs {
                 if Self::needs_reflow_broadly(cell_para) {
                     let para_style = styles.para_styles.get(cell_para.para_shape_id as usize);
@@ -1457,6 +1458,9 @@ impl DocumentCore {
                         styles,
                         dpi,
                     );
+                    if squeeze {
+                        crate::renderer::composer::merge_squeeze_line_segs(cell_para);
+                    }
                     reflowed += 1;
                     cell_reflowed = true;
                 }
@@ -1886,16 +1890,13 @@ impl DocumentCore {
             || self.document.provenance.hwp3_lineage;
         let serialized = if matches!(self.source_format, crate::parser::FileFormat::Hwp) {
             let mut doc = self.document.clone();
-            if !doc
-                .hwpx_aux_entries
-                .iter()
-                .any(|(path, _)| path == crate::model::document::HWP5_ORIGIN_HWPX_MARKER_PATH)
-            {
-                doc.hwpx_aux_entries.push((
-                    crate::model::document::HWP5_ORIGIN_HWPX_MARKER_PATH.to_string(),
-                    b"1".to_vec(),
-                ));
-            }
+            // 직렬화기는 줄 `textpos` 를 한/글 축으로 낸다 — 마커 내용으로 그 축을 알린다(옛 `1` 도 덮어쓴다).
+            doc.hwpx_aux_entries
+                .retain(|(path, _)| path != crate::model::document::HWP5_ORIGIN_HWPX_MARKER_PATH);
+            doc.hwpx_aux_entries.push((
+                crate::model::document::HWP5_ORIGIN_HWPX_MARKER_PATH.to_string(),
+                crate::model::document::HWP5_ORIGIN_HANGUL_AXIS_MARKER.to_vec(),
+            ));
             // HWP3→HWP5 변환본의 HWPX export 도 hwp3 계보를 이어 준다.
             if hwp3_origin {
                 Self::push_hwp3_origin_marker(&mut doc);
@@ -3178,10 +3179,12 @@ mod validate_linesegs_tests {
         );
 
         let line = short_table_frame_target_line(&document);
+        // 한/글은 칸 글 상자 폭을 4 HWPUNIT 격자로 내린다(`cell_inner_text_width`) — 5002 → 5000.
         assert_eq!(
-            line.segment_width, RESOLVED_LAST_TRACK_WIDTH,
+            line.segment_width,
+            RESOLVED_LAST_TRACK_WIDTH - RESOLVED_LAST_TRACK_WIDTH % 4,
             "eager reflow must use the table-owned frame width and the table's zero padding, \
-             rounded to HWPUNIT rather than truncated through px"
+             rounded to HWPUNIT rather than truncated through px, on Hangul's 4-HWPUNIT grid"
         );
     }
 
@@ -3204,9 +3207,10 @@ mod validate_linesegs_tests {
         assert_eq!(core.reflow_linesegs_on_demand(), 5);
         let line = short_table_frame_target_line(core.document());
         assert_eq!(
-            line.segment_width, RESOLVED_LAST_TRACK_WIDTH,
+            line.segment_width,
+            RESOLVED_LAST_TRACK_WIDTH - RESOLVED_LAST_TRACK_WIDTH % 4,
             "on-demand reflow must use the table-owned frame width and the table's zero padding, \
-             rounded to HWPUNIT rather than truncated through px"
+             rounded to HWPUNIT rather than truncated through px, on Hangul's 4-HWPUNIT grid"
         );
     }
 
