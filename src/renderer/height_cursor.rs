@@ -509,6 +509,41 @@ impl HeightCursor {
             allow_large_backward,
             self.dpi,
         );
+        // 저장 사다리가 빈 host 자리차지 표의 띠 바닥에 첫 줄을 둔 문단(`empty_host_float_band_sets_next_line`) —
+        // 순차 흐름이 띠 뒤에 host 뒤 간격·다음 앞 간격을 더 얹었으면 8px 넘게라도 그 자리로 되감는다. 되감는 폭은 그
+        // 두 간격(+1px)까지다 — 그보다 크면 기준점(lazy base)이 어긋난 것이다(center_align 문서: 첫 문단이 저장
+        // 20802 에서 시작해 기준이 200pt 어긋났다).
+        let (end_y, applied) = if !applied && end_y < y_offset && end_y >= self.col_area_y {
+            let spacing_px = |p: &Paragraph, before: bool| {
+                styles
+                    .para_styles
+                    .get(p.para_shape_id as usize)
+                    .map_or(0.0, |ps| {
+                        if before {
+                            ps.spacing_before
+                        } else {
+                            ps.spacing_after
+                        }
+                    })
+            };
+            let hu = |px: f64| crate::renderer::px_to_hwpunit(px, self.dpi);
+            let band_rewind = paragraphs.get(item_para).and_then(|next| {
+                crate::renderer::float_placement::empty_host_float_band_sets_next_line(
+                    prev_para,
+                    next,
+                    hu(spacing_px(prev_para, true)),
+                    hu(spacing_px(prev_para, false)),
+                    hu(spacing_px(next, true)),
+                )
+                .then(|| spacing_px(prev_para, false) + spacing_px(next, true) + 1.0)
+            });
+            (
+                end_y,
+                band_rewind.is_some_and(|limit| y_offset - end_y <= limit),
+            )
+        } else {
+            (end_y, applied)
+        };
         let prev_line_spacing_px = (seg.line_spacing.max(0) as f64) / 7200.0 * self.dpi;
         let prev_content_bottom_y = y_offset - prev_line_spacing_px;
         let measured_prev_content_bottom_y =

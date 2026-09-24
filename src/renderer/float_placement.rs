@@ -1545,6 +1545,54 @@ pub(crate) fn empty_host_physical_ladder_extras_hu(
     ((stored_delta - physical_delta).abs() <= 2).then_some(extras)
 }
 
+/// 빈 host 의 문단 기준 자리차지 표(비 TAC) 뒤 개체 없는 문단 — 저장 사다리가 다음 첫 줄을 **띠 바닥**
+/// (`host 문단 위 + v_off + 바깥 위 여백 + 선언 높이 + 바깥 아래 여백`)에 두었고 그 자리가 보통 흐름
+/// (`host 줄 + 뒤 간격 + 다음 앞 간격`)보다 아래인가. 한/글은 띠를 가로지르는 줄만 띠 아래로 내리고 다음 문단
+/// 앞 간격·host 뒤 간격은 띠 안에 흡수한다(맥 한글 12.30: hwpctl 16쪽 pi 283 첫 줄 = 표 바닥 + 283HU = 저장 17405 ·
+/// rhwp 는 두 간격을 더 얹어 10pt 아래였다). 말뭉치 저장 사다리 판별 가능 15건 중 14건이 이 식이다.
+pub(crate) fn empty_host_float_band_sets_next_line(
+    host: &Paragraph,
+    next: &Paragraph,
+    host_spacing_before_hu: i32,
+    host_spacing_after_hu: i32,
+    next_spacing_before_hu: i32,
+) -> bool {
+    use crate::model::paragraph::LineSeg;
+    let [Control::Table(table)] = host.controls.as_slice() else {
+        return false;
+    };
+    let (Some(host_seg), Some(next_seg)) = (host.line_segs.first(), next.line_segs.first()) else {
+        return false;
+    };
+    if table.common.treat_as_char
+        || !is_para_topbottom_float(&table.common)
+        || para_has_non_whitespace_text(host)
+        || next.controls.iter().any(|c| {
+            matches!(
+                c,
+                Control::Table(_) | Control::Picture(_) | Control::Shape(_)
+            )
+        })
+        || host_seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0
+        || next_seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0
+        || next_seg.vertical_pos <= host_seg.vertical_pos
+    {
+        return false;
+    }
+    let band_bottom = i64::from(host_seg.vertical_pos) - i64::from(host_spacing_before_hu)
+        + i64::from(signed_hwpunit(table.common.vertical_offset).max(0))
+        + i64::from(table.outer_margin_top)
+        + i64::from(table.common.height.min(i32::MAX as u32))
+        + i64::from(table.outer_margin_bottom);
+    let normal_line = i64::from(host_seg.vertical_pos)
+        + i64::from(host_seg.line_height)
+        + i64::from(host_seg.line_spacing)
+        + i64::from(host_spacing_after_hu)
+        + i64::from(next_spacing_before_hu);
+    let next_vpos = i64::from(next_seg.vertical_pos);
+    (next_vpos - band_bottom).abs() <= 3 && band_bottom > normal_line + 3
+}
+
 /// [#3931] native HWP5 다행 RowBreak 표가 cell 내부 저장 page reset을 갖고,
 /// 후속 source 문단도 host anchor 위로 되감기는 빈-host 형상인지 판별한다.
 ///
