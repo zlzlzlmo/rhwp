@@ -2928,17 +2928,18 @@ fn page_num_format_to_str(fmt: u8) -> &'static str {
 
 /// `<hp:ctrl><hp:pageNum .../></hp:ctrl>` — 쪽 번호 위치(PageNumberPos) 컨트롤.
 fn render_page_num(pn: &PageNumberPos) -> String {
-    // dash_char 기본값은 '-' (모델: 항상 '-'); '\0'이면 '-'로 폴백.
+    // 줄표(«- 1 -»)는 이 글자다 — '\0'이면 줄표 없음이고 빈 문자열로 쓴다(맥 한글 12.30: sideChar=""·속성 없음·" " 모두 «2»,
+    // "-"는 «- 2 -» 실측). 종전엔 '\0'을 '-'로 폴백해 줄표를 끈 쪽 번호가 hwpx에서 다시 켜졌다.
     let side = if pn.dash_char == '\0' {
-        '-'
+        String::new()
     } else {
-        pn.dash_char
+        pn.dash_char.to_string()
     };
     format!(
         r#"<hp:ctrl><hp:pageNum pos="{}" formatType="{}" sideChar="{}"/></hp:ctrl>"#,
         page_num_pos_to_str(pn.position),
         page_num_format_to_str(pn.format),
-        xml_escape(&side.to_string()),
+        xml_escape(&side),
     )
 }
 

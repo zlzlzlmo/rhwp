@@ -4127,6 +4127,10 @@ impl DocumentCore {
                         cd.widths.clear();
                         cd.gaps.clear();
                     }
+                    // 단 개수·종류·너비 동일은 속성 비트(bit 0-12)에 산다 — 원본 속성을 남기면 HWP5 저장
+                    // (`serialize_column_def`)이 옛 비트를 그대로 써 다시 열면 1단으로 돌아간다(HWPX는 모델에서
+                    // 다시 짓는다). 방향 비트는 `direction`이 들고 있으니 재구성 경로로 보낸다.
+                    cd.raw_attr = 0;
                     found = true;
                     break;
                 }
