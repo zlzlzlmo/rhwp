@@ -5293,7 +5293,8 @@ fn parse_page_num_attrs(e: &quick_xml::events::BytesStart) -> PageNumberPos {
             }
             b"sideChar" => {
                 let s = attr_str(&attr);
-                pn.dash_char = s.chars().next().unwrap_or('-');
+                // 빈 문자열은 줄표 없음이다(한/글도 «2»로 그린다) — '-'로 채우면 줄표를 끈 쪽 번호가 다시 켜진다.
+                pn.dash_char = s.chars().next().unwrap_or('\0');
             }
             _ => {}
         }
