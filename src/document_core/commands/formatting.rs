@@ -2306,6 +2306,99 @@ impl DocumentCore {
         }
         Ok("{\"ok\":true,\"exists\":false}".to_string())
     }
+
+    /// 쪽 번호 매기기 — 웹한글컨트롤 `PageNumPos`(한글 «쪽 번호 매기기»). 구역의 `pgnp` 컨트롤을 **전부** 고치고
+    /// (양식이 둘 이상 두면 한/글은 뒤의 것으로 그린다 — 하나만 고치면 화면이 안 바뀐다 · 맥 한글 12.30 실측),
+    /// 없으면 구역 첫 문단의 앞머리 컨트롤(secd·cold 등) 뒤에 넣는다.
+    ///
+    /// `position`은 HWP 스펙 표 150(0 없음 · 1~3 위 왼쪽/가운데/오른쪽 · 4~6 아래 · 7·8 바깥쪽 위/아래 · 9·10 안쪽 위/아래),
+    /// `format`은 번호 모양(표 134 — 0 = 1 2 3), `dash`면 «- 1 -» — 줄표는 넷째 글자(HWPX `sideChar`)이고 앞뒤 장식 글자와 다르다.
+    /// 끄기는 `position` 0으로 남긴다(한/글과 같다).
+    pub fn set_page_number_position_native(
+        &mut self,
+        section_idx: usize,
+        position: u8,
+        format: u8,
+        dash: bool,
+    ) -> Result<String, crate::error::HwpError> {
+        use crate::model::control::{Control, PageNumberPos};
+
+        if position > 10 {
+            return Err(crate::error::HwpError::RenderError(format!("쪽 번호 위치 {} 범위 초과", position)));
+        }
+        let section = self
+            .document
+            .sections
+            .get_mut(section_idx)
+            .ok_or_else(|| crate::error::HwpError::RenderError("구역 범위 초과".to_string()))?;
+        let pnp = PageNumberPos {
+            format,
+            position,
+            user_symbol: '\0',
+            prefix_char: '\0',
+            suffix_char: '\0',
+            dash_char: if dash { '-' } else { '\0' },
+        };
+
+        let mut updated = 0usize;
+        for para in &mut section.paragraphs {
+            for ctrl in &mut para.controls {
+                if matches!(ctrl, Control::PageNumberPos(_)) {
+                    *ctrl = Control::PageNumberPos(pnp.clone());
+                    updated += 1;
+                }
+            }
+        }
+        if updated == 0 {
+            let para = section
+                .paragraphs
+                .first_mut()
+                .ok_or_else(|| crate::error::HwpError::RenderError("구역에 문단이 없다".to_string()))?;
+            // 첫 글자 앞 칸(8 code unit씩)에 든 컨트롤 뒤에 넣고, 새 컨트롤 몫 한 칸을 비운다 — 글자·줄·글자 모양 좌표가 같이 민다.
+            let leading = (para.char_offsets.first().copied().unwrap_or(0) / 8) as usize;
+            let at = leading.min(para.controls.len());
+            para.controls.insert(at, Control::PageNumberPos(pnp));
+            if at <= para.ctrl_data_records.len() {
+                para.ctrl_data_records.insert(at, None);
+            }
+            para.reserve_leading_extended_control_slots(at + 1);
+            para.char_count += 8;
+        }
+
+        section.raw_stream = None;
+        self.recompose_section(section_idx);
+        self.paginate_if_needed();
+        Ok(crate::document_core::helpers::json_ok())
+    }
+
+    /// 구역의 쪽 번호 매기기 — 한/글이 그리는 것(구역의 마지막 `pgnp`). 없으면 `exists:false`.
+    pub fn get_page_number_position_native(&self, section_idx: usize) -> Result<String, crate::error::HwpError> {
+        use crate::model::control::Control;
+
+        let section = self
+            .document
+            .sections
+            .get(section_idx)
+            .ok_or_else(|| crate::error::HwpError::RenderError("구역 범위 초과".to_string()))?;
+        let last = section
+            .paragraphs
+            .iter()
+            .flat_map(|para| para.controls.iter())
+            .filter_map(|ctrl| match ctrl {
+                Control::PageNumberPos(p) => Some(p),
+                _ => None,
+            })
+            .last();
+        Ok(match last {
+            Some(p) => format!(
+                "{{\"ok\":true,\"exists\":true,\"position\":{},\"format\":{},\"dash\":{}}}",
+                p.position,
+                p.format,
+                p.dash_char != '\0'
+            ),
+            None => "{\"ok\":true,\"exists\":false}".to_string(),
+        })
+    }
 }
 
 #[cfg(test)]

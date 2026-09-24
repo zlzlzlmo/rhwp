@@ -8245,6 +8245,20 @@ impl HwpDocument {
         .map_err(|e| e.into())
     }
 
+    /// 쪽 번호 매기기 — 한글 «쪽 번호 매기기»(`pgnp`). `position`은 표 150(0 없음 · 5 아래 가운데 …),
+    /// `format`은 번호 모양(0 = 1 2 3), `dash`면 «- 1 -».
+    #[wasm_bindgen(js_name = setPageNumberPosition)]
+    pub fn set_page_number_position(&mut self, sec: u32, position: u32, format: u32, dash: bool) -> Result<String, JsValue> {
+        self.set_page_number_position_native(sec as usize, position.min(255) as u8, format.min(255) as u8, dash)
+            .map_err(|e| e.into())
+    }
+
+    /// 쪽 번호 매기기 조회 — `{ok, exists, position?, format?, dash?}`.
+    #[wasm_bindgen(js_name = getPageNumberPosition)]
+    pub fn get_page_number_position(&self, sec: u32) -> Result<String, JsValue> {
+        self.get_page_number_position_native(sec as usize).map_err(|e| e.into())
+    }
+
     /// 감추기 조회
     #[wasm_bindgen(js_name = getPageHide)]
     pub fn get_page_hide(&self, sec: u32, para: u32) -> Result<String, JsValue> {
