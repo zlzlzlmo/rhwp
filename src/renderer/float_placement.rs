@@ -1545,6 +1545,34 @@ pub(crate) fn empty_host_physical_ladder_extras_hu(
     ((stored_delta - physical_delta).abs() <= 2).then_some(extras)
 }
 
+/// 빈 host 에 문단 기준 자리차지 표(비 TAC) 하나만 있고 다음 문단에 개체가 없으며 둘 다 한/글 저장 줄인가 — 한/글이
+/// 다음 문단 첫 줄을 띠 바닥(표 아래 + 바깥 아래 여백)에 두고 host 뒤·다음 앞 간격을 띠 안에 흡수하는 형상.
+pub(crate) fn empty_host_float_band_table<'a>(
+    host: &'a Paragraph,
+    next: &Paragraph,
+) -> Option<&'a Table> {
+    use crate::model::paragraph::LineSeg;
+    let [Control::Table(table)] = host.controls.as_slice() else {
+        return None;
+    };
+    let (Some(host_seg), Some(next_seg)) = (host.line_segs.first(), next.line_segs.first()) else {
+        return None;
+    };
+    (!table.common.treat_as_char
+        && table.caption.is_none()
+        && is_para_topbottom_float(&table.common)
+        && !para_has_non_whitespace_text(host)
+        && !next.controls.iter().any(|c| {
+            matches!(
+                c,
+                Control::Table(_) | Control::Picture(_) | Control::Shape(_)
+            )
+        })
+        && host_seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
+        && next_seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0)
+        .then_some(table)
+}
+
 /// 빈 host 의 문단 기준 자리차지 표(비 TAC) 뒤 개체 없는 문단 — 저장 사다리가 다음 첫 줄을 **띠 바닥**
 /// (`host 문단 위 + v_off + 바깥 위 여백 + 선언 높이 + 바깥 아래 여백`)에 두었고 그 자리가 보통 흐름
 /// (`host 줄 + 뒤 간격 + 다음 앞 간격`)보다 아래인가. 한/글은 띠를 가로지르는 줄만 띠 아래로 내리고 다음 문단
@@ -1557,26 +1585,13 @@ pub(crate) fn empty_host_float_band_sets_next_line(
     host_spacing_after_hu: i32,
     next_spacing_before_hu: i32,
 ) -> bool {
-    use crate::model::paragraph::LineSeg;
-    let [Control::Table(table)] = host.controls.as_slice() else {
+    let Some(table) = empty_host_float_band_table(host, next) else {
         return false;
     };
     let (Some(host_seg), Some(next_seg)) = (host.line_segs.first(), next.line_segs.first()) else {
         return false;
     };
-    if table.common.treat_as_char
-        || !is_para_topbottom_float(&table.common)
-        || para_has_non_whitespace_text(host)
-        || next.controls.iter().any(|c| {
-            matches!(
-                c,
-                Control::Table(_) | Control::Picture(_) | Control::Shape(_)
-            )
-        })
-        || host_seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0
-        || next_seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0
-        || next_seg.vertical_pos <= host_seg.vertical_pos
-    {
+    if next_seg.vertical_pos <= host_seg.vertical_pos {
         return false;
     }
     let band_bottom = i64::from(host_seg.vertical_pos) - i64::from(host_spacing_before_hu)

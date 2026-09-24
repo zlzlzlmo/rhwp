@@ -13296,6 +13296,64 @@ impl LayoutEngine {
                     }
                 }
             }
+            // 빈 host 의 문단 기준 자리차지 표가 이 쪽에서 끝나는 이어진 조각 — 한/글은 다음 문단 첫 줄을 조각 바닥 + 바깥
+            // 아래 여백에 둔다. host 뒤 간격·다음 앞 간격은 띠 안에 흡수한다(`empty_host_float_band_sets_next_line` 과 같은
+            // 규칙 · 이어진 쪽에는 host 줄이 없어 띠가 늘 이긴다). 맥 한글 12.30: hwpctl 이어진 끝 조각 10곳 모두 저장 첫 줄 =
+            // 조각 바닥 + 283HU(±23) · rhwp 는 −286 ~ +717HU 였다(73쪽 +7.2pt).
+            if is_continuation
+                && end_cut.is_empty()
+                && self.profile.get().hwp5_stored_pagination_layout()
+            {
+                let next_index = para_index + 1;
+                if let (Some(table), Some(next)) = (
+                    paragraphs.get(next_index).and_then(|next| {
+                        crate::renderer::float_placement::empty_host_float_band_table(para, next)
+                    }),
+                    paragraphs.get(next_index),
+                ) {
+                    if end_row >= table.row_count as usize {
+                        let next_spacing_before = styles
+                            .para_styles
+                            .get(
+                                composed
+                                    .get(next_index)
+                                    .map(|c| c.para_style_id as usize)
+                                    .unwrap_or(next.para_shape_id as usize),
+                            )
+                            .map_or(0.0, |ps| ps.spacing_before);
+                        // 흐름 반환값이 아니라 그린 조각 바닥이다 — 칸 나눔 조각은 반환값이 그린 바닥보다 바깥 위 여백만큼
+                        // 위일 수 있다(간장 보고서 158쪽 문단 1723: 283HU).
+                        let fragment_bottom = col_node
+                            .children
+                            .iter()
+                            .rev()
+                            .find_map(|node| match &node.node_type {
+                                RenderNodeType::Table(drawn)
+                                    if drawn.para_index == Some(para_index) =>
+                                {
+                                    Some(node.bbox.y + node.bbox.height)
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| self.last_item_content_bottom.get());
+                        let band_line_top = fragment_bottom
+                            + hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi);
+                        // 저장 첫 줄(쪽 기준)이 그 자리를 증언할 때만 — rbp 14쪽(문단 1.13 → 1.14)은 맥·저장 모두 띠 바닥
+                        // + 276HU 라 이 식이 아니다(조건 미상).
+                        let stored_line_agrees = next.line_segs.first().is_some_and(|seg| {
+                            (seg.vertical_pos - px_to_hwpunit(band_line_top - col_area.y, self.dpi))
+                                .abs()
+                                <= 50
+                        });
+                        // ponytail: 위로만 당긴다 — 조판은 끝 조각 뒤 아래 여백을 흐름에 싣지 않아(`budget.rs` 끝 조각
+                        // 계약) 아래로 내리면 쪽 바닥을 넘을 수 있다. 아래 여백 누락 쪽(간장 158쪽 −283HU 등)은 조판과
+                        // 같이 옮길 과제다.
+                        if stored_line_agrees {
+                            y_offset = y_offset.min(band_line_top - next_spacing_before);
+                        }
+                    }
+                }
+            }
         }
         // ── 분할 표: 어울림 문단 렌더링 ──
         if let Some(para) = paragraphs.get(para_index) {

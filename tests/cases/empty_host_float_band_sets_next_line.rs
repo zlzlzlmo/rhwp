@@ -66,3 +66,40 @@ fn the_line_after_an_empty_host_float_band_sits_at_the_band_bottom() {
         outer_bottom_px + 1000.0 * 96.0 / 7200.0
     );
 }
+
+/// 이어진 끝 조각도 같다 — 73쪽은 문단 1750 표의 이어진 끝 조각으로 시작하고, 문단 1751(앞 간격 500 HU · host 뒤
+/// 간격 500 HU)의 첫 줄은 조각 바닥 + 바깥 아래 여백(283 HU)이다(맥 한글 12.30 · 저장 19848 — rhwp 종전 +7.2pt).
+#[test]
+fn the_line_after_a_terminal_continuation_fragment_sits_at_the_band_bottom() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(SAMPLE);
+    let bytes = std::fs::read(&path).expect("fixture");
+    let doc = HwpDocument::from_bytes(&bytes).expect("문서 로드");
+    let root = doc.build_page_render_tree(72).expect("73쪽").root;
+    let mut nodes = Vec::new();
+    collect(&root, &mut nodes);
+
+    let fragment_bottom = nodes
+        .iter()
+        .find_map(|node| match &node.node_type {
+            RenderNodeType::Table(table) if table.para_index == Some(1750) => {
+                Some(node.bbox.y + node.bbox.height)
+            }
+            _ => None,
+        })
+        .expect("문단 1750 끝 조각");
+    let next_line_top = nodes
+        .iter()
+        .find_map(|node| match &node.node_type {
+            RenderNodeType::TextLine(line) if line.para_index == Some(1751) => Some(node.bbox.y),
+            _ => None,
+        })
+        .expect("문단 1751 줄");
+
+    let outer_bottom_px = 283.0 * 96.0 / 7200.0;
+    let gap = next_line_top - fragment_bottom;
+    assert!(
+        (gap - outer_bottom_px).abs() <= 0.5,
+        "끝 조각 바닥 {fragment_bottom:.2} → 문단 1751 첫 줄 {next_line_top:.2}: 간격 {gap:.2}px 가 바깥 아래 \
+         여백 {outer_bottom_px:.2}px 가 아니다"
+    );
+}
