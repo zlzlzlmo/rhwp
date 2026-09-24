@@ -1734,9 +1734,15 @@ impl HeightMeasurer {
         styles: &ResolvedStyleSet,
         cell_inner_width: f64,
     ) -> f64 {
-        if cell.text_direction != 0
-            || cell.paragraphs.len() <= 1
-            || matches!(table.page_break, TablePageBreak::RowBreak)
+        if cell.text_direction != 0 || cell.paragraphs.len() <= 1 {
+            return 0.0;
+        }
+        // 쪽을 나누는 표는 측정이 칸 끝 줄 간격을 실제로 넣은 칸(`cell_trailing_is_measured`)이고 한/글 저장 줄이 있는
+        // 칸만 — 맥 한글 12.30 은 성남 시스템반도체 신청서(RowBreak)에서도 끝 줄 간격을 뺀다. 넣지 않은 칸에서 빼면 두 번
+        // 빼 선언보다 눌리고(패션 신청서 13행), 저장 줄 없는 칸은 rhwp 가 짠 높이로 그려 글이 행 밖으로 나간다.
+        // 쪽을 안 나누는 표는 종전(#1763) 그대로다.
+        if matches!(table.page_break, TablePageBreak::RowBreak)
+            && !(Self::cell_trailing_is_measured(cell, table) && Self::cell_lines_are_stored(cell))
         {
             return 0.0;
         }
@@ -1760,6 +1766,28 @@ impl HeightMeasurer {
                     .unwrap_or(0.0)
             })
             .unwrap_or(0.0)
+    }
+
+    /// 측정이 칸 끝 줄 간격을 칸 높이에 넣었는가 — `include_trailing_ls` 와 같은 조건(글자처럼 표 · 문단 둘 이상 ·
+    /// 끝 문단에 글자).
+    fn cell_trailing_is_measured(
+        cell: &crate::model::table::Cell,
+        table: &crate::model::table::Table,
+    ) -> bool {
+        cell.paragraphs.len() > 1
+            && table.common.treat_as_char
+            && cell.paragraphs.last().is_some_and(|p| {
+                !(p.text.trim().is_empty() && !p.controls.is_empty())
+                    && !(p.text.is_empty() && p.controls.is_empty())
+            })
+    }
+
+    /// 칸의 모든 문단에 한/글 저장 줄이 있는가.
+    fn cell_lines_are_stored(cell: &crate::model::table::Cell) -> bool {
+        !cell
+            .paragraphs
+            .iter()
+            .any(crate::renderer::para_has_no_stored_line_segs)
     }
 
     fn measure_non_inline_controls_height(&self, paragraphs: &[Paragraph]) -> f64 {
@@ -3022,13 +3050,28 @@ impl HeightMeasurer {
                 } else {
                     0.0
                 };
+                // 한/글은 칸 끝 줄 간격을 칸 높이에 넣지 않는다 — 선언 안이면 선언, 넘으면 간격 뺀 내용 + 여백
+                // (맥 한글 12.30: 안전관리 인증신청서 7·10행 37.1·35.0px = 간격 뺀 값 · 성남 신청서 8·9행 = 선언).
                 let required_height = if cell_h_px > 0.0
                     && required_height > cell_h_px
                     && cell_last_trailing_ls > 0.0
-                    && content_height - cell_last_trailing_ls + total_pad
-                        <= cell_h_px + CELL_TRAILING_CLAMP_ROUNDING_PX
                 {
-                    cell_h_px
+                    let without_trailing = content_height - cell_last_trailing_ls + total_pad;
+                    // 안 여백을 지정한 칸의 낡은 작은 선언(내용의 2/3 미만 — #1835 보호 대상)은 종전대로 간격째 둔다:
+                    // 한컴 2022 정본(exam_science #6660)과 맥 한글 12.30 의 그 표 아래 선이 간격 포함 값과 같다.
+                    let stale_own_padding_declaration =
+                        cell.apply_inner_margin && cell_h_px * 3.0 < required_height * 2.0;
+                    // 선언을 넘는 칸에서도 빼는 것은 측정이 간격을 실제로 넣었고 한/글 저장 줄이 있는 칸만이다 — 저장 줄 없는
+                    // 칸은 rhwp 가 짠 줄 그대로 그려 여기서만 빼면 글이 행 밖으로 나간다.
+                    let trailing_really_in_content = Self::cell_trailing_is_measured(cell, table)
+                        && Self::cell_lines_are_stored(cell);
+                    if without_trailing <= cell_h_px + CELL_TRAILING_CLAMP_ROUNDING_PX {
+                        cell_h_px
+                    } else if stale_own_padding_declaration || !trailing_really_in_content {
+                        required_height
+                    } else {
+                        without_trailing
+                    }
                 } else {
                     required_height
                 };
@@ -3611,10 +3654,13 @@ impl HeightMeasurer {
                 let required_height = if cell_h_px > 0.0
                     && required_height > cell_h_px
                     && cell_last_trailing_ls > 0.0
-                    && required_height - cell_last_trailing_ls
-                        <= cell_h_px + CELL_TRAILING_CLAMP_ROUNDING_PX
                 {
-                    cell_h_px
+                    let without_trailing = required_height - cell_last_trailing_ls;
+                    if without_trailing <= cell_h_px + CELL_TRAILING_CLAMP_ROUNDING_PX {
+                        cell_h_px
+                    } else {
+                        required_height
+                    }
                 } else {
                     required_height
                 };
@@ -4914,6 +4960,30 @@ mod tests {
             }],
             ..Default::default()
         })
+    }
+
+    /// 한/글은 칸 끝 줄 간격을 칸 높이에 넣지 않는다 — 선언을 넘는 칸도 «간격 뺀 내용 + 여백»이다(맥 한글 12.30: KTX 목차
+    /// 쪽 글줄 142.8·169.9·195.1pt 가 맥과 같다 · 간격을 넣으면 전부 5.6pt 아래). 목차 칸(4행)은 선언 852.3px ·
+    /// 간격 포함 879.8px · 뺀 값 864.8px.
+    #[test]
+    fn cell_row_leaves_out_the_last_line_spacing_even_past_the_declaration() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples/KTX.hwp");
+        let core =
+            crate::document_core::DocumentCore::from_bytes(&std::fs::read(path).expect("KTX"))
+                .expect("열기");
+        let doc = core.document();
+        let para = doc.sections[0].paragraphs[12].clone();
+        let composed = crate::renderer::composer::compose_paragraph(&para);
+        let styles = crate::renderer::style_resolver::resolve_styles(&doc.doc_info, 96.0);
+        let measured = HeightMeasurer::new(96.0)
+            .with_native_hwp5(true)
+            .measure_section(&[para], &[composed], &styles, None);
+        let table = measured.get_measured_table(0, 0).expect("목차 표");
+        assert!(
+            (table.row_heights[4] - 864.8).abs() < 0.3,
+            "목차 칸 행은 끝 줄 간격을 뺀 864.8px 이어야 한다: {:?}",
+            table.row_heights
+        );
     }
 
     #[test]

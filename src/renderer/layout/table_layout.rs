@@ -17041,6 +17041,14 @@ impl LayoutEngine {
             let h = if is_whole_row {
                 if no_ls_label_cell {
                     cell_h_px
+                } else if cell_h_px > 0.0
+                    && content + pad_cell > cell_h_px
+                    && content - Self::cell_last_line_trailing_px(cell, table, self.dpi) + pad_cell
+                        <= cell_h_px + 0.5
+                {
+                    // HeightMeasurer 와 같은 규칙 — 초과분이 칸 끝 줄 간격뿐이면 선언(쪽을 나누는 표도).
+                    // 측정만 선언으로 두면 조각 렌더가 간격 포함 높이로 그려 쪽 바닥을 넘는다(pr-1674 15쪽).
+                    cell_h_px
                 } else {
                     // HeightMeasurer required_height + row 단계 1 cell.height max 정합.
                     (content + pad_cell).max(cell_h_px)
@@ -17054,6 +17062,30 @@ impl LayoutEngine {
             }
         }
         max_h
+    }
+
+    /// 측정(`HeightMeasurer::cell_last_line_trailing_px`)이 칸 높이에 넣은 끝 줄 간격(px) — 같은 조건이다(글자처럼 표 ·
+    /// 문단 둘 이상 · 끝 문단에 글자). 저장 줄의 간격을 읽는다(측정도 저장 줄을 존중하는 문서에서만 이 규칙을 탄다).
+    fn cell_last_line_trailing_px(
+        cell: &crate::model::table::Cell,
+        table: &crate::model::table::Table,
+        dpi: f64,
+    ) -> f64 {
+        let Some(last) = cell.paragraphs.last() else {
+            return 0.0;
+        };
+        let blank_or_object_only = (last.text.trim().is_empty() && !last.controls.is_empty())
+            || (last.text.is_empty() && last.controls.is_empty());
+        if cell.text_direction != 0
+            || cell.paragraphs.len() <= 1
+            || !table.common.treat_as_char
+            || blank_or_object_only
+        {
+            return 0.0;
+        }
+        last.line_segs
+            .last()
+            .map_or(0.0, |seg| hwpunit_to_px(seg.line_spacing.max(0), dpi))
     }
 
     /// 새 physical page에 온전히 들어갈 1×1 중첩 표 래퍼의 선행 문단 묶음을
