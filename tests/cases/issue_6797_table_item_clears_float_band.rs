@@ -95,9 +95,10 @@ fn maintainer_an_already_clear_offset_table_is_not_snapped_again() {
     let owner = top_level_table(&column, 70, 0).expect("밴드 소유 표");
     let follower = top_level_table(&column, 71, 0).expect("후속 표");
     assert!(follower.bbox.y >= owner.bbox.y + owner.bbox.height);
-    // 기존 owner의 hunk-off 공개 IR 대조가 확인한 위치다. 877.4px 추가 스냅은 실패한다.
+    // 기존 owner의 hunk-off 공개 IR 대조가 확인한 위치 + 바깥 위 여백 141HU(1.88px) — 빈 host 자리차지 표는 앵커 +
+    // 바깥 위 여백에 앉는다(맥 한글 12.30: 원본 7쪽 pi=71 표 윗변 224.0pt 와 일치). 877.4px 추가 스냅은 실패한다.
     assert!(
-        (follower.bbox.y - 574.8).abs() <= 0.5,
+        (follower.bbox.y - (574.8 + 1.88)).abs() <= 0.5,
         "기존 offset 배치를 유지해야 한다: y={}",
         follower.bbox.y
     );

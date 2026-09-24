@@ -149,7 +149,9 @@ fn saved_outer_box_anchor_keeps_following_tables_inside_the_body() {
                 Some(358) => Some(45988),
                 _ => None,
             } {
-                let expected = 75.6 + f64::from(vpos) * 96.0 / 7200.0;
+                // 저장 사다리 원점 + 바깥 위 여백 566HU — 맥 한글 12.30 20쪽 «□편익» 기준선 533.4pt 와 0.1pt 안
+                // (종전 기대는 여백이 빠진 원점이라 5.66pt 위였다).
+                let expected = 75.6 + f64::from(vpos + 566) * 96.0 / 7200.0;
                 assert!(
                     (node.bbox.y - expected).abs() < 0.05,
                     "stored flow origin: actual={}, expected={expected}",

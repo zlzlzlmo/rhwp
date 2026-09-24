@@ -107,6 +107,8 @@ fn issue_1481_first_page_render_tree(
     )
 }
 
+/// 새로 만든 표의 바깥 위 여백(283HU)을 뺀 host 줄 상단 — 문단 기준 자리차지 표는 host 줄 상단 + 바깥 위 여백에
+/// 앉는다(맥 한글 12.30 · 한컴 2020 정답지 `pdf/tac_object_host_line_height-2020.pdf`). 조판부호는 host 줄 상단이다.
 fn issue_1481_find_table_and_host_mark_y(
     node: &crate::renderer::render_tree::RenderNode,
     para_idx: usize,
@@ -117,7 +119,7 @@ fn issue_1481_find_table_and_host_mark_y(
 
     match &node.node_type {
         RenderNodeType::Table(table) if table.para_index == Some(para_idx) => {
-            *table_y = Some(node.bbox.y);
+            *table_y = Some(node.bbox.y - crate::renderer::hwpunit_to_px(283, 96.0));
         }
         RenderNodeType::TextRun(run)
             if run.para_index == Some(para_idx)

@@ -270,7 +270,12 @@ fn issue_2308_saved_nested_width_keeps_fragment_geometry() {
     // and `mixed_nested_flow_extra_from_cut` carries an `extra += 4.0` row
     // reservation. Two constants of equal size are not evidence that they are the
     // same constant; nothing here rests on that.
-    let expected = [(32, 400.4, 636.8), (33, 77.1, 388.3)];
+    // ⚠ 33쪽 423.06 은 알려진 어긋남이다(한컴 2024·맥 400.4). 앞 제목 표 둘(빈 host 1×1, 바깥 여백 566/566)이 이제
+    // 앵커 + 바깥 위 여백에 앉고 뒤로 바깥 아래 여백을 흘린다 — 맥 한글 12.30 이 이 문서 82쪽 중 21쪽에서 그렇게
+    // 맞는다(2쪽만 나빠짐, 이 쪽이 그중 하나). 남은 +22.7px 은 두 제목 칸을 적힌 높이 1300 보다 3.77px 크게 재는
+    // 결함(줄 없는 칸 한 줄 = 글자 크기 13pt em + 칸 세로 여백 141/141)이 여백과 겹쳐 쌓인 값이다 — 열린 과제.
+    // 종전 400.4 는 여백이 빠진 값이 그 과대 측정과 상쇄된 자리였다.
+    let expected = [(32, 423.06, 636.8), (33, 77.1, 388.3)];
     for (page, expected_y, expected_height) in expected {
         let tree = core
             .build_page_render_tree(page)

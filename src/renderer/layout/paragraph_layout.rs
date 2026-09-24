@@ -2316,9 +2316,9 @@ impl LayoutEngine {
         let Some(ls) = para.line_segs.first() else {
             return false;
         };
-        if ls.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0 {
-            return false;
-        }
+        // rhwp 가 다시 짠 줄(합성 태그)도 같다 — 글자처럼 표 줄을 한/글처럼 «위 여백 + 표 + 아래 여백»으로 짠다
+        // (`tac_outer_margin_deficit_px`). 등식이 곧 증거다(맥 한글 12.30: 창업도약패키지 채움 1쪽 잇단 표 둘 사이
+        // 8.3pt = 아래 여백 1.4 + 줄 간격 5.6 + 위 여백 1.4 — 합성 줄을 빼면 위 여백이 빠져 둘째 표부터 1.4pt 위).
         (i64::from(ls.line_height) - (om_top_hu + declared + om_bottom_hu)).abs() <= 8
     }
 
@@ -10634,5 +10634,55 @@ mod pua_mapping_tests {
         assert_eq!(map_pua_bullet_char('\u{F0090}'), '\u{F0090}');
         assert_eq!(map_pua_bullet_char('\u{F0000}'), '\u{F0000}');
         assert_eq!(map_pua_bullet_char('\u{F00CF}'), '\u{F00CF}');
+    }
+}
+
+#[cfg(test)]
+mod synthetic_outer_box_band_tests {
+    use crate::model::paragraph::{LineSeg, Paragraph};
+    use crate::renderer::layout::LayoutEngine;
+
+    fn table(height: u32, om: i16) -> crate::model::table::Table {
+        crate::model::table::Table {
+            common: crate::model::shape::CommonObjAttr {
+                treat_as_char: true,
+                height,
+                ..Default::default()
+            },
+            outer_margin_top: om,
+            outer_margin_bottom: om,
+            ..Default::default()
+        }
+    }
+
+    fn host(line_height: i32, tag: u32) -> Paragraph {
+        Paragraph {
+            line_segs: vec![LineSeg {
+                line_height,
+                tag,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// rhwp 가 다시 짠 줄(합성 태그)도 `위 여백 + 표 + 아래 여백` 과 딱 맞으면 바깥 상자 밴드다 — 맥 한글 12.30:
+    /// 창업도약패키지 채움 1쪽 잇단 글자처럼 표 둘 사이 8.3pt = 아래 여백 1.4 + 줄 간격 5.6 + 위 여백 1.4
+    /// (합성 줄을 빼면 둘째 표부터 1.4pt 위였다). 등식이 깨진 줄은 종전대로 밴드가 아니다.
+    #[test]
+    fn rhwp_composed_line_counts_as_outer_box_band_when_it_equals_the_box() {
+        let tbl = table(23233, 141);
+        assert!(LayoutEngine::tac_stored_band_is_outer_box(
+            &host(23515, 0x8006_0000),
+            &tbl
+        ));
+        assert!(LayoutEngine::tac_stored_band_is_outer_box(
+            &host(23515, 0x0006_0000),
+            &tbl
+        ));
+        assert!(!LayoutEngine::tac_stored_band_is_outer_box(
+            &host(23233, 0x8006_0000),
+            &tbl
+        ));
     }
 }

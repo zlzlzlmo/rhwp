@@ -50,16 +50,13 @@ const FIXTURE: &str = "tests/fixtures/issue_7047/housing-lease-standard-form.hwp
 /// 같다 — 이 축은 완전히 닫혔다.
 const BOX_TOPS: [f64; 3] = [123.4, 501.2, 858.2];
 
-/// 3쪽 떠있는 제목 표 세 개의 상단 y(px).
-const TABLE_TOPS: [f64; 3] = [108.4, 487.6, 846.2];
+/// 3쪽 떠있는 제목 표 세 개의 상단 y(px). 문단 기준 떠있는 표는 앵커 + 바깥 위 여백(283 HWPUNIT = 1.88px)에
+/// 앉는다 — 종전 [108.4, 487.6, 846.2] 은 그 여백이 빠진 값이었다.
+const TABLE_TOPS: [f64; 3] = [110.3, 489.5, 848.0];
 
-/// 정본(한/글 2020 새 PDF) 제목 표 상단. rhwp 는 셋 다 이보다 조금 위다 — 실측 편차는
-/// 1.7 / 1.3 / 0.9px 로 **일정하지 않고**, 문단 기준 떠있는 표가 못 받는
-/// `outer_margin_top`(283 HWPUNIT = 1.88px) 안에서 흩어진다.
-const TABLE_TOPS_ORACLE: [f64; 3] = [110.1, 488.9, 847.1];
-
-/// 그 편차의 상한 — `outer_margin_top` 283 HWPUNIT. 후속 과제의 크기를 이 값으로 못 박는다.
-const TABLE_OM_TOP_LIMIT_PX: f64 = 1.88;
+/// 맥 한글 12.30 제목 표 상단(82.6 / 367.0 / 635.9pt). 한/글 2020 새 PDF 는 110.1 / 488.9 / 847.1 로
+/// 0.2~0.9px 더 위다 — 판본 차이이고, 이 포크의 정답은 맥이다.
+const TABLE_TOPS_MAC: [f64; 3] = [110.13, 489.33, 847.87];
 
 const TOL: f64 = 0.6;
 
@@ -137,18 +134,15 @@ fn the_floating_title_tables_follow_the_same_ladder() {
     }
 }
 
-/// 표에 남은 편차는 **한 방향**(정본보다 위)이고 `outer_margin_top` 안이어야 한다 — 이
-/// 이슈가 남긴 잔여가 그 한 축뿐이라는 상한이다. 부호가 뒤집히거나 상한을 넘으면 다른 축이
-/// 섞인 것이다.
+/// 이 이슈가 남긴 잔여(`outer_margin_top` 미적용)가 닫혔다 — 제목 표 상단이 맥 한글 12.30 과 0.3px 안이다.
 #[test]
 fn the_remaining_table_gap_stays_within_the_outer_margin() {
     let got = sorted_tops(&page3(), is_title_table);
     assert_eq!(got.len(), 3, "3쪽 제목 표 셋: {got:?}");
-    for (have, oracle) in got.iter().zip(TABLE_TOPS_ORACLE) {
-        let gap = oracle - have;
+    for (have, mac) in got.iter().zip(TABLE_TOPS_MAC) {
         assert!(
-            gap > 0.0 && gap <= TABLE_OM_TOP_LIMIT_PX + 0.05,
-            "표 상단 편차 {gap:.2}px 이 (0, {TABLE_OM_TOP_LIMIT_PX}] 밖이다 (상단 {have:.1})"
+            (have - mac).abs() <= 0.3,
+            "표 상단 {have:.2}px 이 맥 {mac:.2}px 과 0.3px 넘게 다르다"
         );
     }
 }

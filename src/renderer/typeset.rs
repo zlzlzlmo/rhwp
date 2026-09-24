@@ -7893,7 +7893,10 @@ mod tests {
                     .any(|it| it.para_index() == 0)
             })
             .expect("긴 문단");
-        assert!(continued_on > 0, "긴 문단은 다음 쪽으로 이어져야 시험이 성립한다");
+        assert!(
+            continued_on > 0,
+            "긴 문단은 다음 쪽으로 이어져야 시험이 성립한다"
+        );
         assert_eq!(
             page_of(1),
             Some(continued_on),

@@ -2790,6 +2790,7 @@ impl LayoutEngine {
                                 outer_host_stored_vpos_hu,
                                 allow_para_top_bleed,
                                 column_is_empty_on_entry,
+                                false,
                             )
                         } else {
                             y_start
@@ -3298,6 +3299,7 @@ impl LayoutEngine {
                 outer_host_stored_vpos_hu,
                 allow_para_top_bleed,
                 column_is_empty_on_entry,
+                physical_outer_box_paint_inset,
             );
             if depth > 0 && render_caption {
                 computed_y + top_caption_flow_extra(&table.caption, caption_height, caption_spacing)
@@ -5223,6 +5225,9 @@ impl LayoutEngine {
         // [#6929] 이 단(column)에 아직 아무것도 안 놓였나 — 공동 앵커 형제 쌓임과
         // 앵커 자신의 줄 예약을 가른다.
         column_is_empty: bool,
+        // 호출부가 표 윗변에 바깥 위 여백을 따로 칠해 넣는가(`physical_outer_box_paint_inset`) — 그러면 여기서 또
+        // 더하지 않는다.
+        outer_top_painted_by_caller: bool,
     ) -> f64 {
         let table_treat_as_char = table.common.treat_as_char;
         let table_text_wrap = if depth == 0 {
@@ -5356,9 +5361,15 @@ impl LayoutEngine {
             // 가시 표 상단 = v_offset + outer_margin_top. 한컴 PDF (exam_math.hwp 바탕쪽 쪽번호 박스) 정합.
             // [#6598] `Para` 도 저장 기준점으로 옮긴 경우에는 바깥여백 위를 더한다 —
             // 한/글 실측 171.5 = 저장 상단 138.4 + v_offset 31.41 + om_top 1.88.
-            // 기준점을 안 옮긴 문단 기준 표는 종전대로 0 이다(근거 없이 넓히지 않는다).
+            // 글 없는 host(빈 host · 공백만 든 host)의 문단 기준 표도 같다 — 가시 host 는 호출부가 `para_y` 에
+            // 이미 얹어 온다(`visible_outer_top_px`). 맥 한글 12.30: 소셜벤처 신청서 1쪽 표 괘선 122 개 전부 om_top
+            // 2.8pt 아래 · fb575cbc 1.4pt · 창업도약패키지 채움 표 넷.
+            let textless_para_host = matches!(vert_rel_to, crate::model::shape::VertRelTo::Para)
+                && !self.para_float_host_has_text.get()
+                && !outer_top_painted_by_caller;
             let om_top_px = if matches!(vert_rel_to, crate::model::shape::VertRelTo::Paper)
                 || para_stored_anchor_y.is_some()
+                || textless_para_host
             {
                 hwpunit_to_px(table.outer_margin_top as i32, self.dpi)
             } else {

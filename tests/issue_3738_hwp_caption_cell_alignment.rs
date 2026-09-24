@@ -59,12 +59,15 @@ fn hwp_page23_bottom_caption_is_centered_as_one_visual_block() {
     let image_y = image_y.expect("figure 21 image node");
     let caption_y = caption_y.expect("figure 21 caption text node");
 
+    // 맥 한글 12.30(이 포크의 정답): 그림 21 윗변 114.1pt = 152.1px — hwp·hwpx 둘 다. 감싼 자리차지 표가 빈 host
+    // 문단 기준이라 앵커 + 바깥 위 여백(283HU)에 앉는다. 한컴 2020/2024 PDF 는 약 148.3(2.8pt 위)이다.
     assert!(
-        (image_y - 148.3).abs() <= 3.0,
-        "그림 21 본체가 Bottom caption을 제외하고 다시 중앙 정렬됨: image_y={image_y:.1} (회귀 전 198.4, 한컴 PDF 정합값 약 148.3)"
+        (image_y - 152.1).abs() <= 3.0,
+        "그림 21 본체가 Bottom caption을 제외하고 다시 중앙 정렬됨: image_y={image_y:.1} (회귀 전 198.4, 맥 한글 정합값 152.1)"
     );
+    // 맥 한글 12.30: caption «그림 21» 첫 줄 기준선 381.5pt → 줄 윗변 약 373.0pt = 497.3px(한컴 2020 371.37pt).
     assert!(
-        (caption_y - 495.2).abs() <= 3.0,
-        "그림 21 caption 첫 줄이 한컴 PDF(371.37pt = 495.16px)와 어긋남: caption_y={caption_y:.1} (회귀 전 544.7)"
+        (caption_y - 497.3).abs() <= 3.0,
+        "그림 21 caption 첫 줄이 맥 한글(약 497.3px)과 어긋남: caption_y={caption_y:.1} (회귀 전 544.7)"
     );
 }

@@ -267,11 +267,12 @@ fn downstream_table_split_and_body_follow_the_oracle_pages() {
 
 /// 저장 사다리 pi186→187은 2432HU = 높이1300 + 위/아래여백566씩이다.
 /// 앞 float가 앵커보다 아래로 밀어도 실제 점유 끝에 전역 cursor를 다시 더하지 않는다.
+/// 윗변은 저장 앵커 + 각 표의 바깥 위 여백(pi186 566 · pi187 141)이다 — 맥 한글 12.30 두 윗변 차 20.0pt(26.7px).
 #[test]
 fn stored_anchor_after_a_taller_float_consumes_its_span_once() {
     let root = page_root("samples/issue6111/56345_regulatory_impact_analysis.hwp", 10);
     let advance = table_top(&root, 187) - table_top(&root, 186);
-    let stored_advance = (26992.0 - 24560.0) / HWPUNIT_PER_PX;
+    let stored_advance = (26992.0 + 141.0 - (24560.0 + 566.0)) / HWPUNIT_PER_PX;
     assert!(
         (advance - stored_advance).abs() <= 0.2,
         "저장 사다리 {stored_advance:.2}px 대신 {advance:.2}px를 소비했다"

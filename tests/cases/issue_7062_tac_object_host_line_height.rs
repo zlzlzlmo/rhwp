@@ -129,7 +129,9 @@ fn issue_7062_control_group_page1_and_page_count_unchanged() {
     assert_eq!(core.page_count(), 10, "#7062 통제군: 쪽수는 10 이어야 한다");
 
     // 1쪽: TAC 개체가 없는 문단들 — 저장 줄 좌표 그대로여야 한다.
-    // 수정 전 바이너리(devel f537df5ea)에서 잰 같은 좌표다.
+    // 수정 전 바이너리(devel f537df5ea)에서 잰 좌표 + 3.77px — 1쪽 제목 표는 빈 host 문단 기준 자리차지라 바깥 위
+    // 여백(283HU)만큼 아래다(한컴 2020 정답지 `pdf/tac_object_host_line_height-2020.pdf`: 보도자료 128.3pt = 141.7px ·
+    // 맥 한글 12.30 문단 기준 자리차지 표 실측). 종전 값은 2.8pt 위였다.
     let nodes = page_nodes(&core, 0);
     let title = nodes
         .iter()
@@ -139,8 +141,8 @@ fn issue_7062_control_group_page1_and_page_count_unchanged() {
         })
         .expect("1쪽 제목 런");
     assert!(
-        (title.y - 137.9).abs() < 0.5,
-        "#7062 통제군: 1쪽 '보 도 자 료' 는 137.9px 그대로여야 한다: y={:.1}",
+        (title.y - 141.7).abs() < 0.5,
+        "#7062 통제군: 1쪽 '보 도 자 료' 는 141.7px 여야 한다: y={:.1}",
         title.y
     );
     let contact = nodes
@@ -151,8 +153,8 @@ fn issue_7062_control_group_page1_and_page_count_unchanged() {
         })
         .expect("1쪽 책임자 런");
     assert!(
-        (contact.y - 265.7).abs() < 0.5,
-        "#7062 통제군: 1쪽 표 안 줄도 265.7px 불변이어야 한다: y={:.1}",
+        (contact.y - 269.5).abs() < 0.5,
+        "#7062 통제군: 1쪽 표 안 줄도 269.5px 여야 한다: y={:.1}",
         contact.y
     );
 }

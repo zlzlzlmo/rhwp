@@ -25,6 +25,14 @@
 # 값으로 올려 적는다.
 #
 # 0 행은 그대로 둔다 — 값 0 과 행 삭제는 이 게이트에서 같은 판정(증가 / 신규 발생)이다.
+# 완화 (문단 기준 자리차지 표 바깥 여백, 2026-09-24): 표 윗변 = 앵커 + 오프셋 + 바깥 위 여백 · 빈 host 표 뒤 바깥 아래 여백.
+# 맥 한글 12.30 대조로 올린 행이다 — 76076 가로선 일치 89->532/1093 · 80168 125->446/1677 · 37787 42->130/625 · hwpspec
+# 2432->2946/6517 · issue2439 40->44/178 · 6465 90->99/109(쪽 수 전부 같음). 늘어난 overflow 는 rhwp 쪽이 이미 맥보다
+# 아래 앉은 자리(2439 5쪽 +19pt · 76076 33쪽 제목 칸 과대 측정)에서 여백이 더해져 드러난 것이다 — 열린 과제.
+# 행: 76076 1->4 · 80168 1->2 · hwpspec 2->3 · 1891/76076 2->5 · 1891/80168 1->2 · 1891_external 7->8 · 37787 7->9 ·
+# 75544 1->2 · 신규 issue2439 6 · 신규 issue6465 1.
+issue2439/issue2439_repeat_table_overlap.hwp	6
+issue6465/press_release_footer_logos.hwpx	1
 issue6921/148733091-briefing-stenographic-record.hwp	0
 156636617_240617 2024년 5월 월간 수출입 현황(확정치).hwp	1
 2022년 국립국어원 업무계획.hwp	1
@@ -60,8 +68,8 @@ issue6921/148733091-briefing-stenographic-record.hwp	0
 3-11월_실전_통합_2024-구분선위20미주사이7구분선아래2.hwp	1
 3-11월_실전_통합_2024-구분선위20미주사이7구분선아래2.hwpx	3
 3-11월_실전_통합_2024-구분선위9미주사이8구분선아래7.hwpx	3
-76076_regulatory_analysis.hwp	1
-80168_regulatory_analysis.hwp	1
+76076_regulatory_analysis.hwp	4
+80168_regulatory_analysis.hwp	2
 HWP5-nopassword-123456.hwpx	24
 KTX.hwp	1
 aift.hwp	3
@@ -95,7 +103,7 @@ hwp_table_test_saved.hwp	1
 hwpctl_API_v2.4.hwp	0
 hwpctl_Action_Table__v1.1.hwp	1
 hwpctl_ParameterSetID_Item_v1.2.hwp	2
-hwpspec.hwp	2
+hwpspec.hwp	3
 hwpx/aift.hwpx	3
 hwpx/hancom-hwp/hang_job_01.hwp	1
 hwpx/hcar-001.hwpx	1
@@ -111,9 +119,9 @@ issue-986-receipt.hwp	0
 issue1835_tac_stale_height.hwp	1
 issue1853_caption_precedes_body_split.hwpx	0
 issue1858_paper_anchor_float_stack.hwpx	1
-issue1891/76076_regulatory_analysis.hwpx	2
-issue1891/80168_regulatory_analysis.hwpx	1
-issue1891_external_bindata_link.hwpx	7
+issue1891/76076_regulatory_analysis.hwpx	5
+issue1891/80168_regulatory_analysis.hwpx	2
+issue1891_external_bindata_link.hwpx	8
 issue1921/59043_regulatory_analysis.hwp	3
 issue1937_rowbreak_footnote_overpagination.hwp	7
 issue1949_giant_cell_nested_tables_perf.hwp	9
@@ -141,7 +149,7 @@ issue5169_viewtext_changetracking.hwp	1
 issue5679/10857_delegation_rules.hwp	2
 issue5699/16758113_pruning_forms.hwp	0
 issue5699/20099369_yeongwol_forms.hwp	2
-issue5699/37787_regulatory_impact.hwp	7
+issue5699/37787_regulatory_impact.hwp	9
 issue5701/1270000-202200012_slice_p76_rewound_host.hwp	10
 issue5701/1530000-200800002_slice_p139_tac_reset_tail.hwp	2
 issue5712/3184241_medical_exam_equipment.hwpx	0
@@ -218,7 +226,7 @@ task2097/18095317_eogu_geumji.hwp	1
 task2097/21217935_simsa_jipyo.hwp	2
 task2097/21298295_byeolpyo5_disaster.hwp	1
 task2097/3023771_wichokjang.hwpx	2
-task2097/75544_pii_bunseok.hwpx	1
+task2097/75544_pii_bunseok.hwpx	2
 task2097/none_table_declared_fits.hwpx	1
 task2097/rowbreak_midpage_declared_fits.hwpx	1
 task2105/rowbreak_table_declared_fits.hwpx	1

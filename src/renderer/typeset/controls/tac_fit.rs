@@ -159,7 +159,9 @@ pub(super) fn prepare(
             })
             .fold(0.0f64, f64::max);
         let base = first_line_tac_height.unwrap_or(fmt.height_for_fit) + tac_outer_margin_px;
-        if first_line_tac_height.is_none() && session_grown_tac_total.is_none_or(|grown| grown <= base) {
+        if first_line_tac_height.is_none()
+            && session_grown_tac_total.is_none_or(|grown| grown <= base)
+        {
             host_spacing_after_px = fmt.spacing_after;
         }
         session_grown_tac_total.map_or(base, |grown| base.max(grown))

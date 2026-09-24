@@ -193,9 +193,19 @@ pub(super) fn prepare(
     if !stored_single_rowbreak_declared_height_is_trustworthy {
         return None;
     }
+    // 기본 원점은 «앵커 + 세로 오프셋 + 바깥 위 여백» — 렌더(`compute_table_y_position` 의 글 없는 host)와 같은
+    // 자리다. 여백을 빼면 조판 lane 이 렌더보다 위 여백만큼 위라 뒤 문단 표의 확정 자리가 어긋난다(맥 한글 12.30:
+    // #6950 문서 표 윗변 = 앵커 줄 위 + 오프셋 28.96 + 여백 2.83pt).
     let raw_top = saved_page_top
         .or(stored_single_topbottom_top)
-        .unwrap_or_else(|| (para_start_height + v_offset_px).max(para_start_height));
+        .unwrap_or_else(|| {
+            (para_start_height + v_offset_px).max(para_start_height)
+                + if is_topbottom_para_float {
+                    hwpunit_to_px(table.outer_margin_top as i32, dpi)
+                } else {
+                    0.0
+                }
+        });
     // [#6795] 같은 문단의 **앞 자리차지 표가 쪽에 걸쳐 쪼개져** 이 쪽을 이미 차지한
     // 경우, 그 조각은 `PageItem::PartialTable` 로 나가고 lane 에는 등록되지 않는다.
     // `para_start_height` 는 문단이 시작한 쪽의 값이라 이어지는 쪽에서는 거의 0 이고,

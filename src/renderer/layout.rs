@@ -12228,6 +12228,15 @@ impl LayoutEngine {
                         0
                     } else if is_current_empty_para_float {
                         seg.line_spacing.max(0)
+                    } else if let Some(Control::Table(table)) = para
+                        .controls
+                        .get(control_index)
+                        .filter(|_| para_has_visible_text(para) && !para_has_non_whitespace_text(para))
+                        .filter(|c| matches!(c, Control::Table(t) if is_para_topbottom_float(&t.common)))
+                    {
+                        // 공백만 든 host 의 자리차지 표 — 가시 host 처럼 표 뒤는 바깥 아래 여백이고 host 줄이 그 아래
+                        // 선다(맥 한글 12.30: 창업도약패키지 채움 4쪽 «사업비 구성» 표 뒤 1.4pt · 줄 간격 4.8pt 가 아니다).
+                        table.outer_margin_bottom as i32
                     } else if seg.line_spacing > 0 {
                         seg.line_spacing
                     } else {
@@ -12401,6 +12410,45 @@ impl LayoutEngine {
                     // 텍스트면 저장 vpos 재고정으로 무결" 전제가 깨진다(후속 문단
                     // 재고정이 발동하지 않는 형상) — 사다리 정확일치 증거가 있으면
                     // 후속이 일반 텍스트여도 여분을 계상한다.
+                    // 저장 사다리가 «세로 오프셋 + 위 여백 + 선언 높이 + 아래 여백»과 딱 맞으면(±2HU) 한/글은 그만큼
+                    // 흐름을 옮긴 것이다 — 쪽을 나누는 표도 통째로 앉았으면 같다(맥 한글 12.30: PluginOsaka 잇단 표 3766 =
+                    // 253 + 283 + 2947 + 283 · 편람 22→23 20449 = 19883 + 566). 잰 높이가 선언보다 커도 사다리를 따른다.
+                    let exact_stored_ladder_px =
+                        ((self.profile.get().hwp5_stored_pagination_layout()
+                            || self.profile.get().hwpx_stored_layout())
+                            && (rewind_anchor_snapped
+                                || paragraphs
+                                    .get(para_index + 1)
+                                    .is_some_and(para_is_empty_topbottom_table_anchor))
+                            && para
+                                .controls
+                                .iter()
+                                .filter(|control| matches!(control, Control::Table(_)))
+                                .count()
+                                == 1)
+                            .then(|| {
+                                let stored_vpos = |p: &Paragraph| {
+                                    p.line_segs
+                                        .iter()
+                                        .find(|seg| seg.tag & 0x8000_0000 == 0)
+                                        .map(|seg| seg.vertical_pos)
+                                };
+                                let host_vpos = stored_vpos(para)?;
+                                let next_vpos = stored_vpos(paragraphs.get(para_index + 1)?)?;
+                                let Control::Table(table) = para.controls.get(control_index)?
+                                else {
+                                    return None;
+                                };
+                                let delta = i64::from(next_vpos) - i64::from(host_vpos);
+                                let physical =
+                                    i64::from(signed_hwpunit(table.common.vertical_offset).max(0))
+                                        + i64::from(table.outer_margin_top)
+                                        + i64::from(table.outer_margin_bottom)
+                                        + i64::from(table.common.height.min(i32::MAX as u32));
+                                ((delta - physical).abs() <= 2)
+                                    .then(|| hwpunit_to_px(delta as i32, self.dpi))
+                            })
+                            .flatten();
                     let physical_ladder_extras_px =
                         ((self.profile.get().hwp5_stored_pagination_layout()
                             || self.profile.get().hwpx_stored_layout())
@@ -12439,12 +12487,39 @@ impl LayoutEngine {
                     // 예약량이다. 앞 표 때문에 저장 원점과 paint 원점이 달라져도
                     // 두 원점의 차이를 높이에 더하지 않는다. 테두리 원점만 알려진
                     // 앵커는 기존 offset/예약 계약으로 처리한다.
+                    // 표가 앵커 + 바깥 위 여백에 앉으므로(`compute_table_y_position`) 예약량에 위 여백이 이미 들었다 —
+                    // 흐름은 거기에 바깥 아래 여백을 더한 곳이다(맥 한글 12.30: 창업도약패키지 채움 4쪽 «사업비 집행
+                    // 계획» 표 아래 캡션이 여백 2.8pt 아래). 저장 사다리 여분(`v_off + 위 + 아래 여백`)에서는 위 여백을
+                    // 뺀다.
+                    // ⚠ 아래 여백은 rhwp 가 짠 host(합성 줄 — 채운 제출본)에만 더한다. 한/글 저장 host 는 사다리가 딱 맞을
+                    // 때만 사다리를 따르고(`exact_stored_ladder_px`), 아니면 종전 흐름이다 — typeset 이 그 여백을 흐름에 싣지
+                    // 않아(#2195 stage58 · 한컴 정답지 쪽수 핀 편람 384 · 스펙 rev1.3 69) 렌더만 더하면 쪽 바닥을 넘는다
+                    // (hwpspec overflow 2 → 20). 맥은 저장 host 도 더한다(hwpspec 17쪽 표 뒤 19.8pt) — 조판 쪽 계상과 같이
+                    // 옮길 과제다.
+                    let (om_top_px, om_bottom_px) = match para.controls.get(control_index) {
+                        Some(Control::Table(table)) if !is_current_empty_square_sibling_float => (
+                            hwpunit_to_px(table.outer_margin_top as i32, self.dpi),
+                            hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi),
+                        ),
+                        _ => (0.0, 0.0),
+                    };
+                    // 한/글 저장 줄이 없는 host(rhwp 가 짠 줄 · 줄 자체가 없는 기계생성 문서) — 맥 한글 12.30: 76076 규제영향
+                    // 분석서(줄 없는 문서) 82쪽 중 21쪽이 아래 여백을 더해야 맞고 2쪽만 나빠진다.
+                    let rhwp_composed_host = crate::renderer::para_has_no_stored_line_segs(para);
                     if let Some(advance) = stored_flow_advance {
                         global_y_before + advance
                     } else if is_native_picture_caption_float {
                         lanes.max_bottom()
+                    } else if let Some(ladder) = exact_stored_ladder_px {
+                        // 그린 표 바닥보다 위로는 당기지 않는다 — rhwp 가 표를 선언보다 크게 재는 자리(편람 22→23: 19.6px)에서
+                        // 사다리만 따르면 다음 표가 앞 표에 12~19px 겹친다(그 과대 측정은 따로 열린 과제).
+                        (global_y_before + ladder).max(global_y_before + reserved_height)
+                    } else if let Some(extras) = physical_ladder_extras_px {
+                        global_y_before + reserved_height + extras - om_top_px
+                    } else if rhwp_composed_host {
+                        global_y_before + reserved_height + om_bottom_px
                     } else {
-                        global_y_before + reserved_height + physical_ladder_extras_px.unwrap_or(0.0)
+                        global_y_before + reserved_height
                     }
                 } else {
                     lanes.max_bottom()
