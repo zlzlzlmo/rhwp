@@ -1176,7 +1176,58 @@ pub(crate) fn tac_sibling_float_anchor_offset_px(
     if !has_line_taking_tac_sibling_before(para, control_index) {
         return 0.0;
     }
+    if signed_hwpunit(table.common.vertical_offset) <= 0 && is_para_topbottom_float(&table.common) {
+        return hwpunit_to_px(
+            zero_offset_float_anchor_line_offset_hu(para, control_index),
+            dpi,
+        );
+    }
     stored_float_anchor_offset_px(para, table, control_index, dpi)
+}
+
+/// 세로 오프셋 0 인 자리차지 개체가 글자처럼 형제 **뒤** 줄에 실렸을 때 그 줄의 문단 안 자리(HU). 그 줄이 쪽
+/// 초기화(저장 vpos ≤ 앞 줄)면 앞 줄 끝 + 줄 간격 자리다 — 한/글은 개체를 거기 앉히고, 개체 아래에 들어가지 않는
+/// 그 줄의 글은 다음 쪽으로 보낸다(맥 한글 12.30: pic-in-head-01 10쪽 문단 32 — 줄0 글자처럼 표 3648 + 20232 + 720 뒤
+/// 자리차지 표 윗변 24741 = +바깥 위 여백 · 줄1 은 11쪽). 앵커가 첫 줄이면 0(종전 문단 위 기준).
+pub(crate) fn zero_offset_float_anchor_line_offset_hu(
+    para: &Paragraph,
+    control_index: usize,
+) -> i32 {
+    let stored: Vec<&crate::model::paragraph::LineSeg> = para
+        .line_segs
+        .iter()
+        .filter(|ls| ls.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0)
+        .collect();
+    let (Some(first), Some(anchor_u16)) = (
+        stored.first(),
+        para.control_text_positions()
+            .get(control_index)
+            .copied()
+            .and_then(|pos| {
+                para.char_offsets
+                    .get(pos)
+                    .copied()
+                    .or_else(|| para.char_offsets.last().map(|last| last + 1))
+            }),
+    ) else {
+        return 0;
+    };
+    let Some(k) = stored
+        .iter()
+        .rposition(|ls| para.line_seg_text_start_of(ls.text_start) <= anchor_u16)
+    else {
+        return 0;
+    };
+    if k == 0 {
+        return 0;
+    }
+    let (prev, line) = (stored[k - 1], stored[k]);
+    let top = if line.vertical_pos <= prev.vertical_pos {
+        prev.vertical_pos + prev.line_height + prev.line_spacing
+    } else {
+        line.vertical_pos
+    };
+    (top - first.vertical_pos).max(0)
 }
 
 /// [#4610 · #4599 ④] 결재문서 템플릿의 공백-전용 TAC 캐리어 문단 페인트 변위.

@@ -54,7 +54,9 @@ pub(in crate::renderer::typeset) fn for_paragraph(
     let has_mid_para_vpos_reset = para.line_segs.windows(2).any(|w| {
         (w[0].tag | w[1].tag) & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
             && w[1].vertical_pos <= 0
-            && w[0].vertical_pos > 5000
+            // 앞 줄의 **끝**이 쪽 아래쪽이면 리셋이다 — 위에서 시작하는 큰 글자처럼 표 줄(pic-in-head-01 문단 32:
+            // 줄0 3648 + 20232)은 시작만 보면 5000 아래라 놓쳤다.
+            && w[0].vertical_pos.saturating_add(w[0].line_height) > 5000
     });
     // [#5807] 자리차지(양수 v_off) 표와 TAC 표가 한 host 에 co-anchored 되면
     // 아래 정렬 키가 TAC 에 0 을 주어 TAC 가 float **앞**으로 온다. 한글의 실제
@@ -118,6 +120,19 @@ pub(in crate::renderer::typeset) fn for_paragraph(
             _ => 0,
         }
     };
+    // 오프셋 0 자리차지 표의 앵커 줄이 글자처럼 표 줄 **뒤**면 그 표는 글자처럼 표 다음에 놓인다
+    // (`zero_offset_float_anchor_line_offset_hu` — 맥 한글 12.30: pic-in-head-01 10쪽 문단 32).
+    let float_anchored_after_tac_line = |i: usize| -> bool {
+        matches!(&para.controls[i], Control::Table(t)
+            if is_para_topbottom_float(&t.common)
+                && signed_hwpunit(t.common.vertical_offset) <= 0
+                && tac_host_line_height_hu > 0
+                && crate::renderer::layout::has_line_taking_tac_sibling_before(para, i)
+                && crate::renderer::layout::zero_offset_float_anchor_line_offset_hu(para, i)
+                    >= tac_host_line_height_hu)
+    };
+    // 그런 표가 있으면 배열(저장) 순서 그대로다 — 뒤 줄의 글자처럼 표도 그 표 뒤에 온다.
+    let keep_array_order = (0..para.controls.len()).any(float_anchored_after_tac_line);
     let table_flow_tiebreak = |ctrl: &Control| -> u8 {
         match ctrl {
             Control::Table(t) if !flow.is_effective_tac_table(para, t, fmt) => 0,
@@ -126,12 +141,14 @@ pub(in crate::renderer::typeset) fn for_paragraph(
         }
     };
     let mut ctrl_order: Vec<usize> = (0..para.controls.len()).collect();
-    ctrl_order.sort_by_key(|&i| {
-        (
-            float_table_voffset(&para.controls[i]),
-            table_flow_tiebreak(&para.controls[i]),
-        )
-    });
+    if !keep_array_order {
+        ctrl_order.sort_by_key(|&i| {
+            (
+                float_table_voffset(&para.controls[i]),
+                table_flow_tiebreak(&para.controls[i]),
+            )
+        });
+    }
     // is_first_table/is_last_table 는 배열순서가 아닌 "놓이는 순서(ctrl_order)"
     // 기준으로 잡아, pre/post 텍스트와 spacing 이 실제 배치 첫/마지막 표에 붙도록 한다.
     let first_placed_table = ctrl_order
