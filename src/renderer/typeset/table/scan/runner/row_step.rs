@@ -1,7 +1,7 @@
 //! Ordinary row scan step. Queries keep the page state read-only; this step owns scan-result updates.
 
 use crate::renderer::typeset::{
-    controls, is_reparsed_single_column_cell_split_row, paragraph,
+    controls, hwpunit_to_px, is_reparsed_single_column_cell_split_row, paragraph,
     row_has_stored_cross_paragraph_zero_reset, row_has_stored_same_vpos_split_signal,
     row_split_meets_min_top_keep, rowbreak_row_has_internal_saved_vpos_reset,
     rowbreak_table_has_internal_saved_vpos_reset, table, BlockRowScanVars, BlockTableRowScan,
@@ -516,6 +516,36 @@ impl TypesetEngine {
                     end_row = r;
                     end_row_height_override = Some(squeeze_rest);
                     return true;
+                }
+                // 선언 높이의 빈 띠가 행 높이를 정하는 행: 글은 남은 자리에 다 들어가고 띠만 넘친다. 맥 한글
+                // 12.30 은 띠를 본문 아래 − 1pt 에서 가르고 남은 띠를 다음 쪽 첫머리에 그린다(경북 판로지원 6×1
+                // 표 — 종전엔 행 통째 이월로 한 쪽이 늘었다). rowspan 걸침 행의 Stage 76 띠 넘김과 같은 연산이다.
+                // ponytail: 남은 띠가 다음 쪽보다도 길면(r == cursor_row) 다시 가르지 않고 넘친다 — 한 쪽보다 긴
+                // 빈 띠 행이 실물에 나오면 이어진 조각에도 같은 자르기를 연다.
+                if !rowspan_touched[r]
+                    && r > cursor_row
+                    && row_start_cut.is_empty()
+                    && table::scan::row::row_is_declared_empty_band(mt, table, r)
+                {
+                    let reserve =
+                        hwpunit_to_px(table::scan::row::EMPTY_BAND_CUT_BOTTOM_RESERVE_HU, self.dpi);
+                    let rest = (avail_for_rows - consumed - cs_before - reserve).max(0.0);
+                    let visible_height = layout_engine.row_cut_content_height(
+                        table,
+                        r,
+                        row_start_cut,
+                        &res.end_cut,
+                        styles,
+                    );
+                    if table::scan::row::retains_blank_tail(&res, visible_height, rest) {
+                        consumed += cs_before + rest;
+                        r += 1;
+                        end_row = r;
+                        end_row_height_override = Some(rest);
+                        split_end_cut = res.end_cut;
+                        split_end_limit = rest;
+                        return false;
+                    }
                 }
                 // [#2236] rowspan 블록 중간 행 밴드 컷: 행 자체 콘텐츠는 예산 안에
                 // 전부 들어가지만(fully_consumed) 행 높이가 rowspan 이웃/선언으로

@@ -105,8 +105,10 @@ impl RowEntryQuery<'_> {
         } = *rows;
         let native_short_parent_child_splittable =
             layout_engine.native_short_parent_child_row_is_fragmentable(table, r, styles);
-        let splittable =
-            can_intra_split && (mt.is_row_splittable(r) || native_short_parent_child_splittable);
+        let splittable = can_intra_split
+            && (mt.is_row_splittable(r)
+                || native_short_parent_child_splittable
+                || super::row::row_is_declared_empty_band(mt, table, r));
 
         RowSplitGate {
             native_short_parent_child_splittable,

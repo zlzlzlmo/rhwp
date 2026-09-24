@@ -2,6 +2,8 @@
 
 use super::RowBlockQuery;
 use crate::model::control::Control;
+use crate::model::table::Table;
+use crate::renderer::height_measurer::MeasuredTable;
 use crate::renderer::layout::table_layout::RowCutResult;
 use crate::renderer::typeset::MIN_TOP_KEEP_PX;
 
@@ -127,6 +129,38 @@ impl RowScanQuery<'_> {
             visible_height,
         }
     }
+}
+
+/// 빈 띠 행을 가르는 자리는 본문 아래보다 이만큼 위다(HWPUNIT). 맥 한글 12.30 실측: 경북 판로지원 6×1 표를
+/// 위아래로 옮긴 사본 넷(−19.2·0·+24·+48pt)·칸 여백 셋·쪽 아래 여백 셋(15·15.1·20mm) 모두 자르는 선이
+/// 본문 아래 − 1.00pt(±0.01)에 선다.
+pub(in crate::renderer::typeset) const EMPTY_BAND_CUT_BOTTOM_RESERVE_HU: i32 = 100;
+
+/// 나눔(RowBreak) 표에서 선언 행 높이가 칸 글(줄 + 위아래 여백)보다 [`MIN_TOP_KEEP_PX`] 넘게 큰 행 — 글 아래 빈
+/// 띠가 행 높이를 정한다. 맥 한글 12.30 은 이런 행을 쪽 끝에서 띠째 가르고 남은 띠를 다음 쪽 첫머리에 그린다
+/// (경북 판로지원 6×1 표 빈 칸 386.9pt: 2쪽 188.6pt + 3쪽 198.2pt). 칸에 조판부호(그림·표·도형)가 있으면 띠가
+/// 비어 있다고 볼 수 없어 제외한다(간장 보고서 그림 8 — 글 밖 그림이 띠를 채운다).
+pub(in crate::renderer::typeset) fn row_is_declared_empty_band(
+    mt: &MeasuredTable,
+    table: &Table,
+    r: usize,
+) -> bool {
+    let Some(&row_h) = mt.row_heights.get(r) else {
+        return false;
+    };
+    let mut cells = mt
+        .cells
+        .iter()
+        .filter(|c| c.row == r && c.row_span == 1)
+        .peekable();
+    mt.allows_row_break_split()
+        && cells.peek().is_some()
+        && cells.all(|c| {
+            c.total_content_height + c.padding_top + c.padding_bottom + MIN_TOP_KEEP_PX < row_h
+        })
+        && !table.cells.iter().any(|cell| {
+            cell.row as usize == r && cell.paragraphs.iter().any(|p| !p.controls.is_empty())
+        })
 }
 
 pub(in crate::renderer::typeset) fn retains_blank_tail(
