@@ -1319,13 +1319,8 @@ fn para_has_non_whitespace_text(para: &Paragraph) -> bool {
 /// 글 없는 host(빈 문단 · 공백만 든 문단)의 문단 기준 자리차지 표 — 쪽을 넘어 갈릴 때 맥 한글 12.30 은 이어진 조각을
 /// 본문 위 + 바깥 위 여백에 앉힌다(80168 이어진 쪽 40곳 가로선 +1.3pt = 141HU 일정).
 pub(crate) fn textless_para_topbottom_float(para: &Paragraph, table: &Table) -> bool {
-    // 1×1 표·칸에 표를 품은 표는 감싸개·쪽 조각·중첩 행 사다리 계약(#7095 · #5885 · #7243)이 따로 여백을 다룬다.
+    // 1×1 표는 감싸개·쪽 조각 계약(#7095 · 중첩 표 행 커서)이 따로 여백을 다룬다.
     !(table.row_count == 1 && table.col_count == 1)
-        && !table.cells.iter().any(|cell| {
-            cell.paragraphs
-                .iter()
-                .any(|p| p.controls.iter().any(|c| matches!(c, Control::Table(_))))
-        })
         && !table.common.treat_as_char
         && is_para_topbottom_float(&table.common)
         && !para_has_non_whitespace_text(para)
@@ -1570,10 +1565,17 @@ pub(crate) fn empty_host_float_band_table<'a>(
     let [Control::Table(table)] = host.controls.as_slice() else {
         return None;
     };
-    let (Some(host_seg), Some(next_seg)) = (host.line_segs.first(), next.line_segs.first()) else {
-        return None;
+    // 둘 다 한/글 저장 줄이거나, 둘 다 저장 줄이 없는(rhwp 가 짓는) 문단 — 섞인 쌍은 사다리 근거가 갈린다.
+    let stored = |p: &Paragraph| {
+        p.line_segs
+            .first()
+            .is_some_and(|seg| seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0)
     };
-    (!table.common.treat_as_char
+    let lines_agree = (stored(host) && stored(next))
+        || (crate::renderer::para_has_no_stored_line_segs(host)
+            && crate::renderer::para_has_no_stored_line_segs(next));
+    (lines_agree
+        && !table.common.treat_as_char
         && table.caption.is_none()
         && is_para_topbottom_float(&table.common)
         && !para_has_non_whitespace_text(host)
@@ -1582,10 +1584,8 @@ pub(crate) fn empty_host_float_band_table<'a>(
                 c,
                 Control::Table(_) | Control::Picture(_) | Control::Shape(_)
             )
-        })
-        && host_seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
-        && next_seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0)
-        .then_some(table)
+        }))
+    .then_some(table)
 }
 
 /// 빈 host 의 문단 기준 자리차지 표(비 TAC) 뒤 개체 없는 문단 — 저장 사다리가 다음 첫 줄을 **띠 바닥**

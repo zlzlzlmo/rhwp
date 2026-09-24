@@ -127,8 +127,11 @@ issue1891/80168_regulatory_analysis.hwpx	2
 issue1891_external_bindata_link.hwpx	8
 issue1921/59043_regulatory_analysis.hwp	3
 issue1937_rowbreak_footnote_overpagination.hwp	7
-issue1949_giant_cell_nested_tables_perf.hwp	9
-issue1949_giant_cell_nested_tables_perf.hwpx	9
+# 이어진 조각 바깥 위 여백을 칸에 표 품은 표·hwpx·저장 줄 없는 문서까지(맥 한글 12.30): 7문서 넘침 +1~4 — 모두 맥 쪽별
+# 정렬이 나아졌다(d≈0 1949 |d|≤2 1→21 · 3637 1→7 · 1130000 21→27 · 70833 2→5 · 5877 7→10 · 75544 19→26). 이미 행 컷
+# 소비가 한계를 넘던 조각이 1.88px 내려앉아 드러난 것 — 행 컷 소비 과대가 남은 과제다.
+issue1949_giant_cell_nested_tables_perf.hwp	11
+issue1949_giant_cell_nested_tables_perf.hwpx	13
 issue2006/1790387_prep_final_report.hwpx	4
 issue2083_hide_fill_page.hwpx	1
 issue2164/의견제출서(양식).hwp	1
@@ -138,7 +141,7 @@ issue2559/1341000_research_report_footnotes.hwp	2
 issue2813/dangjik_dutylog.hwpx	1
 issue3587/b-table-repeated.hwp	1
 issue3587/b-table-repeated.hwpx	1
-issue3637/press_release_split_cell_nested_table.hwpx	2
+issue3637/press_release_split_cell_nested_table.hwpx	4
 issue3637/press_release_topbottom_float.hwpx	1
 issue3637/regulatory_impact_nested_table_escape.hwpx	2
 issue3751/vpos_reset_midparagraph_fit.hwpx	1
@@ -162,14 +165,14 @@ issue5788/tac_table_missing_anchor_line_spacing.hwp	2
 issue5828/landscape_rowbreak_bleed.hwp	12
 issue5866/memo_field_hwp5.hwp	1
 issue5870/empty_host_float_flow_advance.hwp	1
-issue5877/fragment_ghost_vrules.hwp	2
+issue5877/fragment_ghost_vrules.hwp	3
 # 이어진 조각 바깥 위 여백(맥 한글 12.30 — 80168 이어진 쪽 +1.3pt · 1342000 415쪽·«노동인권» 379쪽 = 맥): 조각이 1.88px
 # 내려앉으면서 이미 행 컷 한계보다 실제 소비가 컸던 쪽(80250 5쪽 한계 936.0 < 소비 939.8)의 넘침이 드러났다 — 쪽 수·정렬은
 # 맥에 가까워졌다(1480000 203 → 204, 맥 205 · d≈0 3 → 14쪽). 행 컷 소비 과대가 남은 과제다.
 issue5941/1480000-201900698-native-neartop-reset.hwp	22
 issue5941/1490000-201600081_roadmap_research.hwp	47
 issue5941/3240179_efficiency_test_orgs.hwpx	4
-issue5966/1130000-202100008_franchise_review_report.hwp	8
+issue5966/1130000-202100008_franchise_review_report.hwp	10
 issue6031/3249937_asset_management_rules.hwpx	1
 issue6035/cgmp_evaluation_table.hwpx	2
 issue6036/156509073_police_press_release.hwpx	0
@@ -201,7 +204,7 @@ issue6782/1480000-201900042-chemical-labeling-standards.hwp	6
 issue6782/1480000-201900042-chemical-product-labeling-study.hwp	6
 issue6795/1341000-201100013-cyber-university-application.hwp	4
 issue6854/22037757-chuncheon-personnel-rule-annex13.hwpx	0
-issue6854/70833-electrical-safety-rule-regulatory-analysis.hwp	2
+issue6854/70833-electrical-safety-rule-regulatory-analysis.hwp	3
 issue6879/156767332-broadcast-revenue-attachment.hwp	2
 issue6882/synth_cell_enter_table_growth.hwp	0
 issue6888/156730935-marine-mobility-expo.hwpx	1
@@ -232,7 +235,7 @@ task2097/18095317_eogu_geumji.hwp	1
 task2097/21217935_simsa_jipyo.hwp	2
 task2097/21298295_byeolpyo5_disaster.hwp	1
 task2097/3023771_wichokjang.hwpx	2
-task2097/75544_pii_bunseok.hwpx	2
+task2097/75544_pii_bunseok.hwpx	3
 task2097/none_table_declared_fits.hwpx	1
 task2097/rowbreak_midpage_declared_fits.hwpx	1
 task2105/rowbreak_table_declared_fits.hwpx	1

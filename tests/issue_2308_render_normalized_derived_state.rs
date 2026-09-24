@@ -272,7 +272,9 @@ fn issue_2308_saved_nested_width_keeps_fragment_geometry() {
     // same constant; nothing here rests on that.
     // 33쪽 400.4 는 한컴 2024·맥 한글 12.30 정답이다. 앞 제목 표 둘(빈 host 1×1, 바깥 여백 566/566)은 앵커 +
     // 바깥 위 여백에 앉아 선언 높이(1300)만 차지하고 바깥 아래 여백을 한 번 흘린다.
-    let expected = [(32, 400.4, 636.8), (33, 77.1, 388.3)];
+    // 34쪽 이어진 조각은 본문 위 + 바깥 위 여백(141HU)에 앉는다 — 맥 한글 12.30 바깥 괘선 58.1pt 와 일치(종전 56.7pt,
+    // 한컴 2024 윈도 PDF 기준 77.1 은 여백 없이 앉던 값).
+    let expected = [(32, 400.4, 636.8), (33, 79.0, 388.3)];
     for (page, expected_y, expected_height) in expected {
         let tree = core
             .build_page_render_tree(page)

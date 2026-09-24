@@ -164,7 +164,8 @@ fn issue_2215_hwp_and_hwpx_preserve_normal_selection_oracles() {
 
         let middle_rects = selection_rects_with_hints(&doc, middle);
         // [#7063] x 92.1 → 95.9 — `first` 와 같은 +3.77px(283HU) 이동.
-        assert_single_rect_near(file_name, "middle", &middle_rects, 54, 95.9, 588.5, 7.9); // [#2430] 10.0→7.9 실측
+        // y 588.5 → 592.3: 이어진 조각이 본문 위 + 바깥 위 여백에 앉는다(맥 한글 12.30 · 55쪽 잉크 행 맥 대비 +3.5pt → +1.0pt).
+        assert_single_rect_near(file_name, "middle", &middle_rects, 54, 95.9, 592.3, 7.9); // [#2430] 10.0→7.9 실측
         let middle_text = copied_text(&mut doc, middle);
         assert_eq!(middle_text, "8");
 

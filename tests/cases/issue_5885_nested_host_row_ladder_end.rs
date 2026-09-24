@@ -52,10 +52,11 @@ fn issue_5885_outer_row_closes_below_nested_table_bottom() {
     let mut cells = Vec::new();
     collect_cells(&page.root, 0, &mut cells);
 
-    // 바깥 표 `⑵재정상태건실도` 행: y≈344.6 에서 시작하는 depth1 셀들.
+    // 바깥 표 `⑵재정상태건실도` 행: y≈348.3 에서 시작하는 depth1 셀들. 이어진 조각이 본문 위 + 바깥 위 여백에 앉으면서
+    // (맥 한글 12.30) 쪽 괘선 9개가 맥과 일치한다(73.7·261.3·436.9·470.9·485.8·610.9·645.0·659.8·662.6pt · 종전 −2.7pt).
     let row_cells: Vec<_> = cells
         .iter()
-        .filter(|(d, _, y, _)| *d == 1 && (*y - 344.6).abs() < 3.0)
+        .filter(|(d, _, y, _)| *d == 1 && (*y - 348.3).abs() < 3.0)
         .collect();
     assert!(
         row_cells.len() >= 3,

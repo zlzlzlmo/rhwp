@@ -93,7 +93,6 @@ impl TypesetEngine {
         // 글 없는 host 의 문단 기준 자리차지 표 이어진 조각은 본문 위 + 바깥 위 여백에 앉는다(`table_partial.rs` 같은
         // 술어) — 이미 반복 여백 계약이 연 경우는 그대로 둔다.
         let host_before_overhead = if is_continuation
-            && self.profile.get().hwp5_stored_pagination_layout()
             && host_before_overhead <= 0.0
             && !single_cell_page_fragment
             && std::ptr::eq(row_geometry_table, table)

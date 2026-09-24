@@ -25680,9 +25680,18 @@ fn issue2214_scoped_cache_coherence_preserves_transient_pagination() {
             flushed_cuts.len(),
             "{label}: page fingerprint count"
         );
+        // hwp 는 이어진 조각 바깥 위 여백(맥 한글 12.30) 뒤로 쪽마다 여유가 달라져, 한 줄을 넣어도 컷이 그대로인
+        // 조각이 12개 생긴다(#2424 의 113 → 101 과 같은 축). hwpx 는 종전대로 전부 옮는다.
+        let unchanged_after_flush: &[usize] = if label == "hwp" {
+            &[63, 72, 73, 74, 82, 83, 89, 90, 91, 92, 96, 97]
+        } else {
+            &[]
+        };
         assert_eq!(
             changed_pages,
-            (2..doc.page_count() as usize).collect::<Vec<_>>(),
+            (2..doc.page_count() as usize)
+                .filter(|page| !unchanged_after_flush.contains(page))
+                .collect::<Vec<_>>(),
             "{label}: flush must realign downstream continuation cuts"
         );
         let transient_rect_json: Value =
@@ -26285,7 +26294,12 @@ fn issue2424_resumable_pagination_commits_only_after_final_fragment() {
                 .zip(&committed_cuts)
                 .filter(|(before, after)| before != after)
                 .count(),
-            113,
+            // 이어진 조각이 본문 위 + 바깥 위 여백에 앉으면서(맥 한글 12.30) 쪽마다 여유가 달라져, 한 줄 넣은 뒤에도
+            // 컷이 그대로인 조각이 생긴다(hwp 113 → 101). 연속성·삭제 되돌림 검사는 그대로 통과한다.
+            match label {
+                "hwp" => 101,
+                _ => 113,
+            },
             "{label}: committed cut chain must match the full-pagination oracle"
         );
     }

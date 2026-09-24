@@ -11932,7 +11932,10 @@ impl LayoutEngine {
             if is_current_empty_topbottom_float && !is_current_empty_square_sibling_float {
                 if let Some(Control::Table(t)) = para.controls.get(control_index) {
                     if let Some(saved_para_y) = native_empty_topbottom_rewind_anchor_saved_para_y(
-                        self.profile.get().hwp5_stored_pagination_layout(),
+                        // hwpx 저장 조판도 저장 vpos 가 있다 — 같은 되감김을 써야 hwp·hwpx 가 같은 쪽을 그린다(rbp 12쪽
+                        // 문단 1.6: hwp 188.5pt · hwpx 198.2pt → 둘 다 188.5).
+                        self.profile.get().hwp5_stored_pagination_layout()
+                            || self.profile.get().hwpx_stored_layout(),
                         para_index
                             .checked_sub(1)
                             .and_then(|prev_index| paragraphs.get(prev_index)),
@@ -13340,11 +13343,16 @@ impl LayoutEngine {
                             + hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi);
                         // 저장 첫 줄(쪽 기준)이 그 자리를 증언할 때만 — rbp 14쪽(문단 1.13 → 1.14)은 맥·저장 모두 띠 바닥
                         // + 276HU 라 이 식이 아니다(조건 미상).
-                        let stored_line_agrees = next.line_segs.first().is_some_and(|seg| {
-                            (seg.vertical_pos - px_to_hwpunit(band_line_top - col_area.y, self.dpi))
-                                .abs()
-                                <= 50
-                        });
+                        // 저장 줄이 없는(rhwp 가 짓는) 문단은 증거가 없다 — 한/글도 처음부터 조판하므로 구조 규칙을 쓴다
+                        // (맥 한글 12.30: 76076 34쪽 문단 326 첫 줄 = 조각 바닥 + 141HU · rhwp +124HU 더 아래).
+                        let stored_line_agrees =
+                            crate::renderer::para_has_no_stored_line_segs(next)
+                                || next.line_segs.first().is_some_and(|seg| {
+                                    (seg.vertical_pos
+                                        - px_to_hwpunit(band_line_top - col_area.y, self.dpi))
+                                    .abs()
+                                        <= 50
+                                });
                         // ponytail: 위로만 당긴다 — 조판은 끝 조각 뒤 아래 여백을 흐름에 싣지 않아(`budget.rs` 끝 조각
                         // 계약) 아래로 내리면 쪽 바닥을 넘을 수 있다. 아래 여백 누락 쪽(간장 158쪽 −283HU 등)은 조판과
                         // 같이 옮길 과제다.

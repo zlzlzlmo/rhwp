@@ -4159,7 +4159,6 @@ impl LayoutEngine {
         // 글 없는 host 의 문단 기준 자리차지 표의 이어진 조각도 본문 위 + 바깥 위 여백에 앉는다 — 조판도 같은 술어로
         // 예산에서 뺀다(`prepare_table_fragment_budget`). 맥 한글 12.30: 80168 이어진 쪽 40곳 +1.3pt(141HU) 일정.
         let y_start = if is_continuation
-            && self.profile.get().hwp5_stored_pagination_layout()
             && !single_cell_page_fragment
             && !repeat_fragment_outer_margin
             && enclosing_cell_ctx.is_none()
