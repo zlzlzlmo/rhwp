@@ -4358,17 +4358,18 @@ impl DocumentCore {
             .copied()
             .unwrap_or(0);
         self.remove_composed_paragraph(section_idx, para_idx);
-        // 이웃 문단은 글이 그대로라 다시 흘리지 않는다 — 한/글은 문단을 지워도 앞 문단의 저장 줄·간격을 그대로 두고
-        // 뒤 문단만 그 자리로 당긴다. 앞 문단을 다시 흘려 스타일 간격으로 이으면 저장 사다리가 바뀌어 쪽이 흔들렸다
-        // (문서 끝 임시 문단을 지우자 표 다음 문단이 표 위로 올라가 1→2쪽, 맥 한글 12.30은 1쪽).
+        // [Task #2299] 리셋 판별용 — reflow 이전 저장 흐름 end 캡처.
         let stored_end_for_reset = self.document.sections[section_idx]
             .paragraphs
-            .get(para_idx)
+            .get(reflow_idx)
             .and_then(crate::renderer::composer::paragraph_flow_end);
+        if reflow_idx < self.document.sections[section_idx].paragraphs.len() {
+            self.reflow_paragraph(section_idx, reflow_idx);
+        }
         let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
         crate::renderer::composer::recalculate_section_vpos(
             &mut self.document.sections[section_idx].paragraphs,
-            para_idx,
+            reflow_idx,
             None,
             stored_end_for_reset,
             &self.styles,
@@ -4390,14 +4391,18 @@ impl DocumentCore {
             if new_col == old_col {
                 break;
             }
+            // [Task #2299] 리셋 판별용 — reflow 이전 저장 흐름 end 캡처.
             let stored_end_for_reset = self.document.sections[section_idx]
                 .paragraphs
-                .get(para_idx)
+                .get(reflow_idx)
                 .and_then(crate::renderer::composer::paragraph_flow_end);
+            if reflow_idx < self.document.sections[section_idx].paragraphs.len() {
+                self.reflow_paragraph(section_idx, reflow_idx);
+            }
             let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
             crate::renderer::composer::recalculate_section_vpos(
                 &mut self.document.sections[section_idx].paragraphs,
-                para_idx,
+                reflow_idx,
                 None,
                 stored_end_for_reset,
                 &self.styles,
@@ -4478,11 +4483,10 @@ impl DocumentCore {
             .copied()
             .unwrap_or(0);
         self.reflow_paragraph(section_idx, para_idx);
-        // 새 문단부터 잇는다 — 앞 문단은 그대로다(한/글: 문단을 끼워도 앞 문단의 저장 간격을 스타일 간격으로 바꾸지 않는다).
         let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
         crate::renderer::composer::recalculate_section_vpos(
             &mut self.document.sections[section_idx].paragraphs,
-            para_idx,
+            reflow_target,
             Some(para_idx..para_idx + 1),
             None,
             &self.styles,
@@ -4506,7 +4510,7 @@ impl DocumentCore {
             let doc_hwp3_layout = self.document.layout_profile().hwp3_layout();
             crate::renderer::composer::recalculate_section_vpos(
                 &mut self.document.sections[section_idx].paragraphs,
-                para_idx,
+                reflow_target,
                 Some(para_idx..para_idx + 1),
                 None,
                 &self.styles,
