@@ -7027,6 +7027,106 @@ impl LayoutEngine {
                 // PartialTable/Shape: 지연 보정 사용
                 _ => None,
             }
+            .map(|vpos| {
+                // 첫 문단이 쪽 위에 앞 간격을 그렸으면(`layout_paragraph` 의 column-top 규칙과 같은 판정) 그 첫 줄은 단 위 +
+                // 그 간격이다 — 좌표 원점은 저장 vpos 에서 그 간격을 뺀 자리다. 원점을 첫 vpos 로 잡으면 이 쪽에서 스냅하는
+                // 항목이 전부 그 간격만큼 위로 뜬다(맥 한글 12.30: c78a35b8 1쪽 표 1.0pt 위 — 가로선 105 → 207/207).
+                // 글자처럼 표 항목은 단 위에서 앞 간격을 그리지 않으므로 종전 그대로다.
+                let (para_index, start_line) = match item {
+                    PageItem::FullParagraph { para_index } => (*para_index, 0),
+                    PageItem::PartialParagraph {
+                        para_index,
+                        start_line,
+                        ..
+                    } => (*para_index, *start_line),
+                    _ => return vpos,
+                };
+                let Some(para) = paragraphs.get(para_index) else {
+                    return vpos;
+                };
+                let ps_id = composed
+                    .get(para_index)
+                    .map(|c| c.para_style_id as usize)
+                    .unwrap_or(para.para_shape_id as usize);
+                let spacing_before = styles
+                    .para_styles
+                    .get(ps_id)
+                    .map(|ps| ps.spacing_before)
+                    .unwrap_or(0.0);
+                // HWP3 계보는 파서가 vpos 에서 앞 간격을 이미 떼어 둔다(`skip_spacing_before_prededuct`) — 종전 원점.
+                if start_line != 0
+                    || spacing_before <= 0.0
+                    || self.profile.get().hwp3_layout()
+                    || self.use_hwp3_origin_flow_spacing_before.get()
+                {
+                    return vpos;
+                }
+                let applied_px = if para_index == 0 {
+                    spacing_before.min(hwpunit_to_px(vpos, self.dpi).max(0.0))
+                } else {
+                    para.line_segs
+                        .first()
+                        .filter(|ls| {
+                            ls.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY
+                                == 0
+                        })
+                        .map(|ls| {
+                            let source_vpos = para
+                                .source_line_seg_vertical_pos
+                                .as_ref()
+                                .and_then(|positions| positions.first().copied())
+                                .unwrap_or(ls.vertical_pos);
+                            hwpunit_to_px(source_vpos, self.dpi)
+                        })
+                        .filter(|px| *px > 0.0 && *px <= spacing_before + 0.5)
+                        .unwrap_or(0.0)
+                };
+                // 사다리가 문단 간격을 담는 문서만 — 첫 문단 끝 → 둘째 문단 첫 줄 저장 거리가 «첫 문단 뒤 간격 + 둘째 문단
+                // 앞 간격» 이어야 한다. 간격을 빼고 적은 사다리(HWP3 계보 hwpx: hwp3-sample16 18쪽 제목 뒤 3412 = 852 +
+                // 1600 + 960, 둘째 앞 간격 570 없음)는 종전 원점이 맞다.
+                let ladder_carries_spacing = col_content
+                    .items
+                    .get(1)
+                    .and_then(|next| match next {
+                        PageItem::FullParagraph {
+                            para_index: next_pi,
+                        }
+                        | PageItem::Table {
+                            para_index: next_pi,
+                            ..
+                        } if *next_pi == para_index + 1 => Some(*next_pi),
+                        _ => None,
+                    })
+                    .and_then(|next_pi| paragraphs.get(next_pi).map(|next| (next_pi, next)))
+                    .and_then(|(next_pi, next)| {
+                        let last = para.line_segs.last()?;
+                        let first = next.line_segs.first()?;
+                        let end = last.vertical_pos + last.line_height + last.line_spacing;
+                        let ps_of = |pi: usize, p: &Paragraph| {
+                            composed
+                                .get(pi)
+                                .map(|c| c.para_style_id as usize)
+                                .unwrap_or(p.para_shape_id as usize)
+                        };
+                        let sa = styles
+                            .para_styles
+                            .get(ps_of(para_index, para))
+                            .map(|ps| ps.spacing_after)
+                            .unwrap_or(0.0);
+                        let sb_next = styles
+                            .para_styles
+                            .get(ps_of(next_pi, next))
+                            .map(|ps| ps.spacing_before)
+                            .unwrap_or(0.0);
+                        let spacing_hu = crate::renderer::px_to_hwpunit(sa + sb_next, self.dpi);
+                        Some((first.vertical_pos - end - spacing_hu).abs() <= 2)
+                    })
+                    .unwrap_or(true);
+                if !ladder_carries_spacing {
+                    return vpos;
+                }
+                vpos - crate::renderer::px_to_hwpunit(applied_px, self.dpi)
+            })
         });
         // (base=0 무차별 부여는 다쪽 분할표 연속 컬럼에서 오작동 — HeightCursor 의
         // [Task #1027 Stage C] inter-item VPOS_CORR 상태머신을 HeightCursor 로 캡슐화.

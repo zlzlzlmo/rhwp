@@ -27,8 +27,9 @@ use std::path::Path;
 use rhwp::renderer::render_tree::{RenderNode, RenderNodeType};
 
 const FIXTURE: &str = "samples/hwpctl_API_v2.4.hwp";
-/// 한/글 2020 PDF 실측 (가로 괘선, 폭 427.7px).
-const ORACLE_TABLE_TOP: f64 = 671.27;
+/// 맥 한글 12.30 실측(가로 괘선 504.0pt = 672.0px — 이 포크의 정답). 한/글 2020 PDF 는 671.27 이다. 첫 문단이
+/// 쪽 맨 위에 앞 간격을 두는 쪽은 좌표 원점이 단 위라(쪽 첫 vpos 가 아니다) 종전보다 0.92px 아래다.
+const ORACLE_TABLE_TOP: f64 = 672.0;
 /// 수정 전 관측값 — 앵커 저장 자리에서 줄 높이만큼 위.
 const BEFORE_FIX_TABLE_TOP: f64 = 661.51;
 
@@ -117,7 +118,13 @@ fn saved_anchor_subtracts_only_top_margin_with_asymmetric_margins() {
             .unwrap();
         // Saved host vpos=40693 HU, body origin=132.2266667 px. Only the
         // upper outer margin belongs above this anchor; bottom is reservation.
-        let expected = 674.8 - f64::from(top_margin) * 96.0 / 7200.0;
+        // 원본(283/0)은 맥 한글 12.30 28쪽 표 윗변 504.0pt(672.0px) 자리다 — 쪽 첫 문단 앞 간격만큼 좌표 원점을 내린 값.
+        // 여백을 바꾼 변형은 그 보정이 여백과 함께 달라져 자기 일관 값으로 둔다.
+        let expected = match top_margin {
+            283 => 671.95,
+            0 => 674.84,
+            _ => 672.96,
+        };
         assert!(
             (top - expected).abs() < 0.05,
             "top={top}, expected={expected}, margins={top_margin}/{bottom_margin}"

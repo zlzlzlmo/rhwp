@@ -474,11 +474,21 @@ impl HeightCursor {
             _ => prev_vpos_end,
         };
         // [Task #643] sb_N 사전 차감 대상 (vpos_corrected_end_y 내부에서 차감).
-        let curr_sb = paragraphs
-            .get(item_para)
-            .and_then(|p| styles.para_styles.get(p.para_shape_id as usize))
-            .map(|ps| ps.spacing_before)
-            .unwrap_or(0.0);
+        // 글 없는 host 의 문단 기준 자리차지 표는 렌더가 앞 간격을 그리지 않는다(표는 앞 간격 전 앵커에 앉는다) —
+        // 차감하면 목표가 그만큼 위다(맥 한글 12.30: issue2004 4쪽 표 윗변 95.9pt · 차감하면 5pt 위).
+        let curr_textless_topbottom_host = curr_has_topbottom_para_table
+            && paragraphs
+                .get(item_para)
+                .is_some_and(|p| !para_has_visible_text(p));
+        let curr_sb = if curr_textless_topbottom_host {
+            0.0
+        } else {
+            paragraphs
+                .get(item_para)
+                .and_then(|p| styles.para_styles.get(p.para_shape_id as usize))
+                .map(|ps| ps.spacing_before)
+                .unwrap_or(0.0)
+        };
         // [Task #1027 Stage A] 공유 클램프 함수.
         let allow_large_backward = (self.allow_vpos_rewind && vpos_rewind)
             || (self.allow_start_height_backtrack

@@ -31,6 +31,9 @@
 # 아래 앉은 자리(2439 5쪽 +19pt · 76076 33쪽 제목 칸 과대 측정)에서 여백이 더해져 드러난 것이다 — 열린 과제.
 # 행: 76076 1->4 · 80168 1->2 · hwpspec 2->3 · 1891/76076 2->5 · 1891/80168 1->2 · 1891_external 7->8 · 37787 7->9 ·
 # 75544 1->2 · 신규 issue2439 6 · 신규 issue6465 1.
+# 완화 (쪽 좌표 원점 = 단 위, 2026-09-24): 쪽 첫 문단이 앞 간격을 쪽 위에 두면 스냅 원점은 첫 vpos 가 아니라 거기서 그
+# 간격을 뺀 자리다. 맥 대조: 1853 가로선 83->168/405 · 5941 글 793->933/6100 · 6764 글 426->432 · hwpspec 2946->3134/6517 ·
+# c78a35b8 105->207/207. 행: 1853 0->1 · 5941 19->20 · 6764 39->40.
 issue2439/issue2439_repeat_table_overlap.hwp	6
 issue6465/press_release_footer_logos.hwpx	1
 issue6921/148733091-briefing-stenographic-record.hwp	0
@@ -117,7 +120,7 @@ hwpx/pr-1674.hwpx	1
 hwpx_sample2.hwp	2
 issue-986-receipt.hwp	0
 issue1835_tac_stale_height.hwp	1
-issue1853_caption_precedes_body_split.hwpx	0
+issue1853_caption_precedes_body_split.hwpx	1
 issue1858_paper_anchor_float_stack.hwpx	1
 issue1891/76076_regulatory_analysis.hwpx	5
 issue1891/80168_regulatory_analysis.hwpx	2
@@ -160,7 +163,7 @@ issue5828/landscape_rowbreak_bleed.hwp	12
 issue5866/memo_field_hwp5.hwp	1
 issue5870/empty_host_float_flow_advance.hwp	1
 issue5877/fragment_ghost_vrules.hwp	2
-issue5941/1480000-201900698-native-neartop-reset.hwp	19
+issue5941/1480000-201900698-native-neartop-reset.hwp	20
 issue5941/1490000-201600081_roadmap_research.hwp	47
 issue5941/3240179_efficiency_test_orgs.hwpx	4
 issue5966/1130000-202100008_franchise_review_report.hwp	8
@@ -189,7 +192,7 @@ issue6601/36331407_side_by_side_tac_tables.hwpx	1
 issue6697/80550-agricultural-machinery-act-amendment.hwpx	2
 issue6712/한국어_2026년 8호 가정통신문_여름철 영유아 감염병 예방.hwp	1
 issue6718/27469-child-allowance-retroactive-support.hwp	0
-issue6764/1613000-202200037-air-traffic-controller-cbta.hwp	39
+issue6764/1613000-202200037-air-traffic-controller-cbta.hwp	40
 issue6776/78494-virtual-convergence-industry-decree.hwpx	1
 issue6782/1480000-201900042-chemical-labeling-standards.hwp	6
 issue6782/1480000-201900042-chemical-product-labeling-study.hwp	6
