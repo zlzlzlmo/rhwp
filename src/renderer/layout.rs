@@ -12389,6 +12389,46 @@ impl LayoutEngine {
                         0
                     } else if let Some(ladder_gap) = stored_anchor_stack_gap {
                         ladder_gap
+                    } else if let Some(band_gap) = para
+                        .controls
+                        .get(control_index)
+                        .filter(|_| {
+                            // 빈 앵커 표가 쌓인 자리만 — 다음도 빈 표 앵커(자리차지·글자처럼). 글 문단이 뒤따르면
+                            // `HeightCursor` 의 띠 바닥 규칙이 맡는다.
+                            is_current_empty_para_float
+                                && paragraphs.get(para_index + 1).is_some_and(|next| {
+                                    !para_has_visible_text(next)
+                                        && next.controls.iter().any(|c| {
+                                            matches!(c, Control::Table(t)
+                                                if t.common.treat_as_char
+                                                    || is_para_topbottom_float(&t.common))
+                                        })
+                                })
+                        })
+                        .and_then(|c| match c {
+                            Control::Table(t) => Some(t),
+                            _ => None,
+                        })
+                        .filter(|t| {
+                            crate::renderer::float_placement::stored_ladder_sets_next_at_float_band(
+                                para,
+                                t,
+                                paragraphs.get(para_index + 1),
+                                crate::renderer::px_to_hwpunit(
+                                    styles
+                                        .para_styles
+                                        .get(para.para_shape_id as usize)
+                                        .map_or(0.0, |ps| ps.spacing_before),
+                                    self.dpi,
+                                ),
+                            )
+                        })
+                        .map(|t| t.outer_margin_bottom as i32)
+                    {
+                        // 저장 사다리가 다음 첫 줄을 띠 바닥에 둔 빈 앵커 표 — host 줄 간격이 아니라 바깥 아래 여백만
+                        // 흐른다(`stored_ladder_sets_next_at_float_band` · 맥 한글 12.30: issue_1133 2쪽 괘선이 맥과 일치,
+                        // 종전 +5.4pt 로 쪽 끝 표가 넘쳤다). 조판은 `host_spacing` 이 같은 증거로 흐름을 잰다.
+                        band_gap
                     } else if suppress_empty_anchor_spacing {
                         0
                     } else if is_current_empty_para_float {

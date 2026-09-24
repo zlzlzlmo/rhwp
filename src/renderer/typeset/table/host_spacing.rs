@@ -226,12 +226,35 @@ pub(super) fn resolve(
         + host_line_spacing
         + positive_empty_host_rowbreak_tail
         + stored_empty_anchor_host_line_tail;
+    // 빈 앵커 표가 쌓인 자리(다음도 빈 표 앵커)에서 저장 사다리가 다음 첫 줄을 정확히 띠 바닥(host 문단 위 + v_off +
+    // 위 여백 + 선언 높이 + 아래 여백)에 두었으면, 흐름도 그 띠다 — host 줄 간격이 아니다(맥 한글 12.30: hwpx_sample2
+    // 1쪽 문단 0 → 1 저장 8199 = 91 + 141 + 7826 + 141 · rhwp 는 줄 간격 392 를 얹어 2.13px 길었다).
+    let stored_band_after = (is_topbottom_empty_anchor
+        && next_is_empty_table_anchor
+        && (profile().hwp5_stored_pagination_layout() || profile().hwpx_stored_layout()))
+    .then_some(())
+    .and_then(|_| {
+        crate::renderer::float_placement::stored_ladder_sets_next_at_float_band(
+            para,
+            table,
+            next_para,
+            crate::renderer::px_to_hwpunit(sb, dpi),
+        )
+        .then(|| {
+            sa + hwpunit_to_px(signed_hwpunit(table.common.vertical_offset).max(0), dpi)
+                + outer_bottom
+        })
+    });
     let host_spacing = HostSpacing {
         before,
-        after,
+        after: stored_band_after.map_or(after, |band_after| band_after + outer_bottom_flow_only),
         spacing_after_only: sa,
-        after_for_fit: after - outer_bottom_flow_only,
-        host_line_spacing,
+        after_for_fit: stored_band_after.unwrap_or(after - outer_bottom_flow_only),
+        host_line_spacing: if stored_band_after.is_some() {
+            0.0
+        } else {
+            host_line_spacing
+        },
     };
 
     HostSpacingResult {

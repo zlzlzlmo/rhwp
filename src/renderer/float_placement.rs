@@ -1555,6 +1555,29 @@ pub(crate) fn empty_host_physical_ladder_extras_hu(
     ((stored_delta - physical_delta).abs() <= 2).then_some(extras)
 }
 
+/// 저장 사다리가 다음 문단 첫 줄을 정확히(±3HU) 띠 바닥 — host 문단 위(`host 첫 줄 − 앞 간격`) + v_off + 위 여백 + 선언
+/// 높이 + 아래 여백 — 에 두었는가. 빈 앵커 표가 쌓인 자리(다음도 빈 표 앵커)에서 흐름이 host 줄 간격이 아니라 이 띠임을
+/// 증언한다(맥 한글 12.30: hwpx_sample2 1쪽 0 → 1 저장 8199 = 91 + 141 + 7826 + 141 · issue_1133 2쪽).
+pub(crate) fn stored_ladder_sets_next_at_float_band(
+    host: &Paragraph,
+    table: &Table,
+    next: Option<&Paragraph>,
+    host_spacing_before_hu: i32,
+) -> bool {
+    let (Some(host_seg), Some(next_seg)) = (
+        host.line_segs.first(),
+        next.and_then(|p| p.line_segs.first()),
+    ) else {
+        return false;
+    };
+    let band = i64::from(signed_hwpunit(table.common.vertical_offset).max(0))
+        + i64::from(table.outer_margin_top)
+        + i64::from(table.common.height.min(i32::MAX as u32))
+        + i64::from(table.outer_margin_bottom);
+    let host_start = i64::from(host_seg.vertical_pos) - i64::from(host_spacing_before_hu);
+    (i64::from(next_seg.vertical_pos) - host_start - band).abs() <= 3
+}
+
 /// 빈 host 에 문단 기준 자리차지 표(비 TAC) 하나만 있고 다음 문단에 개체가 없으며 둘 다 한/글 저장 줄인가 — 한/글이
 /// 다음 문단 첫 줄을 띠 바닥(표 아래 + 바깥 아래 여백)에 두고 host 뒤·다음 앞 간격을 띠 안에 흡수하는 형상.
 pub(crate) fn empty_host_float_band_table<'a>(
