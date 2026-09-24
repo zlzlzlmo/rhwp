@@ -42,9 +42,11 @@ fn stored_neartop_reset_survives_on_a_filled_page() {
     let doc = HwpDocument::from_bytes(&bytes).expect("parse");
     let pages = doc.page_count();
     assert_eq!(
-        pages, 203,
-        "이미 찬 쪽의 저장 near-top 리셋을 지우면 203 → 201 이 된다 — #5941 축 B 회귀 \
-         (한/글 2024 는 205). got {pages}"
+        // 이어진 조각 바깥 위 여백(맥 한글 12.30)으로 203 → 204 — 한/글 2024·맥 모두 205 라 거리 2 → 1.
+        pages,
+        204,
+        "이미 찬 쪽의 저장 near-top 리셋을 지우면 204 → 202 가 된다 — #5941 축 B 회귀 \
+         (한/글 2024·맥 한글 12.30 은 205). got {pages}"
     );
 }
 

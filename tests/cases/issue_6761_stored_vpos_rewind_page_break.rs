@@ -136,7 +136,8 @@ fn partial_retreat_inside_a_page_does_not_break() {
     let core = core(SAMPLE_EDU);
     assert_eq!(
         core.page_count(),
-        413,
+        // 이어진 조각 바깥 위 여백(맥 한글 12.30)으로 413 → 415 = 정본·맥. 부분 후퇴에서 끊으면 여기서 또 는다.
+        415,
         "쪽 상단 재시작이 아닌 부분 후퇴(pi=219 70880 -> pi=220 66140)에서 쪽을 끊으면 \
          이 문서가 414쪽이 되어 정본(415쪽) 1..144쪽 오프셋 0 정렬이 깨진다"
     );

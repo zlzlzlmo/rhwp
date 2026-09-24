@@ -96,7 +96,8 @@ issue5788/tac_table_missing_anchor_line_spacing.hwp	5
 issue5793/pua_f0827_double_rule.hwp	1
 issue5870/empty_host_float_flow_advance.hwp	2
 issue5877/fragment_ghost_vrules.hwp	6
-issue5941/1480000-201900698-native-neartop-reset.hwp	10
+# 1480000 10 -> 12: 이어진 조각 바깥 위 여백(맥 한글 12.30)으로 이미 넘치던 쪽의 끝 줄이 꼬리말에 닿았다(쪽 수 203 → 204, 맥 205).
+issue5941/1480000-201900698-native-neartop-reset.hwp	12
 issue5941/1490000-201600081_roadmap_research.hwp	134
 issue5966/1130000-202100008_franchise_review_report.hwp	26
 issue6030/2386771_agritech_review_form.hwp	2

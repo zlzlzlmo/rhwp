@@ -90,6 +90,19 @@ impl TypesetEngine {
                 ),
                 self.dpi,
             );
+        // 글 없는 host 의 문단 기준 자리차지 표 이어진 조각은 본문 위 + 바깥 위 여백에 앉는다(`table_partial.rs` 같은
+        // 술어) — 이미 반복 여백 계약이 연 경우는 그대로 둔다.
+        let host_before_overhead = if is_continuation
+            && self.profile.get().hwp5_stored_pagination_layout()
+            && host_before_overhead <= 0.0
+            && !single_cell_page_fragment
+            && std::ptr::eq(row_geometry_table, table)
+            && crate::renderer::float_placement::textless_para_topbottom_float(para, table)
+        {
+            hwpunit_to_px(table.outer_margin_top as i32, self.dpi)
+        } else {
+            host_before_overhead
+        };
         // 끝 조각의 흐름 전진에는 이 형상이 새로 연 아래 여백과 100HU 를 넣지 않는다.
         // 둘 다 비끝 조각 상자의 계약이고, 끝 조각은 내용에 맞춰 끝나 렌더러도 그 뒤에
         // 여백을 두지 않는다. 넣어 두면 쓰지 않는 자리를 예산에서 먹어 다음 내용이 밀린다.

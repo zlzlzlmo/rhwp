@@ -267,9 +267,10 @@ fn japan_mixed_wrap_marks_stay_inside_their_cell() {
 ///
 /// 아래쪽으로 내보내던 회귀를 막기 위해 셀 content bottom에 그림을 붙이면, 이번에는
 /// 한/글이 남겨 둔 빈 문단 한 줄(1000 HU = 13.33px)을 덮어 PDF보다 아래로 내려간다.
-/// 한/글 PDF(물리 77쪽, 인쇄 쪽번호 55)의 두 그림 frame top은 각각 318.2px,
-/// 319.0px이다. 첫 그림과 둘째 그림의 세로 offset 차이(82 HU = 1.09px)를 보존한
-/// 값이며, 원본 HWP와 축소 fixture 양쪽에서 고정한다.
+/// 한/글 윈도 PDF(물리 77쪽, 인쇄 쪽번호 55)의 두 그림 frame top은 318.2px · 319.0px 이었다. 맥 한글 12.30 은 이 표
+/// (이어진 조각)를 본문 위 + 바깥 위 여백(141 HU = 1.88px)에 앉혀 쪽 괘선 전체가 1.4pt 아래다(맥 100.6·121.4·174.1pt ·
+/// rhwp 100.6·121.3·174.0pt) — 기대값을 맥 기준으로 옮긴다. 첫 그림과 둘째 그림의 세로 offset 차이(82 HU = 1.09px)는
+/// 그대로이며, 원본 HWP와 축소 fixture 양쪽에서 고정한다.
 #[test]
 fn japan_mixed_wrap_marks_reserve_the_blank_line_at_cell_bottom() {
     let images = page_cell_images();
@@ -284,7 +285,7 @@ fn japan_mixed_wrap_marks_reserve_the_blank_line_at_cell_bottom() {
         "일본 인증마크 셀에는 그림 두 장이 있어야 한다"
     );
 
-    let expected_tops = [318.2, 319.0];
+    let expected_tops = [320.1, 320.9];
     for (image, expected_top) in japan.iter().zip(expected_tops) {
         let (_, _, _, (_, image_y, _, _)) = image;
         assert!(

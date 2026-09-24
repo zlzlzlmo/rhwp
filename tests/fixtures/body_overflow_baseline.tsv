@@ -163,7 +163,10 @@ issue5828/landscape_rowbreak_bleed.hwp	12
 issue5866/memo_field_hwp5.hwp	1
 issue5870/empty_host_float_flow_advance.hwp	1
 issue5877/fragment_ghost_vrules.hwp	2
-issue5941/1480000-201900698-native-neartop-reset.hwp	20
+# 이어진 조각 바깥 위 여백(맥 한글 12.30 — 80168 이어진 쪽 +1.3pt · 1342000 415쪽·«노동인권» 379쪽 = 맥): 조각이 1.88px
+# 내려앉으면서 이미 행 컷 한계보다 실제 소비가 컸던 쪽(80250 5쪽 한계 936.0 < 소비 939.8)의 넘침이 드러났다 — 쪽 수·정렬은
+# 맥에 가까워졌다(1480000 203 → 204, 맥 205 · d≈0 3 → 14쪽). 행 컷 소비 과대가 남은 과제다.
+issue5941/1480000-201900698-native-neartop-reset.hwp	22
 issue5941/1490000-201600081_roadmap_research.hwp	47
 issue5941/3240179_efficiency_test_orgs.hwpx	4
 issue5966/1130000-202100008_franchise_review_report.hwp	8
@@ -236,7 +239,7 @@ task2105/rowbreak_table_declared_fits.hwpx	1
 task2137/156618554_petfood_press.hwp	1
 task2243/36386907_gyeoljae_sewoon.hwpx	1
 task2279/36417406_gyeoljae.hwpx	1
-task2287/1342000_edu_curriculum_map.hwp	83
+task2287/1342000_edu_curriculum_map.hwp	85
 task2322/19439117_gokseong_voucher_form.hwp	1
 task2430/1382000_domestic_violence_survey.hwp	1
 task3307/issue3307_outline_number.hwpx	2
@@ -259,3 +262,4 @@ issue6973/83818-appraisal-rules-amendment.hwpx	1
 # 컷 위치 자체는 tests/cases/issue_7234_scaffold_tall_table_row_split.rs 가 정본에 묶어 잠근다.
 issue7216/tall_table_before.hwpx	0
 issue7216/tall_table_after.hwpx	0
+80250_regulatory_analysis.hwp	1

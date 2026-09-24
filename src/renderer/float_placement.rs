@@ -1316,6 +1316,21 @@ fn para_has_non_whitespace_text(para: &Paragraph) -> bool {
         .any(|ch| ch > '\u{001F}' && ch != '\u{FFFC}' && !ch.is_whitespace())
 }
 
+/// 글 없는 host(빈 문단 · 공백만 든 문단)의 문단 기준 자리차지 표 — 쪽을 넘어 갈릴 때 맥 한글 12.30 은 이어진 조각을
+/// 본문 위 + 바깥 위 여백에 앉힌다(80168 이어진 쪽 40곳 가로선 +1.3pt = 141HU 일정).
+pub(crate) fn textless_para_topbottom_float(para: &Paragraph, table: &Table) -> bool {
+    // 1×1 표·칸에 표를 품은 표는 감싸개·쪽 조각·중첩 행 사다리 계약(#7095 · #5885 · #7243)이 따로 여백을 다룬다.
+    !(table.row_count == 1 && table.col_count == 1)
+        && !table.cells.iter().any(|cell| {
+            cell.paragraphs
+                .iter()
+                .any(|p| p.controls.iter().any(|c| matches!(c, Control::Table(_))))
+        })
+        && !table.common.treat_as_char
+        && is_para_topbottom_float(&table.common)
+        && !para_has_non_whitespace_text(para)
+}
+
 /// [#5922] native HWP5 CellBreak 자리차지 표의 연속 조각 바깥 여백 재개방 계약.
 ///
 /// 한글은 다쪽으로 이어지는 CellBreak 조각을 쪽마다 표 바깥 여백(상·하)을 다시

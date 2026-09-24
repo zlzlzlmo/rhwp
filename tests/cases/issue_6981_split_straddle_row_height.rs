@@ -306,7 +306,9 @@ fn completed_terminal_cut_does_not_allocate_an_empty_page() {
     let bytes = std::fs::read(TARGET).expect("committed curriculum fixture");
     let core = DocumentCore::from_bytes(&bytes).expect("parse curriculum fixture");
     let tree = core
-        .build_page_render_tree(377)
+        // 이어진 조각 바깥 위 여백(맥 한글 12.30)으로 앞 쪽이 둘 늘어 다음 구역 첫 쪽은 379 — 맥 PDF 도 379쪽(0-기반)에서
+        // «노동인권» 이 시작한다.
+        .build_page_render_tree(379)
         .expect("render successor page");
     fn body_has_text(node: &RenderNode) -> bool {
         if matches!(node.node_type, RenderNodeType::Body { .. }) {
