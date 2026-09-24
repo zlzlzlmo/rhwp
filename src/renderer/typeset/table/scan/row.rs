@@ -136,10 +136,16 @@ impl RowScanQuery<'_> {
 /// 본문 아래 − 1.00pt(±0.01)에 선다.
 pub(in crate::renderer::typeset) const EMPTY_BAND_CUT_BOTTOM_RESERVE_HU: i32 = 100;
 
+/// 빈 띠를 가른 뒤 남은 띠가 이보다 짧으면 다음 쪽에 그리지 않고 버린다(HWPUNIT). 맥 한글 12.30 실측: f5a3062b 5×2 표
+/// 3행 선언 높이 변형 — 남은 띠 4.2 · 7.7 · 10.0 · 12.2 · 12.5 · 12.8pt 는 버리고 12.9 · 13.0 · 13.2 · 15.2 · 18.2pt 부터
+/// 그린다. 경북 6×1 표(10pt 칸)도 12.8pt 버림 · 13.0pt 그림 — 칸 글자 크기와 무관한 상수다.
+pub(in crate::renderer::typeset) const EMPTY_BAND_MIN_CARRIED_TAIL_HU: i32 = 1280;
+
 /// 나눔(RowBreak) 표에서 선언 행 높이가 칸 글(줄 + 위아래 여백)보다 [`MIN_TOP_KEEP_PX`] 넘게 큰 행 — 글 아래 빈
 /// 띠가 행 높이를 정한다. 맥 한글 12.30 은 이런 행을 쪽 끝에서 띠째 가르고 남은 띠를 다음 쪽 첫머리에 그린다
-/// (경북 판로지원 6×1 표 빈 칸 386.9pt: 2쪽 188.6pt + 3쪽 198.2pt). 칸에 조판부호(그림·표·도형)가 있으면 띠가
-/// 비어 있다고 볼 수 없어 제외한다(간장 보고서 그림 8 — 글 밖 그림이 띠를 채운다).
+/// (경북 판로지원 6×1 표 빈 칸 386.9pt: 2쪽 188.6pt + 3쪽 198.2pt). 칸에 글 밖 개체(글자처럼 취급하지 않는 그림·
+/// 도형·표·수식)가 있으면 띠를 그 개체가 채울 수 있어 제외한다(간장 보고서 그림 8). 글자처럼 놓인 개체는 줄 높이에
+/// 들어 있어 띠와 무관하다(f5a3062b 3쪽 5×2 표 3행 — 칸 속 글자처럼 표 · 맥은 쪽 끝 − 100HU 에서 가른다).
 pub(in crate::renderer::typeset) fn row_is_declared_empty_band(
     mt: &MeasuredTable,
     table: &Table,
@@ -159,8 +165,24 @@ pub(in crate::renderer::typeset) fn row_is_declared_empty_band(
             c.total_content_height + c.padding_top + c.padding_bottom + MIN_TOP_KEEP_PX < row_h
         })
         && !table.cells.iter().any(|cell| {
-            cell.row as usize == r && cell.paragraphs.iter().any(|p| !p.controls.is_empty())
+            cell.row as usize == r
+                && cell
+                    .paragraphs
+                    .iter()
+                    .any(|p| p.controls.iter().any(control_floats_out_of_line))
         })
+}
+
+/// 글자처럼 취급하지 않는 개체 — 줄 밖에 떠서 칸 공간을 따로 차지한다.
+fn control_floats_out_of_line(control: &Control) -> bool {
+    match control {
+        Control::Picture(picture) => !picture.common.treat_as_char,
+        Control::Shape(shape) => !shape.common().treat_as_char,
+        Control::Table(table) => !table.common.treat_as_char,
+        Control::Equation(equation) => !equation.common.treat_as_char,
+        Control::Form(form) => !form.common.treat_as_char,
+        _ => false,
+    }
 }
 
 pub(in crate::renderer::typeset) fn retains_blank_tail(

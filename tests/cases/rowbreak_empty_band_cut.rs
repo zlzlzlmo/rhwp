@@ -18,8 +18,10 @@
 //! 자르는 자리의 1.00pt(100 HU)는 표 위치(−19.2·0·+24·+48pt)·칸 여백·쪽 아래 여백(15·15.1·20mm)을 바꾼
 //! 사본 아홉 개에서 모두 같았다(±0.01pt).
 //!
-//! 칸에 조판부호가 있으면 띠가 비어 있지 않다 — 간장 보고서 그림 8(글 밖 그림이 든 2×1 표)은 행을
-//! 가르지 않는다(맥 12쪽 정합).
+//! 칸에 글 밖 개체가 있으면 띠가 비어 있지 않다 — 간장 보고서 그림 8(글 밖 그림이 든 2×1 표)은 행을
+//! 가르지 않는다(맥 12쪽 정합). 글자처럼 놓인 칸 속 표는 줄 높이에 들어 띠와 무관하다 —
+//! `gyeongnam_thailand_mission_form.hwp` 3쪽 5×2 표 3행(칸 속 3×3 표 · 선언 374.5pt)을 맥은 쪽 끝 − 100HU(768.7pt)에서
+//! 가르고, 남은 띠 7.7pt 는 12.8pt(1280HU) 미만이라 버린다 — 4쪽은 4행부터다(맥 9쪽 · 종전 rhwp 10쪽).
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -27,6 +29,7 @@ use rhwp::renderer::render_tree::{RenderNode, RenderNodeType};
 use rhwp::wasm_api::HwpDocument;
 
 const SAMPLE: &str = "samples/rowbreak-empty-band/gyeongbuk_sales_support_form.hwp";
+const MISSION: &str = "samples/rowbreak-empty-band/gyeongnam_thailand_mission_form.hwp";
 const LIVER: &str =
     "samples/정책연구용역사업 중간진도보고서(살아있는 간장 기증자의 의학적 선별기준 연구).hwp";
 const PT_TO_PX: f64 = 96.0 / 72.0;
@@ -54,9 +57,8 @@ fn row_cells(root: &RenderNode, para_index: usize, row: u16) -> Vec<(f64, f64)> 
         RenderNodeType::Table(table) => table.para_index == Some(para_index),
         _ => false,
     }) {
-        let mut inner = Vec::new();
-        collect(table, &mut inner);
-        out.extend(inner.iter().filter_map(|node| match &node.node_type {
+        // 직계 칸만 — 칸 속 중첩 표의 칸은 행 번호가 다른 표의 것이다.
+        out.extend(table.children.iter().filter_map(|node| match &node.node_type {
             RenderNodeType::TableCell(cell) if cell.row == row => {
                 Some((node.bbox.y, node.bbox.y + node.bbox.height))
             }
@@ -115,4 +117,35 @@ fn a_cell_holding_a_picture_is_not_an_empty_band() {
         vec![11],
         "그림 8 의 그림 칸(문단 250 행 0)은 한 쪽에만 그려져야 한다"
     );
+}
+
+/// 칸 속 글자처럼 표가 든 빈 띠 행도 쪽 끝 − 100HU 에서 가르고, 12.8pt 미만의 남은 띠는 버린다.
+#[test]
+fn an_inline_table_band_row_splits_and_drops_a_short_tail() {
+    let doc = document(MISSION);
+    assert_eq!(
+        doc.page_count(),
+        9,
+        "맥 한글 12.30 은 9쪽이다(행 통째 이월이면 10쪽)"
+    );
+
+    let page3 = doc.build_page_render_tree(2).expect("3쪽").root;
+    let first = row_cells(&page3, 12, 2);
+    assert!(!first.is_empty(), "3행 첫 조각이 3쪽에 있어야 한다");
+    let cut = first
+        .iter()
+        .map(|(_, bottom)| *bottom)
+        .fold(f64::MIN, f64::max);
+    assert!(
+        (cut - 768.7 * PT_TO_PX).abs() <= 0.5,
+        "3행 조각 아래 {cut:.2}px 가 맥 768.7pt({:.2}px)와 다르다",
+        768.7 * PT_TO_PX
+    );
+
+    let page4 = doc.build_page_render_tree(3).expect("4쪽").root;
+    assert!(
+        row_cells(&page4, 12, 2).is_empty(),
+        "남은 띠 7.7pt 는 1280HU 미만이라 4쪽에 그리지 않는다"
+    );
+    assert!(!row_cells(&page4, 12, 3).is_empty(), "4쪽은 4행부터다");
 }

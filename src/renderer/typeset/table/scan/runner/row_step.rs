@@ -542,8 +542,17 @@ impl TypesetEngine {
                         r += 1;
                         end_row = r;
                         end_row_height_override = Some(rest);
-                        split_end_cut = res.end_cut;
-                        split_end_limit = rest;
+                        // 남은 띠가 짧으면 다음 쪽에 넘기지 않는다 — 행은 이 쪽에서 끝나고 다음 행이 쪽 첫머리에 선다.
+                        let tail = row_total - rest;
+                        if tail
+                            >= hwpunit_to_px(
+                                table::scan::row::EMPTY_BAND_MIN_CARRIED_TAIL_HU,
+                                self.dpi,
+                            )
+                        {
+                            split_end_cut = res.end_cut;
+                            split_end_limit = rest;
+                        }
                         return false;
                     }
                 }

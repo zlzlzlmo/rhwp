@@ -139,3 +139,5 @@ task2287/1342000_edu_curriculum_map.hwp	37
 정책연구용역사업 중간진도보고서(살아있는 간장 기증자의 의학적 선별기준 연구).hwp	53
 # 간장 보고서 hwpx 220 -> 222: 110쪽 끝 문단 넘침 두 줄이 꼬리말과 겹친다(body_overflow 기준선 같은 자리 주석).
 정책연구용역사업 중간진도보고서(살아있는 간장 기증자의 의학적 선별기준 연구).hwpx	222
+# 새 표본(빈 띠 행 시험): 1쪽 칸 둘의 좁은 칸 글 겹침 2건은 이 수정 전 빌드에서도 같다.
+rowbreak-empty-band/gyeongnam_thailand_mission_form.hwp	2
