@@ -201,6 +201,18 @@ impl TypesetEngine {
                         .whole_fragment_row_uses_measured_height(row_geometry_table, row)
                 {
                     cut.max(*painted)
+                } else if layout_engine
+                    .whole_fragment_row_uses_measured_height(row_geometry_table, row)
+                    && layout_engine.whole_row_has_overflowing_abnormal_padding(
+                        row_geometry_table,
+                        row,
+                        styles,
+                    )
+                {
+                    // 레이아웃이 측정 높이로 그리는 온전한 행에서 비정상 여백 칸의 내용이 선언을 넘으면, 여백을 줄인 컷
+                    // 높이가 아니라 그 측정 높이로 들인다(맥 한글 12.30: 80550 27쪽 pi208 1~3행 17.4pt = 내용 + 원 여백
+                    // — 컷 높이 15.2pt 로 들이면 한 행이 더 들어가 본문을 넘었다). 컷 회계(`cut_row_h`)는 그대로 둔다.
+                    cut.max(mt.row_heights[row])
                 } else {
                     *cut
                 }

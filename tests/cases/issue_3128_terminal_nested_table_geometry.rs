@@ -76,13 +76,11 @@ fn issue_3128_terminal_continuation_does_not_reserve_empty_host_tail() {
         continuation.bbox.height
     );
 
-    // ⚠ 알려진 어긋남: 한컴 2024·맥 한글 12.30 은 512px 인데 515.1 이다. 앞 빈 host 제목 표(1×1, 바깥 여백
-    // 566/566)는 바깥 위·아래 여백을 한 번씩 받는다(아래 여백이 두 번 들던 결함은 걷었다 — 522.6 → 515.1). 남은
-    // +3.1px 은 그 제목 칸을 적힌 높이 1300 보다 3.77px 크게 재는 결함(줄 없는 칸 한 줄 em + 칸 세로 여백)이다.
-    // 열린 과제 — 고치면 512 로 되돌린다.
+    // 앞 빈 host 제목 표(1×1, 바깥 여백 566/566)는 앵커 + 바깥 위 여백에 앉아 선언 높이 1300 만큼 차지하고
+    // 바깥 아래 여백을 한 번 흘린다 — 한컴 2024·맥 한글 12.30 이 같은 512px 다.
     assert!(
-        (direct_benefit.bbox.y - 515.1).abs() <= 2.0,
-        "p34 direct-benefit table: known +3.1px over the Hancom 2024 y=512px oracle; got y={:.1}",
+        (direct_benefit.bbox.y - 512.0).abs() <= 1.0,
+        "p34 direct-benefit table must match the Hancom 2024 y=512px oracle; got y={:.1}",
         direct_benefit.bbox.y
     );
 }

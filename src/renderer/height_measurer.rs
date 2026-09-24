@@ -3045,7 +3045,13 @@ impl HeightMeasurer {
                 // 초과하는 기존 보존 케이스(aift/KTX)는 조건 미충족으로 불변.
                 // RowBreak(행 단위 쪽나눔) 표는 TAC 여부와 무관하게 clamp 제외 —
                 // 분할 배치가 trailing 포함 측정에 정합 (rowbreak-problem-pages p11~13).
-                let cell_last_trailing_ls = if !has_nested_table_in_cell {
+                // 칸 안에 중첩 표가 있어도 마지막 문단이 평문이면 그 줄의 끝 줄 간격은 같은 규칙이다(맥 한글 12.30:
+                // consent-checkboxes 1×1 칸 — 문단 41 · 중첩 표 둘 · 마지막 줄 끝 간격 600HU 를 빼야 선언 78678 과 같다).
+                let last_para_is_plain = cell
+                    .paragraphs
+                    .last()
+                    .is_some_and(|p| p.controls.is_empty());
+                let cell_last_trailing_ls = if !has_nested_table_in_cell || last_para_is_plain {
                     self.cell_last_line_trailing_px(cell, table, styles, cell_inner_width)
                 } else {
                     0.0
@@ -3091,6 +3097,25 @@ impl HeightMeasurer {
                         self.dpi,
                     ) {
                     cell_h_px
+                } else {
+                    required_height
+                };
+                // 한 행짜리 표는 표 선언 높이가 곧 행 선언이다 — 글(여백 뺀 내용)이 그 안에 들면 행을 선언 높이로 두고
+                // 칸 여백은 넘쳐도 된다(칸 세로 정렬이 글을 가운데에 둔다). 맥 한글 12.30: 76076 33·34쪽 제목 표 1×1
+                // (표 1300HU · 칸 282HU · 13pt 한 줄 · 여백 141/141) 괘선 간격이 선언 13pt — 여백을 얹으면 15.83pt.
+                let table_declared_row_px =
+                    if depth == 0 && table.row_count == 1 && table.common.height > 0 {
+                        hwpunit_to_px(table.common.height as i32, self.dpi)
+                    } else {
+                        0.0
+                    };
+                let required_height = if table_declared_row_px > cell_h_px
+                    && required_height > table_declared_row_px
+                    && content_height <= table_declared_row_px + CELL_TRAILING_CLAMP_ROUNDING_PX
+                    && cell.text_direction == 0
+                    && !has_nested_table_in_cell
+                {
+                    table_declared_row_px
                 } else {
                     required_height
                 };

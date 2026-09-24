@@ -241,7 +241,11 @@ task2322/19439117_gokseong_voucher_form.hwp	1
 task2430/1382000_domestic_violence_survey.hwp	1
 task3307/issue3307_outline_number.hwpx	2
 정책연구용역사업 중간진도보고서(살아있는 간장 기증자의 의학적 선별기준 연구).hwp	2
-정책연구용역사업 중간진도보고서(살아있는 간장 기증자의 의학적 선별기준 연구).hwpx	1
+# 간장 보고서 hwpx 1 -> 2: 표 29(8x3, 칸 선언 282HU · 여백 1020HU)의 온전한 행을 측정 높이(원 여백)로 들이자
+# 109쪽 39px 표 조각 넘침이 사라지고 110쪽 끝 문단(쪽 초기화 앞 줄) 두 줄이 8·35px 넘친다. 맥 한글 12.30 은
+# 그 표의 3행을 다음 쪽으로 보낸다(hwp 판 106쪽 = 행 0~2) — 비끝 조각 한계(본문 − 바깥 아래 여백 − 100HU)가
+# 아직 없어서 생긴 자리 이동이다. 맥 행 높이(68.2/100.2/68.2pt)는 측정 높이와 같다.
+정책연구용역사업 중간진도보고서(살아있는 간장 기증자의 의학적 선별기준 연구).hwpx	2
 한글문서파일형식_5.0_revision1.3.hwp	8
 # New fixture: devel 37bd46a72f9fd9ffd709e35244df79c00e789780 measured count; no existing ceiling raised.
 issue6924/148751598-briefing.hwp	0

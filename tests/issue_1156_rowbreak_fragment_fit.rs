@@ -2,8 +2,12 @@
 //! makes the whole fragment exceed the page.
 //!
 //! Regression sample: `samples/kps-ai.hwp`, page 37. Paragraph 329 is a large
-//! 32x2 RowBreak table. The first fragment can fit rows 0..16, but keeping a
-//! tiny slice of row 16 overflows the page and should be deferred to page 38.
+//! 32x2 RowBreak table. Keeping a tiny slice of the next row overflows the page
+//! and should be deferred to page 38.
+//!
+//! 맥 한글 12.30(`up-kpsai.pdf`) 37쪽 마지막 행 경계는 763.1pt 로 행 0..15 에서 끝나고 38쪽이 행 15 부터
+//! 잇는다. 종전 핀(0..16)은 비정상 세로 여백 칸(여백 합 ≥ 칸 선언)을 줄인 여백의 컷 높이로 들여 한 행을
+//! 더 넣던 값이다 — 그 행은 레이아웃이 측정 높이(원 여백)로 그려 쪽 바닥 787.5pt 까지 내려갔다.
 
 use std::fs;
 use std::path::Path;
@@ -27,7 +31,7 @@ fn kps_ai_page37_defers_overflowing_split_row_slice() {
 
     let page37 = page_dump(sample, 36);
     assert!(
-        page37.contains("PartialTable   pi=329 ci=0  rows=0..16"),
+        page37.contains("PartialTable   pi=329 ci=0  rows=0..15"),
         "page 37 should end at the last fully fitting row:\n{page37}"
     );
     assert!(
@@ -37,8 +41,8 @@ fn kps_ai_page37_defers_overflowing_split_row_slice() {
 
     let page38 = page_dump(sample, 37);
     assert!(
-        page38.contains("PartialTable   pi=329 ci=0  rows=16..32  cont=true"),
-        "page 38 should continue from row 16:\n{page38}"
+        page38.contains("PartialTable   pi=329 ci=0  rows=15..32  cont=true"),
+        "page 38 should continue from row 15:\n{page38}"
     );
 }
 

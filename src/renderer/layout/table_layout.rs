@@ -4860,6 +4860,19 @@ impl LayoutEngine {
         cell: &crate::model::table::Cell,
         table: &crate::model::table::Table,
     ) -> (f64, f64, f64, f64) {
+        let (pad_left, pad_right, pad_top, pad_bottom) =
+            self.resolve_cell_padding_axes(cell, table);
+        Self::scale_abnormal_vertical_padding(
+            cell, pad_left, pad_right, pad_top, pad_bottom, self.dpi,
+        )
+    }
+
+    /// 축별 규칙으로 고른 안 여백(px) — 비정상 세로 여백 축소 전.
+    fn resolve_cell_padding_axes(
+        &self,
+        cell: &crate::model::table::Cell,
+        table: &crate::model::table::Table,
+    ) -> (f64, f64, f64, f64) {
         // HWP 스펙: aim(apply_inner_margin)=true → cell.padding,
         //           aim=false → table.padding 우선.
         // 한컴은 aim=false일 때 cell.padding 원값을 파일에 보존하더라도 렌더에는 쓰지 않는다.
@@ -4915,13 +4928,64 @@ impl LayoutEngine {
         } else {
             hwpunit_to_px(table.padding.bottom as i32, self.dpi)
         };
+        (pad_left, pad_right, pad_top, pad_bottom)
+    }
+
+    /// 온전한 행의 어떤 칸이 «비정상 세로 여백»(여백 합 ≥ 칸 선언)인데 내용이 선언을 넘는가. 측정기는 이런 칸을
+    /// 내용 + 원 여백으로 키우고 레이아웃은 그 측정 높이로 그린다 — 여백을 줄인 컷 높이로는 예약이 모자란다.
+    pub(crate) fn whole_row_has_overflowing_abnormal_padding(
+        &self,
+        table: &crate::model::table::Table,
+        row: usize,
+        styles: &ResolvedStyleSet,
+    ) -> bool {
+        table
+            .cells
+            .iter()
+            .filter(|cell| cell.row as usize == row && cell.row_span == 1)
+            .any(|cell| {
+                if cell.height >= 0x8000_0000 {
+                    return false;
+                }
+                let declared = hwpunit_to_px(cell.height as i32, self.dpi);
+                let (_, _, raw_top, raw_bottom) = self.resolve_cell_padding_unscaled(cell, table);
+                crate::model::table::Cell::vertical_padding_is_abnormal(
+                    declared,
+                    raw_top + raw_bottom,
+                ) && self
+                    .cell_units(cell, table, styles)
+                    .iter()
+                    .map(|unit| unit.height)
+                    .sum::<f64>()
+                    > declared
+            })
+    }
+
+    /// 저장된 원 안 여백 — 비정상 세로 여백 축소(#501) 전 값. 측정기(`height_measurer`)는 칸 내용이 선언 높이를
+    /// 넘으면 이 원 여백으로 행을 키운다 — 컷 회계가 같은 행을 재려면 같은 값을 써야 한다.
+    pub(crate) fn resolve_cell_padding_unscaled(
+        &self,
+        cell: &crate::model::table::Cell,
+        table: &crate::model::table::Table,
+    ) -> (f64, f64, f64, f64) {
+        self.resolve_cell_padding_axes(cell, table)
+    }
+
+    fn scale_abnormal_vertical_padding(
+        cell: &crate::model::table::Cell,
+        pad_left: f64,
+        pad_right: f64,
+        pad_top: f64,
+        pad_bottom: f64,
+        dpi: f64,
+    ) -> (f64, f64, f64, f64) {
         // [Task #501] 한컴 방어 로직 모방 — cell.padding.top + bottom 합산이
         // cell.height 자체를 초과하면 (mel-001 p2 셀[21]: pad=1700 HU 두 축, h=1280 HU)
         // 한컴은 자체 가드로 cell 안에 콘텐츠가 들어가도록 처리. cell.height 의 절반까지
         // 비례 축소 (HWP 스펙 외 한컴 동작 모방).
         // 발동 기준은 측정(height_measurer)과 공유한다 (#5751).
         let (pad_top, pad_bottom) = if cell.height < 0x80000000 {
-            let cell_h_px = hwpunit_to_px(cell.height as i32, self.dpi);
+            let cell_h_px = hwpunit_to_px(cell.height as i32, dpi);
             let total_v_pad = pad_top + pad_bottom;
             if crate::model::table::Cell::vertical_padding_is_abnormal(cell_h_px, total_v_pad) {
                 let max_v_pad = cell_h_px * 0.5;
