@@ -58,12 +58,17 @@ fn row_cells(root: &RenderNode, para_index: usize, row: u16) -> Vec<(f64, f64)> 
         _ => false,
     }) {
         // 직계 칸만 — 칸 속 중첩 표의 칸은 행 번호가 다른 표의 것이다.
-        out.extend(table.children.iter().filter_map(|node| match &node.node_type {
-            RenderNodeType::TableCell(cell) if cell.row == row => {
-                Some((node.bbox.y, node.bbox.y + node.bbox.height))
-            }
-            _ => None,
-        }));
+        out.extend(
+            table
+                .children
+                .iter()
+                .filter_map(|node| match &node.node_type {
+                    RenderNodeType::TableCell(cell) if cell.row == row => {
+                        Some((node.bbox.y, node.bbox.y + node.bbox.height))
+                    }
+                    _ => None,
+                }),
+        );
     }
     out
 }
