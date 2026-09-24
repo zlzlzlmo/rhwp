@@ -118,6 +118,10 @@ pub(super) fn prepare(
         })
         .flatten()
         .map(|height| hwpunit_to_px(height, dpi));
+    // 쪽 끝 적합에서 뺄 호스트 문단 아래 간격 — 한/글은 표 줄을 줄 바닥으로 맞춰 본다(`typeset_tac_table` 의 같은
+    // 이름 값과 같은 규칙 · 맥 한글 12.30 창업도약패키지 채움 4쪽 «4. 기업 구성 (Team)»). 호스트 문단 높이
+    // (`fmt.height_for_fit`)를 그대로 쓴 갈래만 그 몫을 들고 있다.
+    let mut host_spacing_after_px = 0.0;
     let height_for_fit = if let Some(height) = owned_single_tac_frame {
         let base = height + fmt.spacing_before;
         session_grown_tac_total.map_or(base, |grown| base.max(grown))
@@ -155,6 +159,9 @@ pub(super) fn prepare(
             })
             .fold(0.0f64, f64::max);
         let base = first_line_tac_height.unwrap_or(fmt.height_for_fit) + tac_outer_margin_px;
+        if first_line_tac_height.is_none() && session_grown_tac_total.is_none_or(|grown| grown <= base) {
+            host_spacing_after_px = fmt.spacing_after;
+        }
         session_grown_tac_total.map_or(base, |grown| base.max(grown))
     } else {
         fmt.total_height
@@ -222,9 +229,13 @@ pub(super) fn prepare(
         None
     };
     let height_for_fit = pre_reset_height_for_fit.unwrap_or(height_for_fit);
+    if pre_reset_height_for_fit.is_some() {
+        host_spacing_after_px = 0.0;
+    }
 
     // 넘치면 flush (단일 TAC 표만)
-    let advance_before_place = page.current_height + height_for_fit > available_height()
+    let advance_before_place = page.current_height + height_for_fit - host_spacing_after_px
+        > available_height()
         && !page.current_items.is_empty()
         && has_tac
         && tac_count <= 1

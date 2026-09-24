@@ -84,21 +84,10 @@ impl TypesetEngine {
         //      들어가지 않음
         //
         // Stage 1 진단 로그 분석으로 false positive 41건 → 1건(pi=83)으로 축소.
-        // page_top_vpos 는 current_items 의 첫 item para_index 를 통해 즉시 계산
+        // page_top_vpos 는 current_items 의 첫 item 으로 즉시 계산한다(`page_top_stored_vpos`).
         // (TypesetState 필드 추적은 typeset_paragraph 내부 페이지 flush 와 동기 안 됨).
         if !st.current_items.is_empty() && st.wrap_around_cs < 0 && st.col_count == 1 {
-            let page_first_para_idx = st.current_items.iter().find_map(|item| match item {
-                PageItem::FullParagraph { para_index } => Some(*para_index),
-                PageItem::PartialParagraph { para_index, .. } => Some(*para_index),
-                PageItem::Table { para_index, .. } => Some(*para_index),
-                PageItem::PartialTable { para_index, .. } => Some(*para_index),
-                PageItem::Shape { para_index, .. } => Some(*para_index),
-                PageItem::EndnoteSeparator { .. } => None,
-            });
-            let page_top_vpos_opt = page_first_para_idx
-                .and_then(|pi| paragraphs.get(pi))
-                .and_then(|p| p.line_segs.first())
-                .map(|s| s.vertical_pos);
+            let page_top_vpos_opt = page_top_stored_vpos(&st.current_items, paragraphs);
             if let (Some(first_seg), Some(page_top_vpos)) =
                 (para.line_segs.first(), page_top_vpos_opt)
             {
@@ -155,6 +144,34 @@ impl TypesetEngine {
             }
         }
     }
+}
+
+/// 이 쪽 머리의 저장 vpos — 첫 실 항목의 **이 쪽 첫 줄**이다. 앞 쪽에서 이어진 문단 조각은 원 문단의 첫 줄이 아니라
+/// 조각 시작 줄(`start_line`)이고, 앞 쪽에서 이어진 표 조각은 줄 기준 vpos 가 없어 `None`(판정 보류)이다 — 원
+/// 문단·표의 첫 줄로 잡으면 쪽 머리가 앞 쪽에 있어 이 쪽 문단이 한 쪽만큼 넘친 것으로 읽힌다(#1659 리뷰 ·
+/// 창업도약패키지 채움 3-2-2).
+pub(super) fn page_top_stored_vpos(items: &[PageItem], paragraphs: &[Paragraph]) -> Option<i32> {
+    items
+        .iter()
+        .find(|item| !matches!(item, PageItem::EndnoteSeparator { .. }))
+        .and_then(|item| match item {
+            PageItem::FullParagraph { para_index }
+            | PageItem::Table { para_index, .. }
+            | PageItem::Shape { para_index, .. } => paragraphs
+                .get(*para_index)
+                .and_then(|p| p.line_segs.first())
+                .map(|s| s.vertical_pos),
+            PageItem::PartialParagraph {
+                para_index,
+                start_line,
+                ..
+            } => paragraphs
+                .get(*para_index)
+                .and_then(|p| p.line_segs.get(*start_line))
+                .map(|s| s.vertical_pos),
+            // 줄 기준 vpos 없음 → 판정 보류.
+            PageItem::PartialTable { .. } | PageItem::EndnoteSeparator { .. } => None,
+        })
 }
 
 /// 다음 문단이 이 쪽에 세워야 하는 첫 조각의 높이(마지막 줄 뒤 간격 제외) — 문단 보호면 통째, 외톨이줄 보호면

@@ -208,34 +208,10 @@ impl TypesetEngine {
                 //   page_top_vpos 기준 vpos 판정을 AND 로 더해, height·vpos 둘 다 fit 일 때만
                 //   emit. placement 가 height 기반인 다단/wrap 에선 vpos 판정을 생략(true).
                 let vpos_fits = if st.col_count == 1 && st.wrap_around_cs < 0 {
-                    // 페이지 첫 실 item 의 top vpos. PartialParagraph continuation 은 원
-                    //   문단의 첫 줄이 아니라 fragment 시작 줄(start_line)의 vpos 가 페이지
-                    //   상단이다 → line_segs[start_line] 사용. 줄 기준 vpos 가 없는 항목
-                    //   (PartialTable continuation)은 None 으로 두어 vpos 판정을 보류(height
-                    //   fit 에 위임) — 잘못된 baseline 으로 skip/emit 오판 방지(#1659 리뷰).
+                    // 페이지 첫 실 item 의 top vpos(`page_top_stored_vpos` — 이어진 조각은 조각 시작 줄,
+                    //   이어진 표는 None 으로 판정 보류해 height fit 에 위임 · #1659 리뷰).
                     let page_top_vpos =
-                        st.current_items
-                            .iter()
-                            .find(|item| !matches!(item, PageItem::EndnoteSeparator { .. }))
-                            .and_then(|item| match item {
-                                PageItem::FullParagraph { para_index }
-                                | PageItem::Table { para_index, .. }
-                                | PageItem::Shape { para_index, .. } => paragraphs
-                                    .get(*para_index)
-                                    .and_then(|p| p.line_segs.first())
-                                    .map(|s| s.vertical_pos),
-                                PageItem::PartialParagraph {
-                                    para_index,
-                                    start_line,
-                                    ..
-                                } => paragraphs
-                                    .get(*para_index)
-                                    .and_then(|p| p.line_segs.get(*start_line))
-                                    .map(|s| s.vertical_pos),
-                                // 줄 기준 vpos 없음 → 판정 보류.
-                                PageItem::PartialTable { .. }
-                                | PageItem::EndnoteSeparator { .. } => None,
-                            });
+                        super::heading::page_top_stored_vpos(&st.current_items, paragraphs);
                     match (para.line_segs.last(), page_top_vpos) {
                         (Some(last_seg), Some(top)) => {
                             let body_h_hu = crate::renderer::px_to_hwpunit(

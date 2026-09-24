@@ -4171,6 +4171,11 @@ impl TypesetEngine {
         if intra_para_reset && !st.current_items.is_empty() {
             st.advance_column_or_new_page();
         }
+        // 쪽 끝 적합에서 뺄 호스트 문단 아래 간격 — 호스트 문단의 `height_for_fit` 을 그대로 쓰는 단일 TAC 만 그 몫을
+        // 높이에 들고 있다. 한/글은 표 줄을 **줄 바닥**으로 맞춰 보고 문단 아래 간격은 넣지 않는다(맥 한글 12.30:
+        // 창업도약패키지 채움 4쪽 «4. 기업 구성 (Team)» 제목 표 — 상자 737.9~768.1pt · 본문 바닥 771.0pt, 아래 간격
+        // 8px 을 넣으면 넘친다). 높이를 실측으로 바꾸는 갈래에서는 0 으로 되돌린다.
+        let mut host_spacing_after_px = 0.0;
         // 다중 TAC 표: LINE_SEG 기반 개별 높이 계산
         let table_height = if tac_count > 1 {
             // [#2322] 마지막 TAC 판정은 개수 기반(prior_tac) — tac_seg_idx 는
@@ -4264,6 +4269,7 @@ impl TypesetEngine {
                 .sum::<f64>()
         } else if fmt.total_height > 0.0 {
             // 단일 TAC: 호스트 문단의 height_for_fit 사용
+            host_spacing_after_px = fmt.spacing_after;
             fmt.height_for_fit
         } else {
             ft.total_height
@@ -4274,6 +4280,7 @@ impl TypesetEngine {
         // 재검증). 측정 높이보다 작으면 측정 높이로 보정한다. 저장 lineseg 보유
         // 문서는 불변 (#2237 측정-저장 발산 축과 격리).
         let table_height = if para.line_segs.is_empty() && table_height + 0.5 < ft.total_height {
+            host_spacing_after_px = 0.0;
             ft.total_height
         } else {
             table_height
@@ -4290,6 +4297,7 @@ impl TypesetEngine {
             && table_height > ft.total_height * 2.0
             && hwpunit_to_px(table.common.height as i32, self.dpi) > ft.total_height * 2.0
         {
+            host_spacing_after_px = 0.0;
             ft.total_height
         } else {
             table_height
@@ -4353,6 +4361,7 @@ impl TypesetEngine {
             }
             st.mark_vpos_ladder_dirty();
             st.record_ladder_band_table((para_idx, ctrl_idx));
+            host_spacing_after_px = 0.0;
             ft.total_height
         } else {
             table_height
@@ -4407,6 +4416,7 @@ impl TypesetEngine {
         // 그림 회피로 확정한 물리 줄은 저장 host 줄높이가 작아도 축소되지 않는다.
         // 렌더만 아래로 옮기고 fit에는 짧은 host 높이를 쓰면 쪽 하단을 넘는다.
         let table_height = if side_wrap_placement.is_some() {
+            host_spacing_after_px = 0.0;
             table_height.max(band_height)
         } else {
             table_height
@@ -4456,7 +4466,9 @@ impl TypesetEngine {
             && !same_para_already_placed
             && st.current_height >= available * STORED_VPOS_REWIND_MIN_FILL
             && stored_vpos_rewinds(prev_stored_vpos, para);
-        if (st.current_height + clearance + table_height + tac_trailing_spacing_for_fit > available
+        if (st.current_height + clearance + table_height - host_spacing_after_px
+            + tac_trailing_spacing_for_fit
+            > available
             && (!fits_after_overlay_shapes || side_wrap_placement.is_some())
             && (!saved_tac_table_bottom_fits || side_wrap_placement.is_some())
             && !st.current_items.is_empty())
@@ -7511,6 +7523,87 @@ mod tests {
         ));
     }
 
+    /// 쪽 끝 글자처럼 표의 적합은 **표 줄 바닥**으로 잰다 — 호스트 문단 아래 간격은 넣지 않는다(맥 한글 12.30:
+    /// 창업도약패키지 채움 4쪽 «4. 기업 구성 (Team)» 제목 표 — 상자 737.9~768.1pt · 본문 바닥 771.0pt, 아래 간격 8px 을
+    /// 넣으면 넘쳐 rhwp 만 다음 쪽으로 보냈다). 저장 줄이 쪽 좌표와 어긋나 저장 경계 특례가 없는 자리다.
+    #[test]
+    fn tac_table_at_page_bottom_fits_without_its_spacing_after() {
+        let engine = TypesetEngine::with_default_dpi();
+        let mut styles = ResolvedStyleSet::default();
+        styles
+            .para_styles
+            .push(crate::renderer::style_resolver::ResolvedParaStyle::default());
+        styles
+            .para_styles
+            .push(crate::renderer::style_resolver::ResolvedParaStyle {
+                spacing_after: hwpunit_to_px(1200, DEFAULT_DPI),
+                ..Default::default()
+            });
+        let page_def = a4_page_def();
+        let col_def = ColumnDef::default();
+        let layout = PageLayoutInfo::from_page_def(&page_def, &col_def, DEFAULT_DPI);
+        let body_height_hu =
+            crate::renderer::px_to_hwpunit(layout.available_body_height(), DEFAULT_DPI);
+        let line_height = 3285;
+        // 표 줄 바닥까지는 100HU 남고, 아래 간격(1200HU)을 넣으면 넘친다.
+        let lead_height = body_height_hu - line_height - 100;
+        let paras = vec![
+            Paragraph {
+                text: "lead".to_string(),
+                line_segs: vec![LineSeg {
+                    vertical_pos: 0,
+                    line_height: lead_height,
+                    text_height: lead_height,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            Paragraph {
+                para_shape_id: 1,
+                controls: vec![Control::Table(Box::new(crate::model::table::Table {
+                    attr: 1,
+                    row_count: 1,
+                    col_count: 1,
+                    common: crate::model::shape::CommonObjAttr {
+                        treat_as_char: true,
+                        text_wrap: crate::model::shape::TextWrap::TopAndBottom,
+                        height: 3005,
+                        ..Default::default()
+                    },
+                    outer_margin_top: 140,
+                    outer_margin_bottom: 140,
+                    ..Default::default()
+                }))],
+                // 저장 줄은 앞 쪽까지 누적된 좌표(쪽마다 되돌지 않는 사다리) — 저장 경계 특례가 안 걸린다.
+                line_segs: vec![LineSeg {
+                    vertical_pos: body_height_hu * 3,
+                    line_height,
+                    text_height: line_height,
+                    line_spacing: 960,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+        ];
+        // 문단 모양(아래 간격)은 조합 문단의 `para_style_id` 로 찾는다.
+        let composed: Vec<ComposedParagraph> = paras
+            .iter()
+            .map(crate::renderer::composer::compose_paragraph)
+            .collect();
+        let result = engine.typeset_section(
+            &paras,
+            &composed,
+            &styles,
+            &page_def,
+            &col_def,
+            0,
+            &[],
+            false,
+            &std::collections::HashSet::new(),
+        );
+        assert_eq!(result.pages.len(), 1, "표 줄 바닥이 들어가면 이 쪽에 선다");
+    }
+
     /// [Task #1363 v3 Stage 2] scratch 측정 부작용 격리 회귀 가드.
     ///
     /// `measure_endnote_para_advance` 는 매 호출 `LayoutEngine::new()` 로 독립 인스턴스를
@@ -7733,6 +7826,79 @@ mod tests {
             .collect();
         assert_eq!(page0_paras, vec![0], "1페이지엔 para0 만");
         assert_eq!(page1_paras, vec![1, 2], "2페이지엔 para1,2");
+    }
+
+    /// [Task #404] 제목-외톨이 보정은 **이 쪽 첫 줄의** 저장 vpos 를 쪽 머리로 잡는다. 앞 쪽에서 이어진 조각이면
+    /// 원 문단의 첫 줄이 아니라 조각 시작 줄이다(#1659 `tail.rs` 와 같은 규칙) — 원 문단 첫 줄로 잡으면 쪽 머리가
+    /// 한 쪽만큼 앞서 멀쩡한 제목이 vpos 넘침으로 읽혀 다음 쪽으로 밀린다(창업도약패키지 채움: 앞 쪽에서 이어진 표
+    /// 뒤 «- 3-2-2 …» 줄이 다음 쪽으로 가 «3-2-2. 향후 자금 조달계획» 이 쪽 끝에 홀로 남았다 — 맥 한글 12.30 은 그
+    /// 줄과 다음 표까지 이 쪽에 둔다).
+    #[test]
+    fn heading_keep_reads_the_page_top_from_the_continued_fragment() {
+        let engine = TypesetEngine::with_default_dpi();
+        let styles = ResolvedStyleSet::default();
+        let lines = |count: i32, from: i32| -> Vec<LineSeg> {
+            (0..count)
+                .map(|i| LineSeg {
+                    vertical_pos: from + i * 5000,
+                    line_height: 5000,
+                    ..Default::default()
+                })
+                .collect()
+        };
+        // 앞 쪽을 넘어 다음 쪽으로 이어지는 긴 문단(16줄) → 짧은 제목 → 한 쪽 가까운 큰 문단(13줄).
+        let paras = vec![
+            Paragraph {
+                text: "긴 문단".to_string(),
+                line_segs: lines(16, 0),
+                ..Default::default()
+            },
+            Paragraph {
+                text: "제목".to_string(),
+                line_segs: lines(1, 80000),
+                ..Default::default()
+            },
+            Paragraph {
+                text: "큰 문단".to_string(),
+                line_segs: lines(13, 85000),
+                ..Default::default()
+            },
+        ];
+        let result = engine.typeset_section(
+            &paras,
+            &[],
+            &styles,
+            &a4_page_def(),
+            &ColumnDef::default(),
+            0,
+            &[],
+            false,
+            &std::collections::HashSet::new(),
+        );
+        let page_of = |para: usize| {
+            result.pages.iter().position(|page| {
+                page.column_contents
+                    .iter()
+                    .flat_map(|cc| cc.items.iter())
+                    .any(|it| it.para_index() == para)
+            })
+        };
+        let continued_on = result
+            .pages
+            .iter()
+            .rposition(|page| {
+                page.column_contents
+                    .iter()
+                    .flat_map(|cc| cc.items.iter())
+                    .any(|it| it.para_index() == 0)
+            })
+            .expect("긴 문단");
+        assert!(continued_on > 0, "긴 문단은 다음 쪽으로 이어져야 시험이 성립한다");
+        assert_eq!(
+            page_of(1),
+            Some(continued_on),
+            "제목은 이어진 조각과 같은 쪽에 선다 — 쪽 머리는 조각 시작 줄이다"
+        );
     }
 
     // ========================================================
