@@ -1501,6 +1501,20 @@ fn is_single_noninline_picture_table(table: &crate::model::table::Table) -> bool
         })
 }
 
+/// native HWP5 의 빈 host 1×1 나눔(RowBreak) 자리차지 표 — 흐름이 «선언 높이 + 위·아래 바깥 여백»과 «그린 바닥 +
+/// 아래 바깥 여백» 중 큰 쪽으로 가는 형상(76076 p33). 호출부가 빈 host · Square 형제 아님을 따로 본다.
+fn native_empty_single_cell_rowbreak_flow(
+    hwp5_stored_pagination: bool,
+    table: &crate::model::table::Table,
+) -> bool {
+    hwp5_stored_pagination
+        && is_para_topbottom_float(&table.common)
+        && matches!(table.page_break, TablePageBreak::RowBreak)
+        && table.row_count == 1
+        && table.col_count == 1
+        && table.cells.len() == 1
+}
+
 fn is_two_row_picture_caption_rowbreak_table(table: &crate::model::table::Table) -> bool {
     if table.row_count != 2
         || table.col_count != 1
@@ -11269,15 +11283,12 @@ impl LayoutEngine {
                 // this source contract deliberately narrower than generic
                 // empty floats: Square sibling lanes and stored HWPX layout
                 // have separate coordinate contracts.
-                let empty_rowbreak_flow_end = if self.profile.get().hwp5_stored_pagination_layout()
-                    && is_current_empty_para_float
+                let empty_rowbreak_flow_end = if is_current_empty_para_float
                     && !is_current_empty_square_sibling_float
-                    && is_para_topbottom_float(&t.common)
-                    && matches!(t.page_break, TablePageBreak::RowBreak)
-                    && t.row_count == 1
-                    && t.col_count == 1
-                    && t.cells.len() == 1
-                {
+                    && native_empty_single_cell_rowbreak_flow(
+                        self.profile.get().hwp5_stored_pagination_layout(),
+                        t,
+                    ) {
                     let declared_height_px = hwpunit_to_px(t.common.height as i32, self.dpi);
                     let outer_top_px = hwpunit_to_px(t.outer_margin_top as i32, self.dpi);
                     let outer_bottom_px = hwpunit_to_px(t.outer_margin_bottom as i32, self.dpi);
@@ -12605,7 +12616,15 @@ impl LayoutEngine {
                     };
                     // 한/글 저장 줄이 없는 host(rhwp 가 짠 줄 · 줄 자체가 없는 기계생성 문서) — 맥 한글 12.30: 76076 규제영향
                     // 분석서(줄 없는 문서) 82쪽 중 21쪽이 아래 여백을 더해야 맞고 2쪽만 나빠진다.
-                    let rhwp_composed_host = crate::renderer::para_has_no_stored_line_segs(para);
+                    // 1×1 나눔 표의 빈 host 흐름 계약(`empty_rowbreak_flow_end`)은 이미 아래 여백까지 흘렀다 — 또 더하면
+                    // 여백이 두 번 든다(맥 한글 12.30: 80168 29쪽 pi223 표 뒤 1.41pt, rhwp 2.8pt).
+                    let rhwp_composed_host = crate::renderer::para_has_no_stored_line_segs(para)
+                        && !(!is_current_empty_square_sibling_float
+                            && matches!(para.controls.get(control_index), Some(Control::Table(table))
+                            if native_empty_single_cell_rowbreak_flow(
+                                self.profile.get().hwp5_stored_pagination_layout(),
+                                table,
+                            )));
                     if let Some(advance) = stored_flow_advance {
                         global_y_before + advance
                     } else if is_native_picture_caption_float {
