@@ -1291,7 +1291,11 @@ impl DocumentCore {
                 local_file_version: 1,
                 // 한컴 기본값 0x0008_0000 — 글상자가 실재하면 글상자 비트 0x0100_0000을 더한다(`hwpx_to_hwp.rs`와 같은 규칙).
                 // 없으면 한컴 맥 12.30이 새 글상자를 넣은 HWP5를 «파일이 손상»으로 거부한다(빈 글상자·글자처럼·어울림 전부 실측).
-                flip: if has_textbox { 0x0108_0000 } else { 0x0008_0000 },
+                flip: if has_textbox {
+                    0x0108_0000
+                } else {
+                    0x0008_0000
+                },
                 rotation_center: crate::model::Point {
                     x: (width / 2) as i32,
                     y: (height / 2) as i32,

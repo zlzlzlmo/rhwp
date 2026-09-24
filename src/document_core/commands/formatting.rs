@@ -2324,7 +2324,10 @@ impl DocumentCore {
         use crate::model::control::{Control, PageNumberPos};
 
         if position > 10 {
-            return Err(crate::error::HwpError::RenderError(format!("쪽 번호 위치 {} 범위 초과", position)));
+            return Err(crate::error::HwpError::RenderError(format!(
+                "쪽 번호 위치 {} 범위 초과",
+                position
+            )));
         }
         let section = self
             .document
@@ -2350,10 +2353,9 @@ impl DocumentCore {
             }
         }
         if updated == 0 {
-            let para = section
-                .paragraphs
-                .first_mut()
-                .ok_or_else(|| crate::error::HwpError::RenderError("구역에 문단이 없다".to_string()))?;
+            let para = section.paragraphs.first_mut().ok_or_else(|| {
+                crate::error::HwpError::RenderError("구역에 문단이 없다".to_string())
+            })?;
             // 첫 글자 앞 칸(8 code unit씩)에 든 컨트롤 뒤에 넣고, 새 컨트롤 몫 한 칸을 비운다 — 글자·줄·글자 모양 좌표가 같이 민다.
             let leading = (para.char_offsets.first().copied().unwrap_or(0) / 8) as usize;
             let at = leading.min(para.controls.len());
@@ -2372,7 +2374,10 @@ impl DocumentCore {
     }
 
     /// 구역의 쪽 번호 매기기 — 한/글이 그리는 것(구역의 마지막 `pgnp`). 없으면 `exists:false`.
-    pub fn get_page_number_position_native(&self, section_idx: usize) -> Result<String, crate::error::HwpError> {
+    pub fn get_page_number_position_native(
+        &self,
+        section_idx: usize,
+    ) -> Result<String, crate::error::HwpError> {
         use crate::model::control::Control;
 
         let section = self
