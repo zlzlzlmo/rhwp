@@ -42,6 +42,48 @@ impl TypesetEngine {
                     }),
             );
             st.record_vpos_ladder_validity(false);
+        } else if st.vpos_page_base.is_none()
+            && st.vpos_lazy_base.is_none()
+            && !st.vpos_ladder_dirty
+        {
+            // 단 첫 항목이 문단 기준 자리차지 표(비 TAC)면 레이아웃처럼 그 표 문단의 저장 첫 줄을 쪽 기준으로 둔다
+            // (`build_single_column` 의 `vpos_page_base_init` — 이런 표 뒤에는 기준을 지우지 않는다). 기준 없이 다음
+            // 문단에서 lazy 로 역산하면 끝 줄 간격 다리 몫만큼 기준이 어긋나 합성 줄의 낡은 vpos 로 크게 뛴다(도약 채움
+            // viz0 7쪽 문단 57: 조판 +204px · 레이아웃 +19px 은 합성 소폭 전진이라 무시 — 맥 한글 12.30 은 레이아웃 자리).
+            let first_table = match st.current_items.first() {
+                Some(crate::renderer::typeset::PageItem::Table {
+                    para_index,
+                    control_index,
+                }) => Some((*para_index, *control_index)),
+                _ => None,
+            };
+            if let Some((para_index, control_index)) = first_table {
+                let first_table_vpos = paragraphs.get(para_index).and_then(|host| {
+                    let para_float = host.controls.get(control_index).is_some_and(|c| {
+                        matches!(c, crate::model::control::Control::Table(t)
+                            if !t.common.treat_as_char
+                                && matches!(t.common.text_wrap, crate::model::shape::TextWrap::TopAndBottom)
+                                && matches!(t.common.vert_rel_to, crate::model::shape::VertRelTo::Para))
+                    });
+                    // 글 없는 host 만 — 글 든 host(36404612 hwpx 1쪽 문단 0)는 표가 host 글줄과 같이 흐른다.
+                    let textless_host = !host
+                        .text
+                        .chars()
+                        .any(|ch| ch > '\u{001F}' && ch != '\u{FFFC}' && !ch.is_whitespace());
+                    (para_float && textless_host)
+                        .then(|| host.line_segs.first().map(|seg| seg.vertical_pos))
+                        .flatten()
+                });
+                if let Some(vpos) = first_table_vpos {
+                    st.record_vpos_page_origin(Some(vpos));
+                    st.record_vpos_origin_provenance(
+                        paragraphs[para_index].line_segs.first().is_some_and(|seg| {
+                            seg.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY
+                                == 0
+                        }),
+                    );
+                }
+            }
         }
         // 빈 host 자리차지 표 바로 뒤 문단 — 한/글은 첫 줄을 띠 바닥에 두고 host 뒤·다음 앞 간격을 띠 안에 흡수한다(맥
         // 한글 12.30 규칙 M · 레이아웃 `empty_host_float_band_sets_next_line`·`layout_partial_table_item` 과 같은 규칙).
