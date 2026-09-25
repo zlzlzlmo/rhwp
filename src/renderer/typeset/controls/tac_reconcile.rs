@@ -143,6 +143,11 @@ pub(super) fn measure(
         let owned_row_total = effective_sb + outer_top + tac_seg_total;
         if has_owned_rowbreak_tac_frame {
             owned_row_total
+        } else if !profile.hwpx_stored_layout()
+            && crate::renderer::stored_lone_tac_table_line_advances_fully(para, next_para)
+        {
+            // 저장 사다리가 줄 간격 전부를 증언하는 외톨이 글자처럼 표 줄 — 레이아웃·한/글처럼 문단 전부만큼 흐른다.
+            fmt.total_height
         } else {
             owned_row_total.min(fmt.total_height)
         }

@@ -556,6 +556,48 @@ impl TypesetEngine {
                         return false;
                     }
                 }
+                // 글은 남은 자리에 다 들어가고 선언 높이의 꼬리만 넘치는 행 — 꼬리가 다음 쪽에 넘길 만큼 길지 않으면
+                // (`EMPTY_BAND_MIN_CARRIED_TAIL_HU` 미만) 맥 한글 12.30 은 행을 자르는 선(본문 아래 − 표 바깥 아래 여백,
+                // 여백이 없으면 100HU)에서 끝내고 꼬리를 버린다. rowbreak-problem-pages 3쪽 25×7 표 행 8: 선언 67.08pt
+                // → 64.4pt, 선이 본문 아래 − 141HU(바깥 아래 여백)에 선다 — 종전엔 행째 넘겨 뒤 쪽들이 한 행씩 밀렸다.
+                if !rowspan_touched[r]
+                    && r > cursor_row
+                    && r + 1 < row_count
+                    && row_start_cut.is_empty()
+                    && mt.allows_row_break_split()
+                    && !table::scan::row::row_has_out_of_line_control(table, r)
+                {
+                    let reserve = hwpunit_to_px(
+                        (table.outer_margin_bottom as i32)
+                            .max(table::scan::row::EMPTY_BAND_CUT_BOTTOM_RESERVE_HU),
+                        self.dpi,
+                    );
+                    let rest = (avail_for_rows - consumed - cs_before - reserve).max(0.0);
+                    let visible_height = layout_engine.row_cut_content_height(
+                        table,
+                        r,
+                        row_start_cut,
+                        &res.end_cut,
+                        styles,
+                    );
+                    // 버리는 꼬리는 선언 빈 띠 안이어야 한다 — 행 높이가 글(끝 줄 간격 포함)로 정해진 행은 한/글도 행째
+                    // 넘긴다(간장 보고서 106쪽 표 29 행 3: 칸 선언 282HU · 맥은 다음 쪽).
+                    if visible_height <= rest + 0.5
+                        && row_total - rest
+                            <= table::scan::row::row_declared_blank_band(mt, r) + 0.5
+                        && row_total - rest
+                            < hwpunit_to_px(
+                                table::scan::row::EMPTY_BAND_MIN_CARRIED_TAIL_HU,
+                                self.dpi,
+                            )
+                    {
+                        consumed += cs_before + rest;
+                        r += 1;
+                        end_row = r;
+                        end_row_height_override = Some(rest);
+                        return false;
+                    }
+                }
                 // [#2236] rowspan 블록 중간 행 밴드 컷: 행 자체 콘텐츠는 예산 안에
                 // 전부 들어가지만(fully_consumed) 행 높이가 rowspan 이웃/선언으로
                 // 늘어나 행 전체는 예산 초과인 경우, 한글은 쪽 경계에서 행 밴드를

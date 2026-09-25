@@ -164,13 +164,36 @@ pub(in crate::renderer::typeset) fn row_is_declared_empty_band(
         && cells.all(|c| {
             c.total_content_height + c.padding_top + c.padding_bottom + MIN_TOP_KEEP_PX < row_h
         })
-        && !table.cells.iter().any(|cell| {
-            cell.row as usize == r
-                && cell
-                    .paragraphs
-                    .iter()
-                    .any(|p| p.controls.iter().any(control_floats_out_of_line))
-        })
+        && !row_has_out_of_line_control(table, r)
+}
+
+/// 선언 행 높이가 칸 글(줄 + 위아래 여백)보다 큰 몫 — 글 아래 빈 띠의 높이(px). 행 높이가 글로 정해지면 0 이다.
+pub(in crate::renderer::typeset) fn row_declared_blank_band(mt: &MeasuredTable, r: usize) -> f64 {
+    let Some(&row_h) = mt.row_heights.get(r) else {
+        return 0.0;
+    };
+    let content = mt
+        .cells
+        .iter()
+        .filter(|c| c.row == r && c.row_span == 1)
+        .map(|c| c.total_content_height + c.padding_top + c.padding_bottom)
+        .fold(f64::NAN, f64::max);
+    if content.is_nan() {
+        0.0
+    } else {
+        (row_h - content).max(0.0)
+    }
+}
+
+/// 행 칸에 글 밖 개체(글자처럼 취급하지 않는 그림·도형·표·수식)가 있는가 — 선언 높이의 띠를 그 개체가 채울 수 있다.
+pub(in crate::renderer::typeset) fn row_has_out_of_line_control(table: &Table, r: usize) -> bool {
+    table.cells.iter().any(|cell| {
+        cell.row as usize == r
+            && cell
+                .paragraphs
+                .iter()
+                .any(|p| p.controls.iter().any(control_floats_out_of_line))
+    })
 }
 
 /// 글자처럼 취급하지 않는 개체 — 줄 밖에 떠서 칸 공간을 따로 차지한다.

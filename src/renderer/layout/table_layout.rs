@@ -13127,9 +13127,19 @@ impl LayoutEngine {
         let Some(next_seg) = next_para.line_segs.get(next_unit.vis_start) else {
             return 0.0;
         };
+        // 첫 줄이 문단 앞 간격만큼 내려앉아 저장된 셀(0..=500 HU)은 그 자리가 쪽 첫머리다 — 한/글은 다음 쪽 조각도
+        // 같은 자리로 되감는다(saved_bounds_cumulative_page_break 4쪽 pi 52 행 2: 500 → 2820 → 4640 뒤 500 ·
+        // 한/글 2024·맥 한글 12.30 모두 세 줄을 앞 조각에 둔다).
+        let cell_origin_vpos = cell
+            .paragraphs
+            .first()
+            .and_then(|p| p.line_segs.first())
+            .map(|seg| seg.vertical_pos)
+            .filter(|vpos| (0..=500).contains(vpos))
+            .unwrap_or(0);
         if previous_seg.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0
-            || previous_seg.vertical_pos <= 0
-            || next_seg.vertical_pos > 0
+            || previous_seg.vertical_pos <= cell_origin_vpos
+            || next_seg.vertical_pos > cell_origin_vpos
         {
             return 0.0;
         }

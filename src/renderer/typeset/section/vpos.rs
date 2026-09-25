@@ -43,6 +43,67 @@ impl TypesetEngine {
             );
             st.record_vpos_ladder_validity(false);
         }
+        // 빈 host 자리차지 표 바로 뒤 문단 — 한/글은 첫 줄을 띠 바닥에 두고 host 뒤·다음 앞 간격을 띠 안에 흡수한다(맥
+        // 한글 12.30 규칙 M · 레이아웃 `empty_host_float_band_sets_next_line`·`layout_partial_table_item` 과 같은 규칙).
+        // 쪽 기준점이 없으면 lazy 역산이 띠를 모르는 host 줄로 기준을 잡아 스냅이 멎거나(hwpctl 16쪽 문단 283 → 284
+        // −4.65px) 이어진 끝 조각 뒤를 간격만큼 내린다(73쪽 문단 1751 +9.56px) — 저장 첫 줄의 쪽 기준 자리로 세운다.
+        if st.vpos_page_base.is_none() && !st.vpos_ladder_dirty && para_idx > 0 {
+            let host_idx = para_idx - 1;
+            let host_item = match st.current_items.last() {
+                Some(crate::renderer::typeset::PageItem::Table { para_index, .. })
+                    if *para_index == host_idx =>
+                {
+                    Some(false)
+                }
+                Some(crate::renderer::typeset::PageItem::PartialTable {
+                    para_index,
+                    is_continuation: true,
+                    end_cut,
+                    end_row,
+                    ..
+                }) if *para_index == host_idx
+                    && end_cut.is_empty()
+                    // 이어진 쪽의 저장 사다리가 쪽 기준인 건 네이티브 HWP5 만 확인했다(레이아웃 끝 조각 규칙과 같은 게이트)
+                    // — hwpx 3236 은 다음 문단 저장 vpos 가 앞 쪽 사다리 값이다.
+                    && st.profile.hwp5_stored_pagination_layout() =>
+                {
+                    Some(
+                        paragraphs
+                            .get(host_idx)
+                            .and_then(|host| {
+                                host.controls.iter().find_map(|c| match c {
+                                    crate::model::control::Control::Table(t) => {
+                                        Some(t.row_count as usize)
+                                    }
+                                    _ => None,
+                                })
+                            })
+                            .is_some_and(|rows| *end_row >= rows),
+                    )
+                    .filter(|terminal| *terminal)
+                }
+                _ => None,
+            };
+            if let Some(continuation_end) = host_item {
+                if let Some((y, limit)) =
+                    self.float_band_line_start(paragraphs, styles, host_idx, continuation_end)
+                {
+                    if (y - st.current_height).abs() <= limit {
+                        let line_top_hu =
+                            crate::renderer::px_to_hwpunit(y + spacing_before_px, self.dpi);
+                        if let Some(next_vpos) = paragraphs
+                            .get(para_idx)
+                            .and_then(|p| p.line_segs.first())
+                            .map(|s| s.vertical_pos)
+                        {
+                            st.record_vpos_lazy_origin(Some(next_vpos - line_top_hu));
+                        }
+                        st.align_flow_to(y);
+                        return;
+                    }
+                }
+            }
+        }
         let mut hc = HeightCursor {
             dpi: self.dpi,
             col_area_y: 0.0,
@@ -187,5 +248,56 @@ impl TypesetEngine {
         // lazy_base 는 지연 산출 시 갱신될 수 있으므로 회수.
         st.record_vpos_lazy_origin(hc.vpos_lazy_base);
         st.align_flow_to(y);
+    }
+
+    /// 규칙 M 이 성립하면 (다음 문단의 시작 높이 = 저장 첫 줄의 쪽 기준 자리 − 앞 간격, 옮길 수 있는 폭). 첫 쪽은 저장
+    /// 사다리가 띠 바닥을 정확히 증언해야 하고(`empty_host_float_band_sets_next_line`), 이어진 끝 조각은 구조만 본다
+    /// (띠가 쪽을 넘어 저장 등식이 없다). 옮기는 폭은 띠가 흡수하는 두 간격 + 바깥 아래 여백 + 2px 까지 — 그보다 크면
+    /// 앞쪽 흐름 차이라 여기서 메우지 않는다(간장 보고서 24쪽 문단 349: host 가 저장보다 98px 아래).
+    fn float_band_line_start(
+        &self,
+        paragraphs: &[Paragraph],
+        styles: &ResolvedStyleSet,
+        host_idx: usize,
+        continuation_end: bool,
+    ) -> Option<(f64, f64)> {
+        let host = paragraphs.get(host_idx)?;
+        let next = paragraphs.get(host_idx + 1)?;
+        let spacing = |p: &Paragraph, before: bool| {
+            styles
+                .para_styles
+                .get(p.para_shape_id as usize)
+                .map_or(0.0, |ps| {
+                    if before {
+                        ps.spacing_before
+                    } else {
+                        ps.spacing_after
+                    }
+                })
+        };
+        let hu = |px: f64| crate::renderer::px_to_hwpunit(px, self.dpi);
+        let (host_sb, host_sa, next_sb) = (
+            spacing(host, true),
+            spacing(host, false),
+            spacing(next, true),
+        );
+        let table = crate::renderer::float_placement::empty_host_float_band_table(host, next)?;
+        if !continuation_end
+            && !crate::renderer::float_placement::empty_host_float_band_sets_next_line(
+                host,
+                next,
+                hu(host_sb),
+                hu(host_sa),
+                hu(next_sb),
+            )
+        {
+            return None;
+        }
+        let next_vpos = next.line_segs.first()?.vertical_pos;
+        let om_bottom = crate::renderer::hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi);
+        Some((
+            crate::renderer::hwpunit_to_px(next_vpos, self.dpi) - next_sb,
+            host_sa + next_sb + om_bottom + 2.0,
+        ))
     }
 }

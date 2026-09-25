@@ -336,14 +336,20 @@ impl HeightCursor {
             // 기준이 812HU 아래로 잡혀 뒤 문단이 +10.8px 밀리고 한/글 5쪽 문서가 6쪽이 됐다).
             // 글자처럼 그림·글상자만 든 문단도 같다 — 줄 높이 + 간격을 흐름이 이미 싣는다(도약 채움 5쪽 머리 그림 뒤
             // 캡션 다음 제목이 +9.6px = 그림 줄 간격 720HU 만큼 내려가 맥 한글보다 한 줄 늦게 쪽을 넘겼다).
-            let prev_tac_gap_already_counted = (self.mixed_ladder
+            // 저장 사다리가 줄 간격 전부를 증언하는 외톨이 글자처럼 표 줄도 흐름이 이미 간격 전부를 실었다.
+            let prev_tac_gap_already_counted = ((self.mixed_ladder
                 || crate::renderer::para_has_no_stored_line_segs(prev_para))
                 && prev_para.controls.iter().any(|c| match c {
                     Control::Table(t) => t.common.treat_as_char,
                     Control::Picture(p) => p.common.treat_as_char,
                     Control::Shape(s) => s.common().treat_as_char,
                     _ => false,
-                });
+                }))
+                || (!self.suppress_hwpx_stale_forward
+                    && crate::renderer::stored_lone_tac_table_line_advances_fully(
+                        prev_para,
+                        paragraphs.get(item_para),
+                    ));
             let trailing_ls_hu =
                 if (vpos_continuous && prev_has_text) || prev_tac_gap_already_counted {
                     0

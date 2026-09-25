@@ -1361,6 +1361,34 @@ pub(crate) fn cell_first_para_stored_lead(
     spacing_before_px.min(vpos)
 }
 
+/// 글 없는 문단에 글자처럼 표 하나만 든 한컴 저장 줄이고, 저장 사다리가 다음 문단까지 그 줄 높이 + 줄 간격을
+/// **전부** 증언하는가 — 그러면 한/글 흐름도 줄 간격 전부만큼 전진한다(상류 «표 줄 간격 절반» 규칙의 예외).
+/// 맥 한글 12.30: rowbreak-problem-pages 3쪽 pi 9 — 저장 9434 → 18262 = 줄 6868 + 간격 960 + 다음 앞 간격 1000 ·
+/// 절반 규칙은 흐름을 4.5px 짧게 쌓아 뒤 표(pi 11)의 조판 자리가 그림(맥·저장 사다리)보다 4.8px 위였다.
+pub(crate) fn stored_lone_tac_table_line_advances_fully(
+    para: &crate::model::paragraph::Paragraph,
+    next: Option<&crate::model::paragraph::Paragraph>,
+) -> bool {
+    use crate::model::paragraph::LineSeg;
+    let [seg] = para.line_segs.as_slice() else {
+        return false;
+    };
+    let [crate::model::control::Control::Table(table)] = para.controls.as_slice() else {
+        return false;
+    };
+    let Some(next_seg) = next.and_then(|n| n.line_segs.first()) else {
+        return false;
+    };
+    table.common.treat_as_char
+        && seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
+        && next_seg.tag & LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0
+        && !para
+            .text
+            .chars()
+            .any(|ch| ch > '\u{001F}' && ch != '\u{FFFC}' && !ch.is_whitespace())
+        && next_seg.vertical_pos >= seg.vertical_pos + seg.line_height + seg.line_spacing
+}
+
 /// [#2169] 저장 LINE_SEG 부재 판별 — 원본 NO_LS 와 자기-export HWPX 재파싱본
 /// (전부 synthetic, tag 0x8000_0000)을 동일 취급해 왕복 시멘틱을 정합한다
 /// (#1770 계열: 국소 문맥 판별).

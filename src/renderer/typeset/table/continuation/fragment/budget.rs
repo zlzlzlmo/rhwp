@@ -3,7 +3,8 @@
 use crate::renderer::typeset::{
     controls, hwpunit_to_px, is_synthetic_line_seg, nearest_saved_rowbreak_frame_row_end,
     para_has_non_whitespace_text, paragraph, partial_rowbreak_fragment_spacing_px,
-    row_geometry_table, saved_rowbreak_first_fragment_flow_overflow_allowance, table,
+    row_geometry_table, rowbreak_row_has_internal_saved_vpos_reset,
+    saved_rowbreak_first_fragment_flow_overflow_allowance, table,
     table_declared_object_covers_cell_row_frames, Control, TypesetEngine, TypesetState,
 };
 
@@ -536,11 +537,23 @@ impl TypesetEngine {
             && st.current_footnote_height <= 0.0
             && !table_declared_object_covers_cell_row_frames(table, self.dpi)
         {
-            if let Some(row_end) = source_first_fragment_row_end {
+            if let (Some(row_end), Some((frame_height, _))) = (
+                source_first_fragment_row_end,
+                saved_first_fragment_source_frame,
+            ) {
                 let source_row_end_height = cut_row_h.iter().take(row_end).sum::<f64>()
                     + cs * row_end.saturating_sub(1) as f64;
-                source_first_fragment_overflow_allowance = source_first_fragment_overflow_allowance
-                    .max((source_row_end_height - avail_for_rows).max(0.0));
+                // 프레임이 그 행 끝에 못 미치고 그 행 셀에 저장 vpos 되감김이 있으면 한/글은 그 행을 되감김에서
+                // 갈랐다 — 행 끝까지 넘치게 두지 않는다. 저장 셀 높이는 최소 높이라 자란 행의 «측정 − 저장» 은
+                // drift 가 아니다(맥 한글 12.30: 1480000 화학 표시 7쪽 pi 70 — 프레임 256.4px 가 행 2(측정 300px)
+                // 안에서 끊기는데 행 끝까지 96.8px 를 허용해 표를 통째 받았다).
+                let frame_splits_row_at_stored_reset = source_row_end_height > frame_height + 0.5
+                    && rowbreak_row_has_internal_saved_vpos_reset(table, row_end - 1);
+                if !frame_splits_row_at_stored_reset {
+                    source_first_fragment_overflow_allowance =
+                        source_first_fragment_overflow_allowance
+                            .max((source_row_end_height - avail_for_rows).max(0.0));
+                }
             }
         }
 
