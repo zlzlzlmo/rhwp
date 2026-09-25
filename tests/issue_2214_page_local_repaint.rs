@@ -234,23 +234,26 @@ fn expected_line_starts(label: &str, inserted: usize) -> &'static [usize] {
 /// 자리차지 표가 옮겨진 것이다 — 이 문서 정본(`pdf/issue1949_giant_cell_nested_tables_
 /// perf-hwp-2024.pdf`) 1쪽의 `1.1.1` 은 x=87.79 인데 수정 전 rhwp 는 84.1 이었다.
 /// 표가 자기 `outMargin.left` 만큼 안으로 들어가면서 안의 글자·caret 이 같이 따라간다.
+///
+/// y 는 +3.8px(283HU) 내려왔다(2026-09-25) — 쪽 중간 첫 조각도 바깥 위 여백을 연다(A단계 ①). 맥 한글 12.30 이 이
+/// 문서 1쪽 표 위 괘선을 87.92pt 에 그린다(rhwp 종전 84.8 · 지금 87.9).
 fn expected_56_path_caret(label: &str) -> (f64, f64) {
     match label {
-        "hwp" => (577.6, 344.8),
+        "hwp" => (577.6, 348.6),
         // [#7254] hwpx 의 x 가 671.6 → 670.9 로 0.7px 왼쪽이다. 배치 run 폭의 정수
         // 반올림을 걷어내면서 이 줄의 run 원점이 같은 양만큼 옮겨졌고, caret 은 그 원점을
         // 그대로 따라간다(글자와 caret 이 여전히 같은 값을 소비한다는 뜻이다). hwp 변형은
         // 줄 구성이 달라 값이 그대로다.
-        "hwpx" => (674.7, 319.2),
+        "hwpx" => (674.7, 323.0),
         other => panic!("unknown #2214 fixture label: {other}"),
     }
 }
 
 fn expected_56_direct_caret(label: &str) -> (f64, f64) {
     match label {
-        "hwp" => (577.6, 345.6),
+        "hwp" => (577.6, 349.4),
         // [#7254] 위 path caret 과 같은 0.7px 이동.
-        "hwpx" => (674.7, 320.0),
+        "hwpx" => (674.7, 323.8),
         other => panic!("unknown #2214 fixture label: {other}"),
     }
 }
@@ -360,8 +363,9 @@ fn issue_2214_cold_representative_queries_are_exact() {
             path.x
         );
         assert!(
-            approx_eq(path.y, 344.8),
-            "{label}: cold 62 path y = {:.1} (기대 344.8)",
+            // 344.8 → 348.6: 위 56자 caret 과 같은 첫 조각 바깥 위 여백 +3.8px.
+            approx_eq(path.y, 348.6),
+            "{label}: cold 62 path y = {:.1} (기대 348.6)",
             path.y
         );
         assert!(

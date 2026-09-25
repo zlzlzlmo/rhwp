@@ -4158,7 +4158,9 @@ impl LayoutEngine {
         };
         // 글 없는 host 의 문단 기준 자리차지 표의 이어진 조각도 본문 위 + 바깥 위 여백에 앉는다 — 조판도 같은 술어로
         // 예산에서 뺀다(`prepare_table_fragment_budget`). 맥 한글 12.30: 80168 이어진 쪽 40곳 +1.3pt(141HU) 일정.
-        let y_start = if is_continuation
+        // 쪽 중간에서 시작하는 첫 조각도 같다(A단계 ①) — 조판은 host 앞 간격으로 이미 여백을 예약해 두었고 그림만
+        // 빠뜨렸다. 맥 한글 12.30: 3171199 1쪽 표 위 142.1pt(종전 139.3) · 80168 17쪽 · 76076 10쪽이 맥과 같아졌다.
+        let y_start = if (is_continuation || is_para_flow_table)
             && !single_cell_page_fragment
             && !repeat_fragment_outer_margin
             && enclosing_cell_ctx.is_none()
@@ -4600,6 +4602,50 @@ impl LayoutEngine {
             render_rows.push(r);
         }
 
+        // 마지막 행을 가른 비끝 조각의 상자는 본문 아래 − 바깥 아래 여백 − 100HU 를 넘기지 않는다 — 가른 행 높이에 든
+        // 마지막 줄 뒤 줄간격·아래 여백을 한/글은 그 선에서 자른다(1×1 쪽 조각 #7095 와 같은 선 · 맥 한글 12.30:
+        // 3171199 1쪽 8×4 표 첫 조각 상자 아래 753.07pt 계산 = 맥 753.0).
+        if !single_cell_page_fragment
+            && enclosing_cell_ctx.is_none()
+            && stored_reset_paint_geometry.is_none()
+            && end_row_height_override.is_none()
+            && end_cut.iter().any(|&unit| unit > 0)
+            && !(start_row == 0
+                && !is_continuation
+                && start_cut.is_empty()
+                && table
+                    .caption
+                    .as_ref()
+                    .is_some_and(|c| c.direction == CaptionDirection::Top))
+        {
+            // 가른 행이 이 조각에서 시작하고(이어진 행의 뷰포트 오프셋과 섞지 않는다) 칸에 중첩 표가 없을 때만 —
+            // 중첩 표 조각은 제 상자 규칙이 따로 있다(거대 칸 `table_giant_cell_overfill`).
+            let last_row_is_fresh_plain = render_rows.last().is_some_and(|&last| {
+                (last != start_row || start_cut.iter().all(|&unit| unit == 0))
+                    && !table.cells.iter().any(|cell| {
+                        cell.row as usize == last
+                            && cell
+                                .paragraphs
+                                .iter()
+                                .any(|p| p.controls.iter().any(|c| matches!(c, Control::Table(_))))
+                    })
+            });
+            if let Some((&last, above_rows)) =
+                render_rows.split_last().filter(|_| last_row_is_fresh_plain)
+            {
+                let above = above_rows.iter().map(|&r| row_heights[r]).sum::<f64>()
+                    + cell_spacing * above_rows.len() as f64;
+                let box_bottom = crate::renderer::float_placement::single_cell_page_fragment_bottom(
+                    table,
+                    col_area.y + col_area.height,
+                    self.dpi,
+                );
+                let limit = box_bottom - y_start - above;
+                if limit > 0.0 && row_heights[last] > limit {
+                    row_heights[last] = limit;
+                }
+            }
+        }
         // 렌더링 영역의 행별 y 위치 계산 (0부터 시작)
         let mut render_row_y: Vec<f64> = Vec::new(); // 각 render_rows 항목의 시작 y
         let mut y_accum = 0.0;

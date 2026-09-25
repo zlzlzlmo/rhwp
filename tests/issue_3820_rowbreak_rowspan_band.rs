@@ -187,7 +187,9 @@ fn issue_3820_rowbreak_rowspan_band_keeps_pdf_page_35_36_boundary() {
     );
     let impact_y = text_y(&p36.root, "영향평가").expect("p36 must resume at `11.영향평가 여부`");
     assert!(
-        (103.0..=113.0).contains(&impact_y),
+        // 상한 113 → 113.5(2026-09-25): 비끝 조각 상자 선(본문 아래 − 바깥 아래 여백 − 100HU)으로 35·36쪽 괘선이 맥
+        // 한글 12.30 과 0.1pt 안에서 같다(35쪽 바닥 782.8 = 맥 782.9 · 36쪽 58.1~617.6).
+        (103.0..=113.5).contains(&impact_y),
         "p36 `11.영향평가` y={impact_y:.1}px; blank rowspan tail was lost or overgrown"
     );
 }

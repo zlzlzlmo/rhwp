@@ -199,7 +199,9 @@ issue6697/80550-agricultural-machinery-act-amendment.hwpx	2
 issue6712/한국어_2026년 8호 가정통신문_여름철 영유아 감염병 예방.hwp	1
 issue6718/27469-child-allowance-retroactive-support.hwp	0
 issue6764/1613000-202200037-air-traffic-controller-cbta.hwp	40
-issue6776/78494-virtual-convergence-industry-decree.hwpx	1
+# 완화 (쪽 중간 첫 조각의 바깥 위 여백, 2026-09-25): 13쪽 표 20 은 저장 줄 없는 hwpx 에서 그림이 조판보다 이미 9.6px
+# 아래(종전 넘침 1.39px)였고, 조판이 예약해 둔 바깥 위 여백 1.9px 를 그림도 열어 공차를 넘었다.
+issue6776/78494-virtual-convergence-industry-decree.hwpx	2
 issue6782/1480000-201900042-chemical-labeling-standards.hwp	6
 issue6782/1480000-201900042-chemical-product-labeling-study.hwp	6
 issue6795/1341000-201100013-cyber-university-application.hwp	4
@@ -266,3 +268,8 @@ issue6973/83818-appraisal-rules-amendment.hwpx	1
 issue7216/tall_table_before.hwpx	0
 issue7216/tall_table_after.hwpx	0
 80250_regulatory_analysis.hwp	1
+# 완화 (쪽 중간 첫 조각의 바깥 위 여백, 2026-09-25): 36341511(hwpx) 3쪽 pi 14 첫 조각. 그림이 pi 7(글자처럼 1×3 표) 뒤부터
+# 저장 사다리보다 5.3px 아래다(맥 한글 12.30 «1 추진근거» 281.2pt = 저장 · rhwp 285.2) — 빈 문단 pi 6 뒤 lazy 기준 역산이
+# 끝 줄 간격 다리(400HU)를 이중으로 더한다. 그 결함 위에 조판이 예약한 바깥 위 여백 1.9px 를 그림도 열어 2.67px 넘친다.
+# 다리 수정은 복학원서(글 뒤로 로고 되감기가 같은 다리에 기대 있다)와 한 묶음으로 다음 과제.
+issue2470/36341511_masked.hwpx	1

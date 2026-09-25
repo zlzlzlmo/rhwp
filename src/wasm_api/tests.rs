@@ -19844,7 +19844,8 @@ fn test_get_table_bbox_at_page_for_giant_multi_page_cell() {
             "{path}: current fragment page"
         );
 
-        let click_y = 1057.3;
+        // 첫 조각 하단(재현점). 1057.3 → 1064.8(2026-09-25): 첫 조각의 바깥 위 여백 등 — 맥 한글 12.30 표 위 괘선과 같다.
+        let click_y = 1064.8;
         let legacy_bottom = legacy["y"].as_f64().unwrap() + legacy["height"].as_f64().unwrap();
         let current_bottom = current["y"].as_f64().unwrap() + current["height"].as_f64().unwrap();
         assert!(

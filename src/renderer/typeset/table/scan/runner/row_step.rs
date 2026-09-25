@@ -107,7 +107,17 @@ impl TypesetEngine {
                     has_prior_rowspan_cover,
                     row_has_nested,
                 } = row_query.band_shape();
-                let rest = (avail_for_rows - consumed - cs_before).max(0.0);
+                // 비끝 조각 상자의 선(본문 아래 − 바깥 아래 여백 − 100HU)에서 띠를 끝낸다 — 맥 한글 12.30: 76076 35쪽 띠
+                // 조각 아래 782.9pt(종전 785.2pt · 본문 아래까지).
+                let rest = (avail_for_rows
+                    - consumed
+                    - cs_before
+                    - hwpunit_to_px(
+                        table::scan::row::EMPTY_BAND_CUT_BOTTOM_RESERVE_HU
+                            + i32::from(table.outer_margin_bottom),
+                        self.dpi,
+                    ))
+                .max(0.0);
                 let row_start_cut: &[usize] = if r == cursor_row { start_cut } else { &[] };
                 if mt.allows_row_break_split()
                     && can_intra_split
@@ -527,8 +537,14 @@ impl TypesetEngine {
                     && row_start_cut.is_empty()
                     && table::scan::row::row_is_declared_empty_band(mt, table, r)
                 {
-                    let reserve =
-                        hwpunit_to_px(table::scan::row::EMPTY_BAND_CUT_BOTTOM_RESERVE_HU, self.dpi);
+                    // 자르는 선 = 본문 아래 − 바깥 아래 여백 − 100HU(비끝 조각 상자와 같은 선). 맥 한글 12.30: 경남 태국
+                    // 파견 양식 3쪽 5×2 표(바깥 여백 138HU) 조각 아래 768.7pt — 종전엔 그림이 첫 조각 위 여백을 빠뜨린 몫과
+                    // 100HU 만 뺀 몫이 서로 상쇄돼 맞았다. 경북 양식은 여백 0 이라 그대로다.
+                    let reserve = hwpunit_to_px(
+                        table::scan::row::EMPTY_BAND_CUT_BOTTOM_RESERVE_HU
+                            + i32::from(table.outer_margin_bottom),
+                        self.dpi,
+                    );
                     let rest = (avail_for_rows - consumed - cs_before - reserve).max(0.0);
                     let visible_height = layout_engine.row_cut_content_height(
                         table,
