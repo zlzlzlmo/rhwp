@@ -19,10 +19,9 @@ impl TypesetState {
     pub(in crate::renderer::typeset) fn finalize_pages(
         &mut self,
         entries: &[(usize, HeaderFooterRef, bool, HeaderFooterApply)],
-        number: &Option<crate::model::control::PageNumberPos>,
         paragraphs: &[Paragraph],
     ) {
-        super::finalize::finalize_pages(&mut self.data.pages, entries, number, paragraphs);
+        super::finalize::finalize_pages(&mut self.data.pages, entries, paragraphs);
     }
     pub(in crate::renderer::typeset) fn append_item(&mut self, item: PageItem) {
         self.data.current_items.push(item);

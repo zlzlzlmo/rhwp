@@ -125,6 +125,9 @@ impl<'a> PageNumberAssigner<'a> {
 pub(crate) struct PageControlEvents {
     pub new_numbers: Vec<(usize, u16)>,
     pub hides: Vec<(usize, crate::model::control::PageHide)>,
+    /// 쪽 번호 위치(pgnp) — 놓인 쪽부터 다음 pgnp 전까지 적용한다(한글). 구역 마지막 것 하나를
+    /// 모든 쪽에 씌우면 뒤에서 번호를 끈 양식(pos=0)이 앞쪽 번호까지 지운다(맥 한글 12.30 실측).
+    pub page_number_positions: Vec<(usize, crate::model::control::PageNumberPos)>,
 }
 
 impl PageControlEvents {
@@ -148,7 +151,12 @@ impl PageControlEvents {
         let mut events = Self::default();
         for (pi, para) in paragraphs.iter().enumerate() {
             for (ci, control) in para.controls.iter().enumerate() {
-                if matches!(
+                if let Control::PageNumberPos(pos) = control {
+                    let items = by_paragraph.get(&pi).map(Vec::as_slice).unwrap_or(&[]);
+                    if let Some(page) = control_page(para, ci, items) {
+                        events.page_number_positions.push((page, pos.clone()));
+                    }
+                } else if matches!(
                     control,
                     Control::PageHide(_) | Control::NewNumber(_) | Control::Table(_)
                 ) {
@@ -160,6 +168,18 @@ impl PageControlEvents {
             }
         }
         events
+    }
+
+    /// 이 쪽에 적용되는 쪽 번호 위치 — 이 쪽까지 놓인 pgnp 중 마지막 것.
+    pub fn page_number_pos_at(
+        &self,
+        page_index: usize,
+    ) -> Option<&crate::model::control::PageNumberPos> {
+        self.page_number_positions
+            .iter()
+            .filter(|(page, _)| *page <= page_index)
+            .max_by_key(|(page, _)| *page)
+            .map(|(_, pos)| pos)
     }
 
     fn collect_control(&mut self, control: &crate::model::control::Control, page: usize) {

@@ -188,9 +188,8 @@ impl TypesetEngine {
             state.flush_column_always();
         }
         state.ensure_page();
-        let (hf_entries, page_number_pos) =
-            Self::collect_header_footer_controls(paragraphs, section_index);
-        state.finalize_pages(&hf_entries, &page_number_pos, paragraphs);
+        let (hf_entries, _) = Self::collect_header_footer_controls(paragraphs, section_index);
+        state.finalize_pages(&hf_entries, paragraphs);
         Some(state.into_result())
     }
 

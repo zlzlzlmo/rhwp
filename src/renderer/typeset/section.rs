@@ -463,7 +463,7 @@ impl TypesetEngine {
         st.discard_terminal_blank_only_page(paragraphs);
 
         // 페이지 번호 + 머리말/꼬리말 할당
-        st.finalize_pages(&hf_entries, &page_number_pos, paragraphs);
+        st.finalize_pages(&hf_entries, paragraphs);
 
         if let Some(started) = issue2424_ts_started {
             let total = started.elapsed();

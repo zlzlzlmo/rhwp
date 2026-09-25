@@ -6886,10 +6886,33 @@ mod tests {
 
         let mut paragraphs = vec![Paragraph::default(); 8];
         paragraphs[7].controls = vec![Control::Table(Box::default()), Control::PageHide(hide)];
-        state::finalize::finalize_pages(&mut pages, &[], &None, &paragraphs);
+        state::finalize::finalize_pages(&mut pages, &[], &paragraphs);
 
         assert!(pages[0].page_hide.is_some());
         assert!(pages[1].page_hide.is_none());
+    }
+
+    #[test]
+    fn page_number_position_applies_from_its_page_onward() {
+        // 한글은 쪽 번호 위치(pgnp)를 놓인 쪽부터 적용한다 — 뒤에서 번호를 끈 pgnp(pos=0)가
+        // 앞쪽 번호를 지우면 안 되고, 첫 pgnp 앞 쪽엔 번호가 없다(맥 한글 12.30 실측 양식).
+        let pnp = |position| crate::model::control::PageNumberPos {
+            position,
+            ..Default::default()
+        };
+        let mut pages: Vec<_> = (0..4)
+            .map(|pi| page_with_items(vec![PageItem::FullParagraph { para_index: pi }]))
+            .collect();
+        let mut paragraphs = vec![Paragraph::default(); 4];
+        paragraphs[1].controls = vec![Control::PageNumberPos(pnp(5))];
+        paragraphs[3].controls = vec![Control::PageNumberPos(pnp(0))];
+        state::finalize::finalize_pages(&mut pages, &[], &paragraphs);
+
+        let positions: Vec<_> = pages
+            .iter()
+            .map(|p| p.page_number_pos.as_ref().map(|pos| pos.position))
+            .collect();
+        assert_eq!(positions, vec![None, Some(5), Some(5), Some(0)]);
     }
 
     #[test]

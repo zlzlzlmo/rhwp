@@ -77,7 +77,6 @@ pub(super) fn discard_terminal_blank_only_page(
 pub(in crate::renderer::typeset) fn finalize_pages(
     pages: &mut [PageContent],
     hf_entries: &[(usize, HeaderFooterRef, bool, HeaderFooterApply)],
-    page_number_pos: &Option<crate::model::control::PageNumberPos>,
     paragraphs: &[Paragraph],
 ) {
     // 쪽번호: PageNumberAssigner 가 NewNumber 1회 적용 + 단조 증가를 보장 (Issue #353)
@@ -116,7 +115,7 @@ pub(in crate::renderer::typeset) fn finalize_pages(
         page.active_header = current_header;
         page.active_footer = current_footer;
         if !assigner.should_hide_page_number() {
-            page.page_number_pos = page_number_pos.clone();
+            page.page_number_pos = events.page_number_pos_at(i).cloned();
         }
 
         // 한 컨트롤의 감추기는 소스 위치가 매핑된 한 쪽에만 적용한다.

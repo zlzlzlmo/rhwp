@@ -329,8 +329,7 @@ impl Paginator {
             .with_legacy_hwp3_stored_geometry(legacy_hwp3_stored_geometry);
 
         // 머리말/꼬리말/쪽 번호 위치/새 번호 지정 컨트롤 수집
-        let (hf_entries, page_number_pos) =
-            Self::collect_header_footer_controls(paragraphs, section_index);
+        let (hf_entries, _) = Self::collect_header_footer_controls(paragraphs, section_index);
 
         let col_count = column_def.column_count.max(1);
         let default_footnote_shape = crate::model::footnote::FootnoteShape::default();
@@ -1153,7 +1152,7 @@ impl Paginator {
             }
         }
         // 페이지 번호 + 머리말/꼬리말 할당
-        Self::finalize_pages(&mut st.pages, &hf_entries, &page_number_pos, paragraphs);
+        Self::finalize_pages(&mut st.pages, &hf_entries, paragraphs);
 
         PaginationResult {
             pages: st.pages,
@@ -2905,7 +2904,6 @@ impl Paginator {
     fn finalize_pages(
         pages: &mut [PageContent],
         hf_entries: &[(usize, HeaderFooterRef, bool, HeaderFooterApply)],
-        page_number_pos: &Option<crate::model::control::PageNumberPos>,
         paragraphs: &[Paragraph],
     ) {
         // 쪽번호: PageNumberAssigner 가 NewNumber 1회 적용 + 단조 증가를 보장 (Issue #353)
@@ -2967,7 +2965,7 @@ impl Paginator {
             page.active_footer = active_footer;
 
             if !assigner.should_hide_page_number() {
-                page.page_number_pos = page_number_pos.clone();
+                page.page_number_pos = events.page_number_pos_at(i).cloned();
             }
             // 한 컨트롤의 감추기는 소스 위치가 매핑된 한 쪽에만 적용한다.
             if let Some((_, hide)) = events.hides.iter().find(|(target, _)| *target == i) {
