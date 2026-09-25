@@ -13444,11 +13444,23 @@ impl LayoutEngine {
                                     .abs()
                                         <= 50
                                 });
-                        // ponytail: 위로만 당긴다 — 조판은 끝 조각 뒤 아래 여백을 흐름에 싣지 않아(`budget.rs` 끝 조각
-                        // 계약) 아래로 내리면 쪽 바닥을 넘을 수 있다. 아래 여백 누락 쪽(간장 158쪽 −283HU 등)은 조판과
-                        // 같이 옮길 과제다.
+                        // 저장 첫 줄이 증언하면 아래로도 옮긴다 — 조판도 규칙 M 스냅(`vpos.rs`)으로 같은 자리에 세운다. 맥 한글
+                        // 12.30: hwpctl 13쪽 문단 177(빈 문단) = 조각 바닥 + 283HU = 저장 3448 · rhwp 는 여백 없이 두어 쪽
+                        // 전체가 2.8pt 위였다. 한/글 저장 줄이 아닌 문단(저장 줄 없음 · rhwp 합성 줄)은 증거가 아니라 종전대로
+                        // 위로만 당긴다 — 위비즈가 채운 도약 제출본은 합성 줄이 우연히 맞아 아래로 내리면 표가 겹쳤다.
                         if stored_line_agrees {
-                            y_offset = y_offset.min(band_line_top - next_spacing_before);
+                            let band_start = band_line_top - next_spacing_before;
+                            let hancom_stored_first_line =
+                                next.line_segs.first().is_some_and(|seg| {
+                                    seg.tag
+                                    & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY
+                                    == 0
+                                });
+                            y_offset = if hancom_stored_first_line {
+                                band_start
+                            } else {
+                                y_offset.min(band_start)
+                            };
                         }
                     }
                 }
