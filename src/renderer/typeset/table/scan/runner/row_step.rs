@@ -614,6 +614,55 @@ impl TypesetEngine {
                         return false;
                     }
                 }
+                // 쪽 중간에서 시작한 표의 첫 행이 선언 빈 띠 행이면(글은 남은 자리에 다 들어가고 선언 높이의 띠만 넘친다)
+                // 첫 행이라고 통째로 넣지 않는다 — 자르는 선(본문 아래 − 바깥 아래 여백 − 100HU)에서 가르고 남은 띠가
+                // 12.8pt 이상이면 다음 쪽 첫머리로 넘긴다(빈 띠 가름과 같은 연산). 맥 한글 12.30: 37787 12쪽 1×2 표(문단 143)
+                // 선언 60.2px · 행 107.7px — 맥은 띠를 13쪽 머리로 넘겨 13쪽 첫 줄이 저장 3983HU 자리다(rhwp 종전 27pt 위).
+                if r == cursor_row
+                    && !is_continuation
+                    && row_start_cut.is_empty()
+                    && st.current_height > 0.5
+                    && !rowspan_touched[r]
+                    && mt.allows_row_break_split()
+                    && !table::scan::row::row_has_out_of_line_control(table, r)
+                {
+                    let rest = (avail_for_rows
+                        - consumed
+                        - cs_before
+                        - hwpunit_to_px(
+                            table::scan::row::EMPTY_BAND_CUT_BOTTOM_RESERVE_HU
+                                + i32::from(table.outer_margin_bottom),
+                            self.dpi,
+                        ))
+                    .max(0.0);
+                    let visible_height = layout_engine.row_cut_content_height(
+                        table,
+                        r,
+                        row_start_cut,
+                        &res.end_cut,
+                        styles,
+                    );
+                    if rest > 0.5
+                        && visible_height <= rest + 0.5
+                        && row_total - rest
+                            <= table::scan::row::row_declared_blank_band(mt, r) + 0.5
+                    {
+                        consumed += cs_before + rest;
+                        r += 1;
+                        end_row = r;
+                        end_row_height_override = Some(rest);
+                        if row_total - rest
+                            >= hwpunit_to_px(
+                                table::scan::row::EMPTY_BAND_MIN_CARRIED_TAIL_HU,
+                                self.dpi,
+                            )
+                        {
+                            split_end_cut = res.end_cut;
+                            split_end_limit = rest;
+                        }
+                        return false;
+                    }
+                }
                 // [#2236] rowspan 블록 중간 행 밴드 컷: 행 자체 콘텐츠는 예산 안에
                 // 전부 들어가지만(fully_consumed) 행 높이가 rowspan 이웃/선언으로
                 // 늘어나 행 전체는 예산 초과인 경우, 한글은 쪽 경계에서 행 밴드를

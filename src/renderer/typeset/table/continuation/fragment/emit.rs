@@ -126,7 +126,14 @@ impl TypesetEngine {
                 && !start_cut_is_block
                 && mt.allows_row_break_split()
                 && caption_overhead <= 0.5
-                && partial_height < MIN_TOP_KEEP_PX
+                // 글 없는 끝 띠는 12.8pt(`EMPTY_BAND_MIN_CARRIED_TAIL_HU`) 미만만 버린다 — 빈 띠 가름이 넘긴 꼬리와 같은
+                // 문턱이다. 종전 25px 문턱은 맥 한글 12.30 이 그리는 17~25px 꼬리를 버렸다(37787 13쪽 끝 1×2 표 띠 19.5px:
+                // 맥은 14쪽에 그려 쪽 나누기 앞 문단 155 가 15쪽으로 간다).
+                && partial_height
+                    < crate::renderer::hwpunit_to_px(
+                        crate::renderer::typeset::table::scan::row::EMPTY_BAND_MIN_CARRIED_TAIL_HU,
+                        self.dpi,
+                    )
                 && (cursor_row..end_row).all(|r| {
                     let su: &[usize] = if r == cursor_row { &start_cut } else { &[] };
                     !layout_engine.row_cut_range_has_visible_content(
