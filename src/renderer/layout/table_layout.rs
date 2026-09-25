@@ -15489,6 +15489,25 @@ impl LayoutEngine {
     /// [Task #1025] 행블록 `[b_start, b_end)` 와 교차하는 셀(rs>1 포함)을 모은다.
     /// `advance_row_block_cut` / `row_block_content_height` / 렌더러 공유 — 순서는
     /// 호출부에서 `(row, col)` 로 정렬한다.
+    /// 묶음 컷(`advance_row_block_cut_with_row_offsets`의 칸 순서 — 시작 행·열 순)이 `last_row` 까지 시작한 칸의
+    /// 글을 모두 놓았나. 묶음 빈 띠 넘김은 이때만 연다 — 글이 남는 칸이 있으면 종전 가르기 경로가 맡는다.
+    pub(crate) fn row_block_cells_complete_through(
+        &self,
+        table: &crate::model::table::Table,
+        b_start: usize,
+        b_end: usize,
+        end_cut: &[usize],
+        last_row: usize,
+        styles: &ResolvedStyleSet,
+    ) -> bool {
+        let mut cells = Self::row_block_cells(table, b_start, b_end);
+        cells.sort_by_key(|c| (c.row, c.col));
+        cells.len() == end_cut.len()
+            && cells.iter().zip(end_cut).all(|(cell, &cut)| {
+                cell.row as usize > last_row || cut >= self.cell_units(cell, table, styles).len()
+            })
+    }
+
     pub(crate) fn row_block_cells<'a>(
         table: &'a crate::model::table::Table,
         b_start: usize,

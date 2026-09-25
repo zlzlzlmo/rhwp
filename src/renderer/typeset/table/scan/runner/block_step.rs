@@ -153,6 +153,73 @@ impl TypesetEngine {
                 end_row_height_override = Some(last_row_band);
                 return true;
             }
+            // 묶음 빈 띠 넘김 — 쪽 중간의 RowBreak 병합 묶음이 자르는 선(본문 아래 − 바깥 아래 여백 − 100HU)을 넘는데
+            // 그 선이 걸린 행 k 까지 시작한 칸의 글이 모두 선 위에 들면, 한/글은 묶음을 그 선에서 끊고 k 행의 남은 빈
+            // 띠만 다음 쪽 첫머리에 그린다(행 하나의 띠 넘김 · 76076 «병합 행 띠 넘김»과 같은 연산). 맥 한글 12.30:
+            // cdd207a7 1쪽 15~17행 묶음(«제품» 15~16 · «제품 및 서비스 소개» 16~17) — 소개 칸 글까지 1쪽 · 2쪽 머리 띠 27.7pt.
+            // 종전엔 끝 행이 소개 칸 병합 끝보다 앞이라 렌더가 그 칸을 안 그렸고 이어진 조각은 소비됐다고 봐 글이 사라졌다.
+            if can_intra_split
+                && mt.allows_row_break_split()
+                && r > cursor_row
+                && blk_start_cut.is_empty()
+            {
+                let rest = (avail_for_rows
+                    - consumed
+                    - cs_before
+                    - crate::renderer::hwpunit_to_px(
+                        table::scan::row::EMPTY_BAND_CUT_BOTTOM_RESERVE_HU
+                            + i32::from(table.outer_margin_bottom),
+                        self.dpi,
+                    ))
+                .max(0.0);
+                let mut offsets = Vec::with_capacity(block_size);
+                let mut acc = 0.0;
+                for br in b_start..b_end {
+                    offsets.push(acc);
+                    acc += cut_row_h[br] + if br + 1 < b_end { cs } else { 0.0 };
+                }
+                let k = (0..offsets.len()).rev().find(|&i| offsets[i] < rest - 0.5);
+                if let Some(k) = k.filter(|&k| k > 0) {
+                    let top = offsets[k];
+                    let row_k = b_start + k;
+                    let probe = layout_engine.advance_row_block_cut_with_row_offsets(
+                        table,
+                        b_start,
+                        b_end,
+                        &[],
+                        rest,
+                        &offsets,
+                        styles,
+                    );
+                    if top + cut_row_h[row_k] > rest + 0.5
+                        && layout_engine.row_block_cells_complete_through(
+                            table,
+                            b_start,
+                            b_end,
+                            &probe.end_cut,
+                            row_k,
+                            styles,
+                        )
+                    {
+                        let limit = rest - top;
+                        let row_probe =
+                            layout_engine.advance_row_cut(table, row_k, &[], limit, styles);
+                        consumed += cs_before + rest;
+                        r = row_k + 1;
+                        end_row = r;
+                        end_row_height_override = Some(limit);
+                        split_end_cut = row_probe.end_cut;
+                        split_end_limit = limit;
+                        if std::env::var("RHWP_DIAG_SCAN").is_ok() {
+                            eprintln!(
+                                "DIAG_SCAN BLOCK_BAND_CARRY b={}..{} row={} rest={:.1} limit={:.1}",
+                                b_start, b_end, row_k, rest, limit
+                            );
+                        }
+                        return false;
+                    }
+                }
+            }
             let allow_block_split = cut_query.allows_split(genuinely_page_larger);
             // [#2097] RowBreak rowspan 블록 쪽 하단 밴드 필: plain 컷 walk 는
             // 셀-로컬 높이만 보고 행 시작 y 를 무시해, 블록 밴드가 잔여를
