@@ -233,6 +233,18 @@ impl DocumentCore {
         Ok(self.build_para_properties_json(para.para_shape_id, sec_idx))
     }
 
+    /// `getCellParaPropertiesAt` 의 cellPath 변형 (중첩 표 지원).
+    /// path 의 마지막 항목의 cell_para_index 가 조회할 최내곽 셀 문단이다.
+    pub fn get_cell_para_properties_at_by_path(
+        &self,
+        sec_idx: usize,
+        parent_para_idx: usize,
+        path: &[(usize, usize, usize)],
+    ) -> Result<String, HwpError> {
+        let para = self.resolve_paragraph_by_path(sec_idx, parent_para_idx, path)?;
+        Ok(self.build_para_properties_json(para.para_shape_id, sec_idx))
+    }
+
     /// 글자 속성 JSON 생성 헬퍼
     pub(crate) fn build_char_properties_json(
         &self,
@@ -1672,6 +1684,78 @@ impl DocumentCore {
         Ok("{\"ok\":true}".to_string())
     }
 
+    /// `applyParaFormatInCell` 의 cellPath 변형 (중첩 표 지원).
+    ///
+    /// flat 변형은 controlIndex/cellIndex 를 최외곽(cellPath[0]) 축으로 받아 중첩 셀에서
+    /// 바깥 셀 문단에 서식을 적용한다. 이 변형은 path 로 최내곽 셀 문단을 해석해 적용하고,
+    /// 텍스트 흐름에 영향 주는 변경이면 최내곽 셀 폭으로 재래핑한다
+    /// (`apply_char_format_in_cell_by_path` 동형).
+    pub fn apply_para_format_in_cell_by_path(
+        &mut self,
+        sec_idx: usize,
+        parent_para_idx: usize,
+        path: &[(usize, usize, usize)],
+        props_json: &str,
+    ) -> Result<String, HwpError> {
+        // 깊이 1 셀은 flat 형제가 셀 폭 리플로우를 담당한다.
+        if path.len() == 1 {
+            let (control_idx, cell_idx, cell_para_idx) = path[0];
+            return self.apply_para_format_in_cell_native(
+                sec_idx,
+                parent_para_idx,
+                control_idx,
+                cell_idx,
+                cell_para_idx,
+                props_json,
+            );
+        }
+
+        let mut mods = parse_para_shape_mods(props_json);
+        let base_id = self
+            .resolve_paragraph_by_path(sec_idx, parent_para_idx, path)?
+            .para_shape_id;
+
+        if json_has_tab_keys(props_json) {
+            let base_tab_def_id = self
+                .document
+                .doc_info
+                .para_shapes
+                .get(base_id as usize)
+                .map(|ps| ps.tab_def_id)
+                .unwrap_or(0);
+            let new_td = build_tab_def_from_json(
+                props_json,
+                base_tab_def_id,
+                &self.document.doc_info.tab_defs,
+            );
+            mods.tab_def_id = Some(self.document.find_or_create_tab_def(new_td));
+        }
+        if json_has_border_keys(props_json) {
+            mods.border_fill_id = Some(self.create_border_fill_from_json(props_json));
+        }
+        if let Some(arr) = parse_json_i16_array(props_json, "borderSpacing", 4) {
+            mods.border_spacing = Some([arr[0], arr[1], arr[2], arr[3]]);
+        }
+
+        let new_id = self.document.find_or_create_para_shape(base_id, &mods);
+        self.get_cell_paragraph_mut_by_path(sec_idx, parent_para_idx, path)?
+            .para_shape_id = new_id;
+
+        if para_shape_mods_affect_text_flow(&mods) {
+            let inner_cpi = path.last().map(|e| e.2).unwrap_or(0);
+            self.reflow_cell_paragraph_by_path(sec_idx, parent_para_idx, path, inner_cpi);
+        }
+        let outer_ctrl = path[0].0;
+        self.mark_cell_control_dirty(sec_idx, parent_para_idx, outer_ctrl);
+        self.document.sections[sec_idx].raw_stream = None;
+        self.rebuild_section_deferred_in_batch(sec_idx);
+        self.event_log.push(DocumentEvent::ParaFormatChanged {
+            section: sec_idx,
+            para: parent_para_idx,
+        });
+        Ok("{\"ok\":true}".to_string())
+    }
+
     /// 문단 서식 ID 직접 복원 (네이티브) — 셀 내 문단.
     pub fn set_cell_para_shape_id_native(
         &mut self,
@@ -3093,6 +3177,46 @@ mod cell_reflow_width_tests {
             line_count > 1,
             "깊이 2 안쪽 셀 폭(200)으로 재래핑되면 40자가 여러 줄이어야 함 (실제 {line_count}줄)"
         );
+    }
+
+    /// 깊이 2 — `applyParaFormatInCellByPath` 가 안쪽 셀 문단에만 문단 모양을 걸고(바깥 셀 문단은
+    /// 그대로) 최내곽 셀 폭으로 재래핑하며, `getCellParaPropertiesAtByPath` 가 그 모양을 읽는다.
+    #[test]
+    fn para_format_by_path_reaches_nested_inner_cell_only() {
+        let (mut core, path) = core_with_nested_narrow_cell(&"A".repeat(40));
+        if core.document.doc_info.para_shapes.is_empty() {
+            core.document.doc_info.para_shapes.push(Default::default());
+        }
+
+        core.apply_para_format_in_cell_by_path(0, 0, &path, r#"{"marginLeft":60,"indent":-60}"#)
+            .expect("서식 적용이 성공해야 함");
+
+        let Control::Table(outer) = &core.document.sections[0].paragraphs[0].controls[path[0].0]
+        else {
+            panic!("바깥 표여야 함");
+        };
+        let outer_para = &outer.cells[0].paragraphs[0];
+        assert_eq!(outer_para.para_shape_id, 0, "바깥 셀 문단은 그대로여야 함");
+        let Control::Table(inner) = &outer_para.controls[path[1].0] else {
+            panic!("안쪽 표여야 함");
+        };
+        let inner_id = inner.cells[0].paragraphs[0].para_shape_id;
+        let shape = &core.document.doc_info.para_shapes[inner_id as usize];
+        assert_eq!((shape.margin_left, shape.indent), (60, -60));
+
+        let line_count = inner_cell_line_count(&core, &path);
+        assert!(
+            line_count > 1,
+            "깊이 2 안쪽 셀 폭(200)으로 재래핑되면 40자가 여러 줄이어야 함 (실제 {line_count}줄)"
+        );
+
+        let props = core
+            .get_cell_para_properties_at_by_path(0, 0, &path)
+            .unwrap();
+        assert_eq!(props, core.build_para_properties_json(inner_id, 0));
+        assert!(core
+            .get_cell_para_properties_at_by_path(0, 0, &[(path[0].0, 0, 0), (9, 0, 0)])
+            .is_err());
     }
 
     /// [#2755] 깊이 2 — `setCharShapeIdInCellByPath` 도 최내곽 셀 폭으로 재래핑한다.
