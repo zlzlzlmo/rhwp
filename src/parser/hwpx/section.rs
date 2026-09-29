@@ -2546,6 +2546,15 @@ fn materialize_hwpx_table_attrs(table: &mut Table, table_record_flags: u32) {
     } else {
         0
     };
+    // 표 속성 조회(`getTableProperties`)는 «쪽 영역 안으로 제한»·«겹침 허용»을 이 속성의 bit13·bit14에서 읽는다
+    // (HWP5 CTRL_HEADER 규약 · `setTableProperties`도 같은 두 비트를 쓴다). 여기서 bit0만 옮기면 hwpx 문서의 표는 두 값이
+    // 늘 false로 읽혔다 — 조판은 `common.flow_with_text`를 쓰므로 같은 표가 hwp로 열면 참 · hwpx로 열면 거짓이 됐다.
+    if table.common.flow_with_text {
+        table.attr |= 1 << 13;
+    }
+    if table.common.allow_overlap {
+        table.attr |= 1 << 14;
+    }
     let mut record_attr = match table.page_break {
         TablePageBreak::CellBreak => 0x01,
         TablePageBreak::RowBreak => 0x02,
@@ -9076,7 +9085,7 @@ mod tests {
         assert_eq!(table.common.text_wrap, TextWrap::TopAndBottom);
         assert_eq!(table.common.vertical_offset as i32, -2000);
         assert_eq!(table.common.attr, 0x082a_2211);
-        assert_eq!(table.attr, 0x01);
+        assert_eq!(table.attr, 0x2001);
         assert_eq!(table.raw_table_record_attr, 0x0400_000e);
     }
 
