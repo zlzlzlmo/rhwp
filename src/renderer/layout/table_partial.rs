@@ -3318,7 +3318,32 @@ impl LayoutEngine {
                                             para_y
                                         }
                                     } else {
-                                        inner_area.y
+                                        // 빈 선행 문단도 줄 상자를 점유한다(통째 배치와 같은 규약) —
+                                        // 다만 첫 조각(su=0)에서 컷이 그 줄 자리를 유닛으로 계상한 만큼만, 글·개체
+                                        // 없는 문단만 내려앉힌다. 이어진 조각 머리의 빈 문단은 한/글이 쪽 머리에
+                                        // 두지 않는다(#5908 거대 칸 표본 부속서 표가 +506px 밀려 쪽 밖으로 샌다).
+                                        let accounted_lead_before_host_px: f64 = cut_units
+                                            .filter(|&(su, _)| su == 0)
+                                            .map(|(su, eu)| {
+                                                self.cell_units(cell, table, styles)
+                                                    .iter()
+                                                    .take(eu)
+                                                    .skip(su)
+                                                    .filter(|unit| {
+                                                        unit.para_idx < cp_idx
+                                                            && cell
+                                                                .paragraphs
+                                                                .get(unit.para_idx)
+                                                                .is_some_and(|blank| {
+                                                                    blank.text.trim().is_empty()
+                                                                        && blank.controls.is_empty()
+                                                                })
+                                                    })
+                                                    .map(|unit| unit.height)
+                                                    .sum()
+                                            })
+                                            .unwrap_or(0.0);
+                                        inner_area.y + accounted_lead_before_host_px
                                     };
                                     let available_h =
                                         (inner_area.height - (nested_y - inner_area.y)).max(0.0);

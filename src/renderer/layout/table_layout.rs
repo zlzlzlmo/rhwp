@@ -35,6 +35,8 @@ const ROWBREAK_STALE_PAGE_SCALE_PICTURE_OFFSET_MIN_HU: i32 = -40_000;
 /// remarks 셋째 줄 소유 회귀로 실증됐다. 그래서 잡음대(≤0.03px)와 실초과(≥0.19px)
 /// 사이의 0.1px 로 고정한다.
 const ROW_CUT_CAPACITY_FP_EPSILON_PX: f64 = 0.1;
+/// 중첩 표 행의 내용(`resolve_row_heights`)이 선언 행 높이의 이 배수 이상이면 선언 높이를 낡은 값으로 본다.
+const STALE_DECLARED_ROW_RATIO: f64 = 2.0;
 /// 쪽 스케일 칸 바닥값 — `cell_units` 쪽 프레임 판정과 같다. 이보다 작은 칸은
 /// 한 쪽에 들어가므로 [#6114] TAC 그림 높이 회계를 적용하지 않는다.
 const PAGE_SCALE_CELL_HEIGHT_PX: f64 = 800.0;
@@ -11679,9 +11681,20 @@ impl LayoutEngine {
                                 .fold(f64::MAX, f64::min);
                             let declared_is_stub = row_min_unit_px.is_finite()
                                 && row_declared_px + 0.5 < row_min_unit_px;
+                            // [nested-in-split-box] HWPX 컨테이너의 낡은 선언 높이 — 채움 도구가 글을
+                            // 늘렸는데 `cellSz height` 는 그대로인 행(서초 [붙임2] 중첩 표 행5: 선언
+                            // 52.2px · 내용 489.7px). 맥 한글 12.30 은 «셀 단위로 나눔» 중첩 표의 행을
+                            // 선언 높이와 무관하게 줄 단위로 끊는다(선언 = 내용으로 고친 표본도 같다).
+                            // 한/글이 저장한 표는 선언 ≈ 내용(≤1.6배)이라 이 문턱을 넘지 않고, 저장
+                            // 사다리를 따르는 native HWP5 는 여기서 제외한다(넓게 켠 판이 #6923 ·
+                            // #5908 표본의 쪽수를 7→10 · 48→47 로 바꿨다).
+                            let declared_is_stale = self.profile.get().hwpx_container()
+                                && row_declared_px > 0.0
+                                && *rh >= row_declared_px * STALE_DECLARED_ROW_RATIO;
                             let row_is_auto_height = !row_cells.is_empty()
                                 && (row_cells.iter().all(|cell| cell.height == 0)
-                                    || (declared_is_stub && *rh > row_declared_px + 0.5));
+                                    || (declared_is_stub && *rh > row_declared_px + 0.5)
+                                    || declared_is_stale);
                             if let Some(driver_index) = driver.filter(|driver_index| {
                                 row_is_auto_height
                                     && !row_has_crossing_span
