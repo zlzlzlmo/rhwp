@@ -164,6 +164,12 @@ pub(in crate::renderer::typeset) fn place(
                 // their deferred emission and layout fallback. Do not add a
                 // second full-range PartialParagraph for mixed controls.
                 flow_table_owns_host_text = true;
+                // 같은 줄의 글자처럼 표 아래로 내려앉는 양수 오프셋 표는 그 줄 끝 + 간격이 문단 기준이다(layout 과 같은 값).
+                let para_start_height = para_start_height
+                    + crate::renderer::layout::positive_float_below_tac_line_offset_hu(
+                        para, ctrl_idx,
+                    )
+                    .map_or(0.0, |hu| crate::renderer::hwpunit_to_px(hu, engine.dpi));
                 let break_after_current_table = controls::flow_table::place(
                     engine,
                     st,

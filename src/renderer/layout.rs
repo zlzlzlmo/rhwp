@@ -1055,6 +1055,15 @@ fn stored_float_anchor_line_top(
     control_index: usize,
     stored: &[&crate::model::paragraph::LineSeg],
 ) -> Option<i32> {
+    stored_control_line_index(para, control_index, stored).map(|k| stored[k].vertical_pos)
+}
+
+/// 컨트롤의 제어 문자가 실린 저장 줄 번호(`stored` 안).
+fn stored_control_line_index(
+    para: &Paragraph,
+    control_index: usize,
+    stored: &[&crate::model::paragraph::LineSeg],
+) -> Option<usize> {
     // 줄의 `text_start` 와 같은 축(HWP5 UTF-16)으로 올려서 견준다.
     let anchor_u16 = if para.char_offsets.is_empty() {
         // [#6879] 글자가 하나도 없이 개체만 실린 문단은 `char_offsets` 가 비어 있어
@@ -1090,9 +1099,7 @@ fn stored_float_anchor_line_top(
     };
     stored
         .iter()
-        .rev()
-        .find(|ls| para.line_seg_text_start_of(ls.text_start) <= anchor_u16)
-        .map(|ls| ls.vertical_pos)
+        .rposition(|ls| para.line_seg_text_start_of(ls.text_start) <= anchor_u16)
 }
 
 /// [#6860] 앵커 줄이 문단 첫 줄보다 아래일 때 그 **간격**(px).
@@ -1182,7 +1189,46 @@ pub(crate) fn tac_sibling_float_anchor_offset_px(
             dpi,
         );
     }
+    if let Some(next_line_hu) = positive_float_below_tac_line_offset_hu(para, control_index) {
+        return hwpunit_to_px(next_line_hu, dpi);
+    }
     stored_float_anchor_offset_px(para, table, control_index, dpi)
+}
+
+/// 양수 세로 오프셋 자리차지 표가 글자처럼 형제 **뒤**로 같은 저장 줄에 실렸고, 선언 자리(그 줄 위 + 오프셋)가 그
+/// 줄 안이면 한/글은 글자처럼 줄을 먼저 두고 표의 세로 기준을 그 줄 끝 + 줄 간격(다음 줄 자리)으로 내린다 — 그 자리의
+/// 문단 첫 줄 기준 오프셋(HU). 맥 한글 12.30: 서초AICT [붙임2] 문단 1 — 글자처럼 제목 띠(줄 lh 4260 · ls 900) 뒤
+/// 자리차지 테두리 표(v_off 889)의 윗변 = 줄 위 + 4260 + 900 + 889 + 바깥 위 여백 283(158.2pt · 맥 158.3pt). 순서가
+/// 거꾸로(표가 글자처럼 표 앞)면 글자처럼 줄이 표 아래로 밀린다(#5807 1880690) — 그 형상은 여기 안 걸린다.
+pub(crate) fn positive_float_below_tac_line_offset_hu(
+    para: &Paragraph,
+    control_index: usize,
+) -> Option<i32> {
+    let Some(Control::Table(table)) = para.controls.get(control_index) else {
+        return None;
+    };
+    let v_off = signed_hwpunit(table.common.vertical_offset);
+    if v_off <= 0 || !is_para_topbottom_float(&table.common) {
+        return None;
+    }
+    let stored: Vec<&crate::model::paragraph::LineSeg> = para
+        .line_segs
+        .iter()
+        .filter(|ls| ls.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0)
+        .collect();
+    let line_of = |ci: usize| stored_control_line_index(para, ci, &stored);
+    let k = line_of(control_index)?;
+    let tac_on_same_line = para
+        .controls
+        .iter()
+        .enumerate()
+        .take(control_index)
+        .any(|(j, ctrl)| ctrl.is_treat_as_char_object() && line_of(j) == Some(k));
+    let line = stored[k];
+    if !tac_on_same_line || v_off >= line.line_height {
+        return None;
+    }
+    Some((line.vertical_pos + line.line_height + line.line_spacing - stored[0].vertical_pos).max(0))
 }
 
 /// 세로 오프셋 0 인 자리차지 개체가 글자처럼 형제 **뒤** 줄에 실렸을 때 그 줄의 문단 안 자리(HU). 그 줄이 쪽
@@ -13233,6 +13279,8 @@ impl LayoutEngine {
                         && (t.common.vertical_offset as i32) > 0
                     {
                         para_start_y.get(&para_index).copied().unwrap_or(y_offset)
+                            + positive_float_below_tac_line_offset_hu(para, control_index)
+                                .map_or(0.0, |hu| hwpunit_to_px(hu, self.dpi))
                     } else {
                         y_offset
                     }

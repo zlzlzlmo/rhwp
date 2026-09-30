@@ -132,7 +132,12 @@ pub(in crate::renderer::typeset) fn for_paragraph(
                     >= tac_host_line_height_hu)
     };
     // 그런 표가 있으면 배열(저장) 순서 그대로다 — 뒤 줄의 글자처럼 표도 그 표 뒤에 온다.
-    let keep_array_order = (0..para.controls.len()).any(float_anchored_after_tac_line);
+    // 양수 오프셋 표가 같은 줄의 글자처럼 표 **뒤**에 실려 그 줄에 겹치면 한/글은 글자처럼 줄을 먼저 두고 표를 그 줄
+    // 아래로 내린다(`positive_float_below_tac_line_offset_hu`) — 보조 키가 표를 앞세우면 제목 띠가 표 꼬리 뒤로 간다.
+    let keep_array_order = (0..para.controls.len()).any(|i| {
+        float_anchored_after_tac_line(i)
+            || crate::renderer::layout::positive_float_below_tac_line_offset_hu(para, i).is_some()
+    });
     let table_flow_tiebreak = |ctrl: &Control| -> u8 {
         match ctrl {
             Control::Table(t) if !flow.is_effective_tac_table(para, t, fmt) => 0,
