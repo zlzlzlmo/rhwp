@@ -6625,11 +6625,31 @@ impl LayoutEngine {
                                 let para_top = table_node.bbox.y
                                     - hwpunit_to_px(i32::from(table.outer_margin_top), self.dpi)
                                     - para_rel_offset;
+                                // 글자처럼 형제 뒤에 달린 표는 표 아래 본문 문단 줄이다(`cell_floats_stand_after_table`).
+                                let after_table = cell_context.as_ref().is_some_and(|context| {
+                                    context.path.len() == 1
+                                        && self.cell_float_after_table_host.get()
+                                            == Some((
+                                                context.parent_para_index,
+                                                context.path[0].control_index,
+                                            ))
+                                });
+                                let para_top = if after_table {
+                                    table_node.bbox.y
+                                        + table_node.bbox.height
+                                        + hwpunit_to_px(
+                                            i32::from(table.outer_margin_bottom),
+                                            self.dpi,
+                                        )
+                                } else {
+                                    para_top
+                                };
                                 match self.cell_float_host_origin.get() {
                                     Some((host_x, host_y)) => (
                                         host_x,
-                                        if matches!(table.common.vert_rel_to, VertRelTo::Para)
-                                            && !table.common.treat_as_char
+                                        if after_table
+                                            || (matches!(table.common.vert_rel_to, VertRelTo::Para)
+                                                && !table.common.treat_as_char)
                                         {
                                             para_top
                                         } else {

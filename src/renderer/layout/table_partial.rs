@@ -27,10 +27,20 @@ use super::{
 use crate::model::bin_data::BinDataContent;
 use crate::model::control::Control;
 use crate::model::paragraph::Paragraph;
-use crate::model::shape::{CaptionDirection, CommonObjAttr, HorzRelTo};
+use crate::model::shape::{CaptionDirection, CommonObjAttr, HorzRelTo, TextWrap, VertRelTo};
 use crate::model::style::{Alignment, BorderLine};
 use crate::model::table::{Cell, Table};
 use crate::renderer::float_placement::native_multirow_internal_reset_rowbreak_anchor_advance_hu;
+
+/// 칸 문단의 «쪽 영역 안으로 제한» 끈 글앞 그림(문단 기준) — 표를 단 본문 문단에 서는 그림(`table_layout` 의
+/// `table_frame_origin` 과 같은 무리, 맥 한글 12.30 로 잰 글앞만).
+fn is_split_table_host_float(common: &CommonObjAttr) -> bool {
+    !common.treat_as_char
+        && !common.flow_with_text
+        && matches!(common.vert_rel_to, VertRelTo::Para)
+        && matches!(common.horz_rel_to, HorzRelTo::Para)
+        && matches!(common.text_wrap, TextWrap::InFrontOfText)
+}
 
 /// A repeated header is a complete cell instance, not a clipped continuation.
 /// Check source-row coverage rather than the table's continuation flag or a content clip.
@@ -1075,6 +1085,8 @@ impl LayoutEngine {
         enclosing_cell_ctx: Option<&CellContext>,
         clamp_header_negative_para_offset: bool,
         probe: Option<&PartialTableCellProbe>,
+        // 이 표의 칸 문단 글앞 그림은 마지막 조각 뒤에 따로 선다(`layout_split_table_host_floats`).
+        split_table_owns_host_floats: bool,
     ) {
         for (cell_idx, cell) in table.cells.iter().enumerate() {
             // [#4149] 프로브: 대상 셀만 방출. 셀 방출 루프는 셀-간 캐리가 없어
@@ -2481,6 +2493,13 @@ impl LayoutEngine {
                                 {
                                     continue;
                                 }
+                                // 나눈 자리차지 표의 칸 문단 글앞 그림은 마지막 조각 뒤에 따로 세운다
+                                // (`layout_split_table_host_floats`) — 어느 조각의 칸 문단이든 여기선 그리지 않는다.
+                                if split_table_owns_host_floats
+                                    && is_split_table_host_float(&pic.common)
+                                {
+                                    continue;
+                                }
                                 if pic.common.treat_as_char {
                                     let pic_w = hwpunit_to_px(pic.common.width as i32, self.dpi);
                                     // 줄 끝 그림도 inline 경로에서 그릴 수 있다. 일반 셀과
@@ -3791,6 +3810,94 @@ impl LayoutEngine {
         )
     }
 
+    /// **쪽을 넘긴 자리차지 표의 칸 문단 글앞 그림**(쪽 영역 제한 끔·문단 기준)을 마지막 조각 뒤에 세운다.
+    ///
+    /// 한/글은 이 그림의 원점을 표를 단 본문 문단 줄 — 표가 끝난 쪽의 표 아래 + 바깥 아래 여백, 가로 단 왼쪽 + 문단
+    /// 왼쪽 여백 — 에 둔다. 맥 한글 12.30: 서초 [붙임2] 3쪽에 걸친 1×1 표(문단 기준 · 오프셋 0)에 단 그림은
+    /// 3쪽 칸 문단(«(인)» 줄)이든 1쪽 첫 칸 문단이든 똑같이 3쪽 (75.5, 502.4)px — 표 아래 498.7 + 바깥 여백 3.8.
+    /// 한 조각에 다 든 표는 `table_layout` 의 `table_frame_origin`(문단 위)이다.
+    #[allow(clippy::too_many_arguments)]
+    fn layout_split_table_host_floats(
+        &self,
+        tree: &mut PageLayoutContext,
+        col_node: &mut RenderNode,
+        table: &Table,
+        para_index: usize,
+        control_index: usize,
+        section_index: usize,
+        styles: &ResolvedStyleSet,
+        bin_data_content: &[BinDataContent],
+        col_area: &LayoutRect,
+        host_margin_left: f64,
+        host_margin_right: f64,
+        frame_bottom: f64,
+    ) {
+        let host_line = LayoutRect {
+            x: col_area.x + host_margin_left,
+            y: frame_bottom + hwpunit_to_px(i32::from(table.outer_margin_bottom), self.dpi),
+            width: (col_area.width - host_margin_left - host_margin_right).max(0.0),
+            height: 0.0,
+        };
+        for (cell_idx, cell) in table.cells.iter().enumerate() {
+            for (cp_idx, para) in cell.paragraphs.iter().enumerate() {
+                for (ctrl_idx, ctrl) in para.controls.iter().enumerate() {
+                    let Control::Picture(pic) = ctrl else {
+                        continue;
+                    };
+                    if !is_split_table_host_float(&pic.common) {
+                        continue;
+                    }
+                    let pic_w = hwpunit_to_px(pic.common.width as i32, self.dpi);
+                    let pic_h = hwpunit_to_px(pic.common.height as i32, self.dpi);
+                    let (pic_x, pic_y) = self.compute_object_position(
+                        &pic.common,
+                        pic_w,
+                        pic_h,
+                        &host_line,
+                        col_area,
+                        col_area,
+                        col_area,
+                        host_line.y,
+                        Alignment::Left,
+                    );
+                    let mut pic_for_layout = pic.clone();
+                    pic_for_layout.common.horizontal_offset = 0;
+                    pic_for_layout.common.vertical_offset = 0;
+                    pic_for_layout.common.horz_align = crate::model::shape::HorzAlign::Left;
+                    pic_for_layout.common.vert_align = crate::model::shape::VertAlign::Top;
+                    let cell_context = CellContext {
+                        in_textbox: false,
+                        parent_para_index: para_index,
+                        path: vec![CellPathEntry {
+                            control_index,
+                            cell_index: cell_idx,
+                            cell_para_index: cp_idx,
+                            text_direction: cell.text_direction,
+                        }],
+                    };
+                    self.layout_picture(
+                        tree,
+                        col_node,
+                        &pic_for_layout,
+                        &LayoutRect {
+                            x: pic_x,
+                            y: pic_y,
+                            width: pic_w,
+                            height: pic_h,
+                        },
+                        bin_data_content,
+                        Alignment::Left,
+                        Some(section_index),
+                        Some(para_index),
+                        Some(ctrl_idx),
+                        Some(&cell_context),
+                        styles,
+                    );
+                }
+            }
+        }
+    }
+
     /// 표의 일부 행만 레이아웃한다 (페이지 분할).
     ///
     /// `start_row..end_row` 범위의 행만 렌더링한다.
@@ -4676,6 +4783,14 @@ impl LayoutEngine {
         // ── 4b. 캡션 처리 (첫 번째 파트에서만 렌더링) ──
         let is_first_part = start_row == 0 && !is_continuation && start_cut.is_empty();
         let is_last_part = end_row >= row_count && end_cut.is_empty();
+        // 쪽을 넘긴, 글자처럼 형제 뒤에 달린 본문 자리차지 표(`cell_floats_stand_after_table`) — 한 조각에 다 든 표·칸 안 표·
+        // 풀어 쓴 1×1 감싸개 제외. 형제 없는 표는 종전대로(한/글은 첫 쪽 문단 위 — b7ef0592 맥 대조).
+        let split_table_owns_host_floats = !(is_first_part && is_last_part)
+            && enclosing_cell_ctx.is_none()
+            && !row_cursor_is_nested
+            && paragraphs
+                .get(para_index)
+                .is_some_and(|para| super::cell_floats_stand_after_table(para, control_index));
         let (caption_height, caption_spacing) = if is_first_part || is_last_part {
             let ch = self.calculate_caption_height(&table.caption, styles);
             let cs = table
@@ -4812,6 +4927,7 @@ impl LayoutEngine {
             enclosing_cell_ctx,
             clamp_header_negative_para_offset,
             probe,
+            split_table_owns_host_floats,
         );
 
         // A recovered terminal Square-flow line also owns the final frame edge.
@@ -5072,7 +5188,24 @@ impl LayoutEngine {
             }
         }
 
+        let frame_bottom = table_y + grid_row_y.last().copied().unwrap_or(partial_table_height);
         col_node.children.push(table_node);
+        if probe.is_none() && is_last_part && split_table_owns_host_floats {
+            self.layout_split_table_host_floats(
+                tree,
+                col_node,
+                table,
+                para_index,
+                control_index,
+                section_index,
+                styles,
+                bin_data_content,
+                col_area,
+                host_margin_left,
+                host_margin_right,
+                frame_bottom,
+            );
+        }
 
         // ── 캡션 렌더링 ──
         // cell_index = 65534: 캡션 식별 센티널 (셀 0과 구분)

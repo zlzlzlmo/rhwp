@@ -1156,6 +1156,15 @@ pub(crate) fn stored_float_anchor_offset_hu(
 ///
 /// 조각 경로(`#6860`)는 이 게이트를 쓰지 않는다 — 3067979 문단 1523 은 형제가 없어도
 /// 앵커 줄 기준이 정본과 맞고, 그 경로는 `#6718` 되감김과 만나지 않는다.
+/// 본문 자리차지 표(글자처럼 아님)가 글자처럼 형제 뒤에 달렸는가 — 그러면 한/글은 그 표 칸 문단의 «쪽 영역 제한» 끈
+/// 글앞 그림을 문단 위가 아니라 **표가 끝난 쪽의 표 아래 + 바깥 아래 여백**(본문 문단 줄)에서 잰다. 맥 한글 12.30
+/// (서초 [붙임2] — 문단 1 = 글자처럼 제목 표 + 쪽 테두리 1×1 표): 한 쪽 표 1003.2 = 표 아래 999.4 + 3.8 · 세 쪽 표 3쪽
+/// 502.4 = 498.7 + 3.8. 제목 표를 지운 같은 문서와 형제 없는 b7ef0592(두 쪽 14×9)는 종전대로 첫 쪽 문단 위다.
+pub(crate) fn cell_floats_stand_after_table(para: &Paragraph, control_index: usize) -> bool {
+    matches!(para.controls.get(control_index), Some(Control::Table(t)) if !t.common.treat_as_char)
+        && has_line_taking_tac_sibling_before(para, control_index)
+}
+
 pub(crate) fn has_line_taking_tac_sibling_before(para: &Paragraph, control_index: usize) -> bool {
     para.controls
         .iter()
@@ -3242,6 +3251,9 @@ pub struct LayoutEngine {
     /// 지금 짜는 본문 표(깊이 0)를 단 문단의 원점 — (단 왼쪽 + 문단 왼쪽 여백, 문단 위(앞 간격 전)).
     /// 칸 안 «쪽 영역 안으로 제한» 끈 글앞·글뒤 그림(문단 기준)은 칸 문단이 아니라 이 문단에 선다.
     cell_float_host_origin: std::cell::Cell<Option<(f64, Option<f64>)>>,
+    /// 지금 짜는 본문 자리차지 표가 **글자처럼 형제 뒤**에 달렸으면 그 표의 (문단, 컨트롤) — 칸 안 «쪽 영역 제한» 끈
+    /// 글앞 그림의 원점이 문단 위가 아니라 표 아래(+ 바깥 아래 여백) 본문 문단 줄이다(맥 한글 12.30, 서초 [붙임2]).
+    cell_float_after_table_host: std::cell::Cell<Option<(usize, usize)>>,
     /// Issue #2214 test-only: cache miss가 실제 table-wide scan으로 이어진 횟수.
     #[cfg(test)]
     table_nested_text_flag_scan_count: std::cell::Cell<usize>,
@@ -3354,6 +3366,7 @@ impl LayoutEngine {
             single_line_overflow_cache: Default::default(),
             squeeze_cell_line: std::cell::Cell::new(false),
             cell_float_host_origin: std::cell::Cell::new(None),
+            cell_float_after_table_host: std::cell::Cell::new(None),
             #[cfg(test)]
             table_nested_text_flag_scan_count: std::cell::Cell::new(0),
         }
@@ -12034,6 +12047,10 @@ impl LayoutEngine {
                 .unwrap_or(false);
             self.para_float_host_has_text
                 .set(is_current_visible_para_float);
+            self.cell_float_after_table_host.set(
+                cell_floats_stand_after_table(para, control_index)
+                    .then_some((para_index, control_index)),
+            );
             let is_first_empty_para_float_control = is_current_empty_para_float
                 && para.controls.iter().position(|c| {
                     matches!(
