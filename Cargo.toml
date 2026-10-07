@@ -225,6 +225,11 @@ path = "tests/overflow_cell_baseline.rs"
 
 # END RHWP GENERATED TEST TARGETS
 
+# 위비즈 포크 전용 회귀 시험 — 생성 블록(통합 시험 목표 예산 48) 밖에 둔다. 상류 병합 때 충돌하지 않게 한 곳에 모은다.
+[[test]]
+name = "webiz_tac_oversized_rowbreak_split"
+path = "tests/webiz_tac_oversized_rowbreak_split.rs"
+
 [dependencies]
 rhwp-contracts = { path = "crates/rhwp-contracts" }
 rhwp-ooxml-chart = { path = "crates/rhwp-ooxml-chart" }
