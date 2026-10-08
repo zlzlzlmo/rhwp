@@ -1416,10 +1416,16 @@ impl TypesetEngine {
         let below_body_slack =
             (st.layout.page_height - (st.layout.body_area.y + st.layout.body_area.height)).max(0.0);
         let table_only_height = (table_total - host_spacing_total).max(0.0);
+        // 가르지 않는 표 — «나누지 않음»과, 행이 하나뿐이라 «셀 단위로 나눔»이 가를 행 사이가 없는 표(한글: 칸이 쪽보다 크면 한 쪽에서 잘린다 — 한 칸 90줄 7쪽).
+        let unsplittable = matches!(table.page_break, crate::model::table::TablePageBreak::None)
+            || (matches!(
+                table.page_break,
+                crate::model::table::TablePageBreak::CellBreak
+            ) && table.row_count == 1);
         // [위비즈 252차] 쪽에는 들지만 이 쪽 남은 자리에 안 드는 «나누지 않음» 표: 한글은 host 줄과 뒤 문단을 이 쪽에 두고 표만 다음 쪽 맨 위로 보낸다
         // (242쪽 오라클 문서 pi=4342 — 뒤 문단 저장 vpos가 host 한 줄 아래이고 다음 쪽 첫 줄이 표 높이만큼 내려 시작한다 · 한글 12.30 직접 확인).
         // 글 없는 host의 단독 표만 — 글이 있는 host·여러 표 문단은 종전 길이다.
-        if matches!(table.page_break, crate::model::table::TablePageBreak::None)
+        if unsplittable
             && !table.common.treat_as_char
             && matches!(
                 table.common.text_wrap,
@@ -1486,7 +1492,7 @@ impl TypesetEngine {
         }
         // [위비즈 252차] 쪽 맨 위(빈 쪽)에서 시작해도 쪽보다 몇 배 큰 «나누지 않음» 표는 가르지 않는다 — 한글 12.30 열기 실측: 새 60행 표(≈1,450px)·한 칸 90줄 표
         // (≈2,700px)가 총 쪽 수를 한 쪽만 늘렸고 아래는 잘린다(rhwp #7288). 종전 «극단 형상은 미관측이라 보수 가드»는 분할 폴백이었다.
-        if matches!(table.page_break, crate::model::table::TablePageBreak::None)
+        if unsplittable
             && !table.common.treat_as_char
             && st.current_items.is_empty()
             && table_only_height > st.base_available_height() + below_body_slack
