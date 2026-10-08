@@ -1426,8 +1426,6 @@ impl TypesetEngine {
                 crate::model::shape::TextWrap::TopAndBottom
             )
             && !st.current_items.is_empty()
-            && (table_only_height <= st.base_available_height()
-                || table_only_height > st.base_available_height() + below_body_slack)
             && !para_has_visible_text(para)
             && para
                 .controls

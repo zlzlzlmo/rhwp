@@ -495,6 +495,10 @@ impl TypesetState {
 
     /// 강제 새 페이지
     pub(in crate::renderer::typeset) fn force_new_page(&mut self) {
+        // [위비즈 252차] 밀린 «나누지 않음» 표는 강제 쪽 나눔이 여는 쪽이 아니라 그 앞의 제 쪽에 선다(한글 12.30: 표 쪽 + 강제 쪽 나눔 쪽이 따로).
+        if !self.data.pending_page_top_tables.is_empty() {
+            self.advance_column_or_new_page();
+        }
         self.flush_column();
         self.push_new_page();
     }
