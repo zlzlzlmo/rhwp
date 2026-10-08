@@ -225,6 +225,10 @@ path = "tests/overflow_cell_baseline.rs"
 
 # END RHWP GENERATED TEST TARGETS
 
+[[test]]
+name = "webiz_table_pagebreak_split"
+path = "tests/webiz_table_pagebreak_split.rs"
+
 [dependencies]
 rhwp-contracts = { path = "crates/rhwp-contracts" }
 rhwp-ooxml-chart = { path = "crates/rhwp-ooxml-chart" }

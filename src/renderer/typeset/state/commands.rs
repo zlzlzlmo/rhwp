@@ -32,6 +32,20 @@ impl TypesetState {
     pub(in crate::renderer::typeset) fn advance_flow_by(&mut self, height: f64) {
         self.data.current_height += height;
     }
+    /// 이 쪽에 안 드는 «나누지 않음» 표를 다음 쪽 맨 위로 미룬다(위비즈 252차).
+    pub(in crate::renderer::typeset) fn defer_table_to_page_top(
+        &mut self,
+        para_index: usize,
+        control_index: usize,
+        height: f64,
+    ) {
+        self.data
+            .pending_page_top_tables
+            .push((para_index, control_index, height));
+    }
+    pub(in crate::renderer::typeset) fn has_pending_page_top_tables(&self) -> bool {
+        !self.data.pending_page_top_tables.is_empty()
+    }
     pub(in crate::renderer::typeset) fn reclaim_flow_by(&mut self, height: f64) {
         self.data.current_height -= height;
     }

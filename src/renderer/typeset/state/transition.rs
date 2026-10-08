@@ -60,6 +60,7 @@ impl TypesetState {
                 deferred_table_controls: Vec::new(),
                 deferred_next_page_square_pictures: Vec::new(),
                 page_start_square_pictures: Vec::new(),
+                pending_page_top_tables: Vec::new(),
                 fragment_queued_table_footnotes: std::collections::HashSet::new(),
                 reset_vpos_after_queued_table_footnote_page: false,
                 prefilled_paras: std::collections::HashSet::new(),
@@ -531,6 +532,16 @@ impl TypesetState {
         }
         // Task #321: 새 페이지에서는 body-wide top reserve 초기화
         self.data.pending_body_wide_top_reserve = 0.0;
+        // [위비즈 252차] 앞 쪽에서 밀려난 «나누지 않음» 표는 이 쪽 맨 위에 흐름 항목으로 놓는다.
+        for (para_index, control_index, height) in
+            std::mem::take(&mut self.data.pending_page_top_tables)
+        {
+            self.data.current_items.push(PageItem::Table {
+                para_index,
+                control_index,
+            });
+            self.data.current_height += height;
+        }
         // [#4568] 앞 쪽에서 잘린 overlay 표의 잔여 행을 이 쪽 최상단에 이어 그린다.
         // `current_items` 가 아니라 단 전용 목록으로 넘긴다 — 흐름 항목이 아니라
         // z-layer 장식이고, 항목으로 섞으면 이 조각이 단의 첫 항목이 되어

@@ -1182,6 +1182,12 @@ fn page_item_vpos_base(item: &PageItem, paragraphs: &[Paragraph]) -> Option<i32>
             .get(*para_index)
             .and_then(|para| para.line_segs.get(*start_line))
             .map(|seg| seg.vertical_pos),
+        // [위비즈 252차] 표 조각이 쪽 첫 항목이면 그 뒤 문단의 저장 vpos는 쪽 안 좌표다(한글 저장: 6132 문서 pi=95 vpos 58624 = 쪽 위에서 781.7px) —
+        // host 문단의 vpos(쪽을 가로지르는 사다리)를 원점으로 읽으면 뒤 줄의 저장 경계가 쪽 위로 떨어져 «저장 줄이 쪽 바닥에 든다» 근거를 잃는다.
+        PageItem::PartialTable {
+            is_continuation: true,
+            ..
+        } => Some(0),
         PageItem::FullParagraph { para_index }
         | PageItem::Table { para_index, .. }
         | PageItem::PartialTable { para_index, .. }

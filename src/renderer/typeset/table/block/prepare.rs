@@ -59,7 +59,9 @@ impl TypesetEngine {
         } = entry;
         let row_count = mt.row_heights.len();
         let cs = mt.cell_spacing;
-        let can_intra_split = !mt.cells.is_empty();
+        // [위비즈 252차] 한글: 칸 안 줄을 쪽 경계에서 잇는 것은 «나눔»(RowBreak)뿐이다. «셀 단위로 나눔»은 쪽에 걸리는 셀을 통째로 다음 쪽으로 넘기고
+        // (쪽보다 큰 칸은 한 쪽에서 잘린다) «나누지 않음»은 표를 가르지 않는다 — 한글 12.30 열기 실측(rhwp #7288).
+        let can_intra_split = !mt.cells.is_empty() && mt.allows_row_break_split();
         let base_available = st.base_available_height();
         // Partial table borders are rendered against the visible body area. The paginator-level
         // bottom tolerance is useful for text fit heuristics, but if row cuts spend it here the

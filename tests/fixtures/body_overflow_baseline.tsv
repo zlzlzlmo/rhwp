@@ -226,8 +226,9 @@ tac-img-02.hwp	1
 tac-img-02.hwpx	1
 task1716/table_scattered_header_rowbreak.hwpx	2
 task1718/table_giant_cell_overfill.hwp	1
-task1725/text_footnote_tail_overpagination.hwp	13
-task1725/text_footnote_tail_overpagination.hwpx	13
+# [위비즈 252차] 쪽 바닥에 안 드는 «나누지 않음» 표를 다음 쪽 맨 위로 보내고 host 줄·뒤 문단은 그 쪽에 둔다(한컴 저장 vpos) — 뒤 문단 줄 둘이 본문 바닥을 5px 안팎 넘는다(저장 vpos 자체가 한컴에서 그 자리).
+task1725/text_footnote_tail_overpagination.hwp	15
+task1725/text_footnote_tail_overpagination.hwpx	15
 task1749/saved_bounds_cumulative_page_break.hwpx	1
 task1768/distribution_doc.hwpx	1
 task2070/1130000-201900011_D0150004-1-002_2017년기준 시장구조조사.hwp	27
@@ -265,7 +266,8 @@ issue6973/83818-appraisal-rules-amendment.hwpx	1
 # 본문 바닥을 +91.1px 넘었다(각 1건). 18a9fa85e(#7263 묶음, `Refs #7234`)가 중첩 표 실제 점유 높이
 # 예약을 보정해 컷이 한/글 2020 정본과 같은 47행으로 옮겨졌고 두 행 모두 실측 0 이 됐다 — 조인다.
 # 컷 위치 자체는 tests/cases/issue_7234_scaffold_tall_table_row_split.rs 가 정본에 묶어 잠근다.
-issue7216/tall_table_before.hwpx	0
+# [위비즈 252차] «나누지 않음» 표는 가르지 않는다 — 한/글 2020 PDF(`tall_table_before-2020.pdf`)가 60행 표를 1쪽에 통째로 두고 `설명 53`에서 끊는다. 의도된 증가 1건.
+issue7216/tall_table_before.hwpx	1
 issue7216/tall_table_after.hwpx	0
 80250_regulatory_analysis.hwp	1
 # 완화 (쪽 중간 첫 조각의 바깥 위 여백, 2026-09-25): 36341511(hwpx) 3쪽 pi 14 첫 조각. 그림이 pi 7(글자처럼 1×3 표) 뒤부터

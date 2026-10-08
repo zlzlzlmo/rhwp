@@ -1416,6 +1416,53 @@ impl TypesetEngine {
         let below_body_slack =
             (st.layout.page_height - (st.layout.body_area.y + st.layout.body_area.height)).max(0.0);
         let table_only_height = (table_total - host_spacing_total).max(0.0);
+        // [위비즈 252차] 쪽에는 들지만 이 쪽 남은 자리에 안 드는 «나누지 않음» 표: 한글은 host 줄과 뒤 문단을 이 쪽에 두고 표만 다음 쪽 맨 위로 보낸다
+        // (242쪽 오라클 문서 pi=4342 — 뒤 문단 저장 vpos가 host 한 줄 아래이고 다음 쪽 첫 줄이 표 높이만큼 내려 시작한다 · 한글 12.30 직접 확인).
+        // 글 없는 host의 단독 표만 — 글이 있는 host·여러 표 문단은 종전 길이다.
+        if matches!(table.page_break, crate::model::table::TablePageBreak::None)
+            && !table.common.treat_as_char
+            && matches!(
+                table.common.text_wrap,
+                crate::model::shape::TextWrap::TopAndBottom
+            )
+            && !st.current_items.is_empty()
+            && (table_only_height <= st.base_available_height()
+                || table_only_height > st.base_available_height() + below_body_slack)
+            && !para_has_visible_text(para)
+            && para
+                .controls
+                .iter()
+                .filter(|c| matches!(c, Control::Table(_)))
+                .count()
+                == 1
+        {
+            // 앞서 밀린 표가 아직 줄 서 있으면 쪽 하나에 표 하나다 — 먼저 새 쪽을 열어 그 표를 맨 위에 놓고(쪽마다 한 장씩 서는 표 묶음), 이 표가 그 쪽 남은 자리에
+            // 들면 흐름대로 놓고 안 들면 다시 다음 쪽으로 민다.
+            if st.has_pending_page_top_tables() {
+                st.advance_column_or_new_page();
+                if st.current_height + table_total <= st.available_height() {
+                    self.place_table_with_text(
+                        st,
+                        para_idx,
+                        ctrl_idx,
+                        para,
+                        table,
+                        fmt,
+                        para_start_height,
+                        table_total,
+                        is_first_placed,
+                        is_last_placed,
+                        ft.strict_following_plain_text_fit,
+                        styles,
+                    );
+                    return None;
+                }
+            }
+            let host_line_px = fmt.line_advances_sum(0..fmt.line_heights.len());
+            st.advance_flow_by(host_line_px);
+            st.defer_table_to_page_top(para_idx, ctrl_idx, table_only_height);
+            return None;
+        }
         if matches!(table.page_break, crate::model::table::TablePageBreak::None)
             && table_only_height > st.base_available_height()
             && table_only_height <= st.base_available_height() + below_body_slack
@@ -1423,6 +1470,29 @@ impl TypesetEngine {
             if !st.current_items.is_empty() {
                 st.advance_column_or_new_page();
             }
+            self.place_table_with_text(
+                st,
+                para_idx,
+                ctrl_idx,
+                para,
+                table,
+                fmt,
+                para_start_height,
+                table_total,
+                is_first_placed,
+                is_last_placed,
+                ft.strict_following_plain_text_fit,
+                styles,
+            );
+            return None;
+        }
+        // [위비즈 252차] 쪽 맨 위(빈 쪽)에서 시작해도 쪽보다 몇 배 큰 «나누지 않음» 표는 가르지 않는다 — 한글 12.30 열기 실측: 새 60행 표(≈1,450px)·한 칸 90줄 표
+        // (≈2,700px)가 총 쪽 수를 한 쪽만 늘렸고 아래는 잘린다(rhwp #7288). 종전 «극단 형상은 미관측이라 보수 가드»는 분할 폴백이었다.
+        if matches!(table.page_break, crate::model::table::TablePageBreak::None)
+            && !table.common.treat_as_char
+            && st.current_items.is_empty()
+            && table_only_height > st.base_available_height() + below_body_slack
+        {
             self.place_table_with_text(
                 st,
                 para_idx,

@@ -444,6 +444,10 @@ impl TypesetEngine {
             &mut issue2424_prof.deferred_flush,
             issue2424_final_flush_started,
         );
+        // [위비즈 252차] 마지막 쪽까지 남은 자리가 없어 밀린 «나누지 않음» 표는 새 쪽 맨 위에 놓는다.
+        if st.has_pending_page_top_tables() {
+            st.advance_column_or_new_page();
+        }
         if !st.current_items.is_empty() {
             st.flush_column_always();
         }

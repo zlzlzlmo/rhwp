@@ -1,8 +1,9 @@
 //! 전체 문단 fit의 저장 근거·되감김 판단. 호환성 spill 기록과 배치는 조정자가 수행한다.
 
 use super::super::{
-    line_seg_visible_bounds_px, page_item_para_index, para_controls_only_tac_topbottom_objects,
-    para_controls_only_topbottom_floats, para_has_visible_text, paragraph_page_end_fit_height,
+    is_synthetic_line_seg, line_seg_visible_bounds_px, page_item_para_index,
+    para_controls_only_tac_topbottom_objects, para_controls_only_topbottom_floats,
+    para_has_visible_text, paragraph_page_end_fit_height,
     paragraph_text_looks_like_list_continuation_tail, preceding_stored_vpos,
     saved_bounds_fit_at_flow_tail, saved_flow_marks_page_last, single_line_visible_bounds_px,
     stored_rewind_boundary_matches_current_flow, stored_vpos_restarts_near_body_top,
@@ -85,7 +86,22 @@ pub(super) fn inspect(
         // [#2093] spacing_after 게이트(#1733) 제거: 신뢰 판정은 저장 줄의 시각
         // 경계(vpos~vpos+lh)로 하며, 한글은 쪽 마지막 줄의 아래 간격을 쪽 하단에서
         // 소비하지 않으므로 sa 는 배제 사유가 아니다 (1192000 해양수산 17→16쪽).
-        && saved_flow_marks_page_last(paragraphs, para_idx)
+        && (saved_flow_marks_page_last(paragraphs, para_idx)
+            // [위비즈 252차] 다음 문단의 저장 줄이 본문 바닥을 넘으면(한글이 그 문단을 다음 쪽에 세운다 · #6132) 이 줄이 저장 흐름의 쪽 마지막이다.
+            // 표 조각 뒤 쪽(쪽 첫 항목이 이어진 표 조각)에 한정 — 그 쪽의 저장 좌표는 쪽 안 좌표라 흐름 높이와 저장 줄이 1px 안팎으로 만난다(6132 문서 pi=101).
+            || (matches!(
+                page.current_items.first(),
+                Some(PageItem::PartialTable {
+                    is_continuation: true,
+                    ..
+                })
+            ) && current_page_vpos_base.is_some_and(|base| {
+                paragraphs
+                    .get(para_idx + 1)
+                    .and_then(|next| next.line_segs.iter().find(|ls| !is_synthetic_line_seg(ls)))
+                    .and_then(|ls| line_seg_visible_bounds_px(ls, base, dpi))
+                    .is_some_and(|(_, bottom)| bottom > page.body_height + 0.5)
+            })))
         && current_page_vpos_base
             .and_then(|base| single_line_visible_bounds_px(para, base, dpi))
             .is_some_and(|bounds| {

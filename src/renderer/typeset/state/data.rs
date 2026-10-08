@@ -138,6 +138,9 @@ pub(in crate::renderer::typeset) struct StateView {
     /// p1356 뒤 본문을 한 쪽 더 분할한다. layout 순서에는 앞에 있어야 하지만,
     /// typeset 흐름 항목으로는 보이면 안 된다.
     pub(in crate::renderer::typeset) page_start_square_pictures: Vec<DeferredSquarePictureControl>,
+    /// [위비즈 252차] 쪽 바닥에 안 드는 «나누지 않음» 표 — (문단, 컨트롤, 표 높이 px). 한글은 host 줄과 뒤 문단을 현재 쪽에 두고
+    /// 표만 다음 쪽 맨 위로 보낸다(242쪽 오라클 문서 저장 vpos). 새 쪽을 열 때 맨 앞에 놓는다.
+    pub(in crate::renderer::typeset) pending_page_top_tables: Vec<(usize, usize, f64)>,
     /// 표 조판 중 fragment별로 각주를 등록한 source 키. caller의 기존 표 완료 뒤
     /// 일괄 등록을 건너뛰어 중복을 막는다.
     pub(in crate::renderer::typeset) fragment_queued_table_footnotes:
