@@ -1,9 +1,7 @@
 //! 일반/TAC 표 하나의 포맷·배치 선택과 후행 표 지연 등록 조정.
 //! 배치 알고리즘은 기존 엔진 경로를 호출하며 각주 수집·반복 중단은 부모가 소유한다.
 use super::super::paragraph::metrics::FormattedParagraph;
-use super::super::{
-    preceding_stored_vpos, stored_host_line_growth_hu, FormattedTable, TypesetEngine, TypesetState,
-};
+use super::super::{preceding_stored_vpos, FormattedTable, TypesetEngine, TypesetState};
 use crate::model::{paragraph::Paragraph, table::Table};
 use crate::renderer::{
     composer::ComposedParagraph,
@@ -93,9 +91,7 @@ pub(in crate::renderer::typeset) fn place(
         .find(|mt| mt.para_index == para_idx && mt.control_index == ctrl_idx);
     let is_first_placed = first_placed_table == Some(ctrl_idx);
     let is_last_placed = last_placed_table == Some(ctrl_idx);
-    let tac_to_block = engine.is_effective_tac_table(para, table, fmt)
-        && tac_oversized_rowbreak_to_block(engine, st, table, mt, para, fmt, ctrl_idx, tac_count);
-    if engine.is_effective_tac_table(para, table, fmt) && !tac_to_block {
+    if engine.is_effective_tac_table(para, table, fmt) {
         engine.typeset_tac_table(
             st,
             para_idx,
@@ -110,21 +106,19 @@ pub(in crate::renderer::typeset) fn place(
             styles,
             preceding_stored_vpos(paragraphs_all, para_idx),
         );
-    } else if !tac_to_block
-        && engine.try_typeset_empty_para_float_table(
-            st,
-            para_idx,
-            ctrl_idx,
-            para,
-            table,
-            &ft,
-            composed,
-            next_para,
-            styles,
-            para_start_height,
-            para_float_lanes,
-        )
-    {
+    } else if engine.try_typeset_empty_para_float_table(
+        st,
+        para_idx,
+        ctrl_idx,
+        para,
+        table,
+        &ft,
+        composed,
+        next_para,
+        styles,
+        para_start_height,
+        para_float_lanes,
+    ) {
         // Empty host para-float table placed by horizontal lane reservation.
     } else {
         let pages_before_block_table = st.flow_table_page_count();
@@ -171,46 +165,4 @@ pub(in crate::renderer::typeset) fn place(
     }
 
     break_after_current_table
-}
-
-/// 글자처럼 취급한 «나눔» 다중 행 표가 **한 쪽 본문보다 커서 어디에도 통째로 못 앉으면** 블록 표 경로(행 단위·행 안 분할)로 보낸다.
-///
-/// 한글은 이런 표를 현재 쪽에서 시작해 쪽 경계에서 이어 그린다. TAC 경로는 표를 한 덩어리 개체로만 다뤄 다음 쪽으로 밀고 쪽 밖으로
-/// 넘쳐 그린다(rhwp #7288). 조건은 일부러 좁다:
-/// - 한 쪽보다 큰 표만 — 한 쪽에 들어가는 표는 종전 TAC 경로(표째 다음 쪽)가 한글 저장 조판과 맞는다.
-/// - **저장 host 줄보다 표 선언 높이가 자란 표만**(`stored_host_line_growth_hu`) — 편집·채움으로 칸 글이 늘어 행(선언 높이)을 키웠는데 host 줄은 옛 값 그대로인 표다.
-///   한컴이 저장한 표는 선언 높이와 host 줄이 맞는다(쪽을 직접 가른 표 포함 — 그 저장 조판이 쪽 나눔을 증언하므로 손대지 않는다).
-///   rhwp가 측정한 높이가 아니라 **파일에 적힌 선언 높이**로 잰다 — 측정은 글자 폭 차이로 한컴 문서에서도 10% 남짓 크게 나온다(실측: 6개 회귀 문서가 이 차이로 걸렸다).
-#[allow(clippy::too_many_arguments)]
-fn tac_oversized_rowbreak_to_block(
-    engine: &TypesetEngine,
-    st: &TypesetState,
-    table: &Table,
-    mt: Option<&MeasuredTable>,
-    para: &Paragraph,
-    fmt: &FormattedParagraph,
-    ctrl_idx: usize,
-    tac_count: usize,
-) -> bool {
-    use crate::model::table::TablePageBreak;
-    if !table.common.treat_as_char
-        || table.row_count < 2
-        || tac_count != 1
-        || !para.text.trim().is_empty()
-        || !matches!(
-            table.page_break,
-            TablePageBreak::RowBreak | TablePageBreak::CellBreak
-        )
-    {
-        return false;
-    }
-    let Some(mt) = mt else { return false };
-    mt.total_height > st.available_height() + 0.5
-        && stored_host_line_growth_hu(
-            para,
-            table,
-            engine.tac_table_line_index(para, table, fmt),
-            ctrl_idx,
-        )
-        .is_some()
 }
