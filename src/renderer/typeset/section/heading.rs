@@ -115,6 +115,12 @@ impl TypesetEngine {
                     .last()
                     .map(|s| s.vertical_pos.saturating_add(s.line_height))
                     .unwrap_or(first_seg.vertical_pos.saturating_add(para_h_hu));
+                // [위비즈 252차] 저장 사다리가 쪽 안 흐름과 어긋나 lazy 원점이 잡힌 쪽(밀린 «나누지 않음» 표를 흐름에 넣은 높이로 뒤 문단 vpos를 밀어 쓴 문서)은 그 원점이
+                // 지금 흐름 0에 해당하는 저장 좌표다 — 쪽 맨 위 항목의 raw vpos로 재면 사다리 어긋남만큼 «vpos 넘침»으로 오판해 제목을 쓸데없이 다음 쪽으로 민다.
+                let page_top_vpos = match (st.vpos_page_base, st.vpos_lazy_base) {
+                    (None, Some(lazy)) => lazy,
+                    _ => page_top_vpos,
+                };
                 let page_bottom_vpos = page_top_vpos.saturating_add(body_h_hu);
 
                 let avail = st.available_height();
