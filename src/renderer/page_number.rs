@@ -13,7 +13,65 @@
 
 use std::collections::HashSet;
 
+use crate::model::document::DocInfo;
 use crate::renderer::pagination::{PageContent, PageItem};
+
+/// 쪽 번호 글자의 글꼴 면 — 문서 스타일 표의 «Page Number»(쪽 번호) 스타일이 가리키는 글자 모양.
+///
+/// 맥 한글 12.30 은 쪽 번호를 이 스타일의 글꼴·크기로 그린다(코퍼스 58개 스타일 중 57개가
+/// 고딕계, 크기는 전부 10pt — 함초롬돋움 40 · 굴림 11 · 한양견고딕 5 · 한양중고딕 1).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PageNumberFace {
+    /// 글자 모양 목록의 인덱스.
+    pub char_shape_id: u32,
+    /// 그 글꼴의 descent(em 비). 쪽 번호의 아래 위치 식에 쓴다.
+    pub descent_em: f64,
+}
+
+/// 숫자·줄표가 속하는 언어 칸(라틴 = 영어).
+pub(crate) const PAGE_NUMBER_LANG_SLOT: usize = 1;
+
+/// 문서에서 «Page Number» 스타일을 찾아 쪽 번호의 글자 모양을 돌려준다.
+///
+/// 영문 이름으로 고른다(한글 이름 «쪽 번호» 스타일이 둘인 문서에서도 한컴은 영문 이름으로
+/// 고른다). 스타일이 없으면 `None` — 호출부가 종전 고정 글꼴로 그린다.
+pub(crate) fn page_number_face(doc_info: &DocInfo) -> Option<PageNumberFace> {
+    let style = doc_info.styles.iter().find(|style| {
+        style
+            .english_name
+            .trim()
+            .eq_ignore_ascii_case("Page Number")
+    })?;
+    let char_shape_id = u32::from(style.char_shape_id);
+    let shape = doc_info.char_shapes.get(char_shape_id as usize)?;
+    let face_name = doc_info
+        .font_faces
+        .get(PAGE_NUMBER_LANG_SLOT)
+        .and_then(|faces| faces.get(usize::from(shape.font_ids[PAGE_NUMBER_LANG_SLOT])))
+        .map_or("", |font| font.name.as_str());
+    Some(PageNumberFace {
+        char_shape_id,
+        descent_em: page_number_descent_em(face_name),
+    })
+}
+
+/// 글꼴 이름 → descent(em 비). 맥 한글이 낸 PDF 의 글꼴 기술자 수치다(함초롬 0.230 ·
+/// 굴림 0.142 는 쪽 번호 기준선으로 검증, 나머지는 같은 식을 적용한 값).
+/// 함초롬·나눔 0.230 · 맑은 고딕 0.242 · 그 밖(굴림·돋움·바탕·궁서·한양·휴먼 계열) 0.142.
+pub(crate) fn page_number_descent_em(face_name: &str) -> f64 {
+    let lower = face_name.trim().to_ascii_lowercase();
+    if lower.contains("함초롬")
+        || lower.contains("hcr")
+        || lower.contains("나눔")
+        || lower.contains("nanum")
+    {
+        0.230
+    } else if lower.contains("맑은") || lower.contains("malgun") {
+        0.242
+    } else {
+        0.142
+    }
+}
 
 /// 쪽번호를 1회성 NewNumber 적용 + 단조 증가로 계산하는 어시스턴트.
 pub(crate) struct PageNumberAssigner<'a> {
@@ -458,6 +516,74 @@ mod tests {
             start_row_height_override: None,
         }]);
         assert_eq!(a.assign(&p2), 2);
+    }
+
+    /// [위비즈 pf-02] 쪽 번호 글자 모양 = 문서의 «Page Number» 스타일. 글꼴은 라틴 칸 이름이고
+    /// descent 는 그 이름의 글꼴 기술자 값이다(맥 PDF: HCRDotum 0.230 · Gulim 0.142).
+    #[test]
+    fn page_number_face_follows_the_page_number_style() {
+        use crate::model::style::{CharShape, Font, Style};
+        let font = |name: &str| Font {
+            name: name.to_string(),
+            ..Default::default()
+        };
+        let mut doc_info = DocInfo::default();
+        doc_info.font_faces = vec![
+            vec![font("함초롬바탕"), font("함초롬돋움")],
+            vec![font("함초롬바탕"), font("함초롬돋움"), font("굴림")],
+        ];
+        let mut shape0 = CharShape::default();
+        shape0.font_ids = [0; 7];
+        let mut shape1 = CharShape::default();
+        shape1.font_ids = [1, 2, 0, 0, 0, 0, 0];
+        doc_info.char_shapes = vec![shape0, shape1];
+        doc_info.styles = vec![
+            Style {
+                english_name: "Normal".to_string(),
+                char_shape_id: 0,
+                ..Default::default()
+            },
+            Style {
+                english_name: "Page Number".to_string(),
+                char_shape_id: 1,
+                ..Default::default()
+            },
+        ];
+        let face = page_number_face(&doc_info).expect("Page Number 스타일이 있다");
+        assert_eq!(face.char_shape_id, 1);
+        assert!(
+            (face.descent_em - 0.142).abs() < 1e-9,
+            "라틴 칸 글꼴은 굴림 → 0.142"
+        );
+
+        doc_info.char_shapes[1].font_ids[1] = 1;
+        let face = page_number_face(&doc_info).unwrap();
+        assert!(
+            (face.descent_em - 0.230).abs() < 1e-9,
+            "라틴 칸 글꼴이 함초롬돋움이면 0.230"
+        );
+
+        doc_info.styles.truncate(1);
+        assert_eq!(page_number_face(&doc_info), None, "스타일이 없으면 None");
+    }
+
+    #[test]
+    fn page_number_descent_table_follows_hancom_font_descriptors() {
+        for (name, descent) in [
+            ("함초롬돋움", 0.230),
+            ("함초롬바탕", 0.230),
+            ("나눔고딕", 0.230),
+            ("맑은 고딕", 0.242),
+            ("굴림", 0.142),
+            ("한양중고딕", 0.142),
+            ("HY견고딕", 0.142),
+            ("바탕", 0.142),
+        ] {
+            assert!(
+                (page_number_descent_em(name) - descent).abs() < 1e-9,
+                "{name}: {descent}"
+            );
+        }
     }
 
     #[test]

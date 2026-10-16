@@ -2335,6 +2335,10 @@ mod tests {
     //
     // 페이지 2, 3 미표시 메커니즘은 **별도 issue 분리**.
 
+    /// aift.hwp 쪽 번호 줄의 기준선 y(px). 굴림 · 아래 여백 28.34pt · 꼬리말 28.34pt →
+    /// [위비즈 pf-01] 용지 아래 28.34 + 굴림 descent 0.142 × 10pt = 29.76pt (종전 1083.6).
+    const AIFT_PAGE_NUMBER_Y: f64 = 1082.83;
+
     /// SVG 에서 특정 y 좌표 (`±0.5px` 허용) 의 `<text>` 요소 개수를 센다.
     /// 지정한 y(96dpi SVG 단위) 행의 `<text>` 개수.
     ///
@@ -2360,6 +2364,106 @@ mod tests {
             }
         }
         count
+    }
+
+    /// SVG 의 `name="…"` 속성 값.
+    fn svg_attr(line: &str, name: &str) -> Option<String> {
+        let key = format!(" {name}=\"");
+        let start = line.find(&key)? + key.len();
+        let end = line[start..].find('"')?;
+        Some(line[start..start + end].to_string())
+    }
+
+    /// 쪽 맨 아래 글줄(맨 아래 100pt 안에서 기준선이 가장 낮은 `<text>` 묶음)의
+    /// (글, 용지 아래로부터 기준선 pt, 첫 글자 x pt, 글꼴 속성).
+    fn bottom_svg_line(svg: &str) -> Option<(String, f64, f64, String)> {
+        let page_height: f64 = svg_attr(svg.lines().next()?, "height")?.parse().ok()?;
+        let mut chars: Vec<(f64, f64, String, String)> = Vec::new();
+        for line in svg.lines().filter(|l| l.starts_with("<text ")) {
+            let parse = |name: &str| svg_attr(line, name)?.parse::<f64>().ok();
+            let (Some(x), Some(y)) = (parse("x"), parse("y")) else {
+                continue;
+            };
+            if y < page_height - 100.0 * 96.0 / 72.0 {
+                continue;
+            }
+            let Some((head, _)) = line.rsplit_once("</text>") else {
+                continue;
+            };
+            let content = head.rsplit_once('>').map_or("", |(_, text)| text);
+            if content.trim().is_empty() {
+                continue;
+            }
+            chars.push((
+                x,
+                y,
+                content.to_string(),
+                svg_attr(line, "font-family").unwrap_or_default(),
+            ));
+        }
+        let lowest = chars.iter().map(|c| c.1).fold(f64::MIN, f64::max);
+        let mut row: Vec<_> = chars
+            .into_iter()
+            .filter(|c| (c.1 - lowest).abs() < 0.5)
+            .collect();
+        row.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let first = row.first()?;
+        Some((
+            row.iter().map(|c| c.2.as_str()).collect::<String>(),
+            (page_height - lowest) * 0.75,
+            first.0 * 0.75,
+            first.3.clone(),
+        ))
+    }
+
+    /// [위비즈 pf-01·pf-02] 쪽 번호의 글자·아래 위치·가로 위치·글꼴 면이 맥 한글 12.30 PDF 와 맞는다.
+    /// 기대값은 맥 PDF 의 쪽 번호 글자(pdfminer): 기준선은 용지 아래로부터 pt, x0 는 글자 시작.
+    /// 글꼴은 맥이 낸 면(HCRDotum · Gulim)에 대응하는 문서의 «Page Number» 스타일 글꼴이다.
+    #[test]
+    fn test_pf01_pf02_page_number_matches_hancom_pdf() {
+        // (표본, rhwp 쪽 인덱스, 글, 맥 기준선 pt, 맥 x0 pt, 문서 글꼴)
+        let cases = [
+            ("samples/KTX.hwp", 2, "-3-", 44.01, 283.44, "굴림"),
+            (
+                "samples/biz_plan.hwp",
+                2,
+                "-1-",
+                44.73,
+                285.24,
+                "함초롬돋움",
+            ),
+            (
+                "samples/issue1937_rowbreak_footnote_overpagination.hwp",
+                0,
+                "-1-",
+                44.73,
+                285.12,
+                "함초롬돋움",
+            ),
+            // 61쪽(NewNumber 뒤): 굴림 · 아래 42.5 · 꼬리말 14.17. 맥 PDF 61쪽 «-1-» 기준선 43.88.
+            ("samples/tac-img-02.hwp", 60, "-1-", 43.88, 283.44, "굴림"),
+        ];
+        for (path, page, text, mac_baseline, mac_x0, font) in cases {
+            let Some(core) = load_document(path) else {
+                continue;
+            };
+            let svg = core.render_page_svg_native(page).unwrap_or_default();
+            let (got_text, baseline, x0, family) = bottom_svg_line(&svg)
+                .unwrap_or_else(|| panic!("{path} p{page}: 맨 아래 글줄이 없다"));
+            assert_eq!(got_text, text, "{path} p{page}: 쪽 번호 글자");
+            assert!(
+                (baseline - mac_baseline).abs() <= 0.2,
+                "{path} p{page}: 기준선 {baseline:.2}pt ↔ 맥 {mac_baseline}pt"
+            );
+            assert!(
+                (x0 - mac_x0).abs() <= 0.5,
+                "{path} p{page}: 글자 시작 {x0:.2}pt ↔ 맥 {mac_x0}pt"
+            );
+            assert!(
+                family.contains(font),
+                "{path} p{page}: 글꼴 면 {family} 에 문서의 «Page Number» 스타일 글꼴 {font} 가 있어야 한다"
+            );
+        }
     }
 
     /// [Task #683] pr-149.hwp 빈 paragraph + Para-relative TopAndBottom 그림
@@ -2419,7 +2523,7 @@ mod tests {
             return;
         };
         let svg = core.render_page_svg_native(0).unwrap_or_default();
-        let count = count_text_at_y(&svg, 1083.6);
+        let count = count_text_at_y(&svg, AIFT_PAGE_NUMBER_Y);
         assert_eq!(
             count, 3,
             "aift.hwp 페이지 1 (cover disclaimer, PageNumberPos 등록 페이지) 은 \
@@ -2435,7 +2539,7 @@ mod tests {
             return;
         };
         let svg = core.render_page_svg_native(5).unwrap_or_default();
-        let count = count_text_at_y(&svg, 1083.6);
+        let count = count_text_at_y(&svg, AIFT_PAGE_NUMBER_Y);
         assert_eq!(
             count, 3,
             "aift.hwp 페이지 6 (본문 시작) 은 한컴이 \"- N -\" 표시. \
@@ -2450,7 +2554,7 @@ mod tests {
             return;
         };
         let svg = core.render_page_svg_native(6).unwrap_or_default();
-        let count = count_text_at_y(&svg, 1083.6);
+        let count = count_text_at_y(&svg, AIFT_PAGE_NUMBER_Y);
         assert_eq!(
             count, 3,
             "aift.hwp 페이지 7 (NewNumber 발화) 은 \"- 1 -\" 3글자 표시되어야 함."
@@ -2465,7 +2569,7 @@ mod tests {
             return;
         };
         let svg = core.render_page_svg_native(3).unwrap_or_default();
-        let count = count_text_at_y(&svg, 1083.6);
+        let count = count_text_at_y(&svg, AIFT_PAGE_NUMBER_Y);
         assert_eq!(
             count, 0,
             "aift.hwp 페이지 4 는 PageHide page_num=true (paragraph 2.34) 로 미표시."
@@ -2479,7 +2583,7 @@ mod tests {
             return;
         };
         let svg = core.render_page_svg_native(4).unwrap_or_default();
-        let count = count_text_at_y(&svg, 1083.6);
+        let count = count_text_at_y(&svg, AIFT_PAGE_NUMBER_Y);
         assert_eq!(
             count, 0,
             "aift.hwp 페이지 5 는 PageHide page_num=true (paragraph 2.54) 로 미표시."
@@ -2531,6 +2635,7 @@ mod tests {
         let svg = core.render_page_svg_native(0).unwrap_or_default();
         // Issue #951: margin_bottom 원본값 보존 후 쪽번호 위치 보정 (1061.4→1050.8)
         // [#3048] 쪽 번호를 10pt 로 교정하면서 줄 baseline 이 +4.44px 이동 (1050.8→1055.24).
+        // HWP3 변환본은 위비즈 pf-01 의 새 위치 식을 쓰지 않는다(맥 정답 쌍 없음) — 종전 값 유지.
         let count = count_text_at_y(&svg, 1055.24);
         assert_eq!(
             count, 3,

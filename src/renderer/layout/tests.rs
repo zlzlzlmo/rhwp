@@ -2749,6 +2749,175 @@ fn header_paper_relative_shape_uses_page_origin() {
     assert!((bbox.y - hwpunit_to_px(2_250, DEFAULT_DPI)).abs() < 0.01);
 }
 
+/// 쪽 번호(아래 가운데, «- 1 -»)만 있는 쪽을 그린다. `latin_font` 가 있으면 문서에
+/// «Page Number» 스타일(그 라틴 칸 글꼴, 10pt)을 두고 엔진에 글꼴 면을 알린다.
+/// 반환: 쪽 번호 글자 런과 용지 높이(px).
+fn render_page_number_run(
+    margin_bottom: u32,
+    margin_footer: u32,
+    latin_font: Option<&str>,
+    hwp3_variant: bool,
+) -> (TextRunNode, BoundingBox, f64) {
+    use crate::model::control::PageNumberPos;
+    use crate::model::document::DocInfo;
+    use crate::model::style::{CharShape, Font, Style};
+    use crate::renderer::page_number::page_number_face;
+    use crate::renderer::style_resolver::resolve_styles;
+
+    let engine = LayoutEngine::with_default_dpi();
+    let page_def = PageDef {
+        margin_bottom,
+        margin_footer,
+        ..a4_page_def()
+    };
+    let layout = PageLayoutInfo::from_page_def_default(&page_def, &ColumnDef::default());
+    let page_height = layout.page_height;
+    let mut doc_info = DocInfo::default();
+    let mut styles = ResolvedStyleSet::default();
+    if let Some(name) = latin_font {
+        let font = |n: &str| Font {
+            name: n.to_string(),
+            ..Default::default()
+        };
+        doc_info.font_faces = (0..7).map(|_| vec![font("바탕"), font(name)]).collect();
+        doc_info.char_shapes = vec![CharShape {
+            font_ids: [0, 1, 0, 0, 0, 0, 0],
+            base_size: 1000,
+            ..Default::default()
+        }];
+        doc_info.styles = vec![Style {
+            english_name: "Page Number".to_string(),
+            char_shape_id: 0,
+            ..Default::default()
+        }];
+        styles = resolve_styles(&doc_info, DEFAULT_DPI);
+        engine.set_page_number_face(page_number_face(&doc_info));
+    }
+    engine.set_layout_profile(crate::model::provenance::LayoutCompatibilityProfile::new(
+        hwp3_variant,
+        false,
+        false,
+        false,
+        false,
+        false,
+    ));
+    let page_content = PageContent {
+        page_index: 0,
+        page_number: 1,
+        page_number_restarted: false,
+        section_index: 0,
+        layout,
+        column_contents: Vec::new(),
+        active_header: None,
+        active_footer: None,
+        page_number_pos: Some(PageNumberPos {
+            position: 5,
+            dash_char: '-',
+            ..Default::default()
+        }),
+        page_hide: None,
+        footnotes: Vec::new(),
+        active_master_page: None,
+        extra_master_pages: Vec::new(),
+        ladder_band_tables: Vec::new(),
+    };
+    let paragraphs: Vec<Paragraph> = Vec::new();
+    let tree = engine.build_render_tree(
+        &page_content,
+        &paragraphs,
+        &paragraphs,
+        &paragraphs,
+        &[],
+        &styles,
+        &FootnoteShape::default(),
+        &[],
+        None,
+        &[],
+        None,
+        0,
+        &[],
+    );
+
+    fn find(node: &RenderNode) -> Option<(TextRunNode, BoundingBox)> {
+        if let RenderNodeType::TextRun(run) = &node.node_type {
+            if run.text == "- 1 -" {
+                return Some((run.clone(), node.bbox.clone()));
+            }
+        }
+        node.children.iter().find_map(find)
+    }
+    let (run, bbox) = find(&tree.root).expect("쪽 번호 «- 1 -» 런이 그려진다");
+    (run, bbox, page_height)
+}
+
+/// 쪽 번호 기준선(용지 아래로부터, pt).
+fn page_number_baseline_from_bottom_pt(
+    run: &TextRunNode,
+    bbox: &BoundingBox,
+    page_height: f64,
+) -> f64 {
+    (page_height - (bbox.y + run.baseline)) * 72.0 / DEFAULT_DPI
+}
+
+/// [위비즈 pf-01] 쪽 번호 기준선 = 용지 아래 − 아래쪽 여백(꼬리말이 있을 때) 또는 아래쪽 여백의
+/// 절반(꼬리말 0) − 글꼴 descent × 크기. 꼬리말 높이에 따라 움직이지 않는다.
+/// 기대값은 맥 한글 12.30 PDF 의 쪽 번호 기준선이다(0.12pt 격자):
+/// 이슈1937·biz_plan(함초롬돋움 · 아래 42.5 · 꼬리말 28.3~42.5) 44.73 ·
+/// tac-img-02(굴림 · 아래 42.5 · 꼬리말 14.17) 43.89 · fb575cbc(함초롬돋움 · 아래 28.35 · 꼬리말 0) 16.52.
+#[test]
+fn page_number_baseline_follows_bottom_margin_not_footer_height() {
+    for (font, bottom, footer, mac_pt) in [
+        ("함초롬돋움", 4250, 2835, 44.73),
+        ("함초롬돋움", 4250, 4250, 44.73),
+        ("굴림", 4250, 1417, 43.89),
+        ("함초롬돋움", 2835, 0, 16.52),
+    ] {
+        let (run, bbox, page_height) = render_page_number_run(bottom, footer, Some(font), false);
+        let got = page_number_baseline_from_bottom_pt(&run, &bbox, page_height);
+        assert!(
+            (got - mac_pt).abs() <= 0.15,
+            "{font} 아래 {bottom}HU 꼬리말 {footer}HU: 기준선 {got:.2}pt ↔ 맥 {mac_pt}pt"
+        );
+    }
+}
+
+/// [위비즈 pf-02] 쪽 번호 글자 모양 = 문서의 «Page Number» 스타일(맥 PDF 글꼴: 문서의 스타일 글꼴
+/// 20/20 — HCRDotum 17 · Gulim 2 · 한양중고딕 1). 글꼴은 라틴 칸 원본 이름 그대로이고
+/// 폭은 그 글꼴로 잰다(함초롬돋움 «- 1 -» 은 맥 PDF 에서 24.92pt).
+#[test]
+fn page_number_uses_the_page_number_style_face() {
+    let (run, bbox, _) = render_page_number_run(4250, 2835, Some("함초롬돋움"), false);
+    assert!(
+        run.style.font_family.starts_with("함초롬돋움"),
+        "글꼴이 «Page Number» 스타일의 라틴 칸 글꼴이어야 한다: {}",
+        run.style.font_family
+    );
+    assert!((run.style.font_size - 10.0 * DEFAULT_DPI / 72.0).abs() < 0.01);
+    assert!(
+        (bbox.width * 72.0 / DEFAULT_DPI - 24.92).abs() <= 0.4,
+        "함초롬돋움 «- 1 -» 폭 {:.2}pt ↔ 맥 24.92pt",
+        bbox.width * 72.0 / DEFAULT_DPI
+    );
+}
+
+/// «Page Number» 스타일이 없는 문서는 종전대로 «바탕» 10pt 로 그린다.
+#[test]
+fn page_number_without_style_keeps_batang_10pt() {
+    let (run, _, _) = render_page_number_run(4250, 2835, None, false);
+    assert_eq!(run.style.font_family, "바탕");
+    assert!((run.style.font_size - 10.0 * DEFAULT_DPI / 72.0).abs() < 0.01);
+}
+
+/// HWP3 변환본은 맥 정답 쌍이 없어 글꼴 면(«바탕» 10pt)도 위치 식(꼬리말 띠 가운데 + 크기/3)도
+/// 종전 그대로다: 아래 42.5pt · 꼬리말 28.35pt → 기준선 42.5 + 14.175 − 13.33 = 43.34pt.
+#[test]
+fn page_number_of_hwp3_variant_keeps_legacy_face_and_position() {
+    let (run, bbox, page_height) = render_page_number_run(4250, 2835, Some("함초롬돋움"), true);
+    assert_eq!(run.style.font_family, "바탕");
+    let got = page_number_baseline_from_bottom_pt(&run, &bbox, page_height);
+    assert!((got - 43.34).abs() <= 0.05, "종전 위치 {got:.2}pt");
+}
+
 /// [#6608] 머리말 안 용지 기준 그림은 물리 용지가 아니라 **머리말 틀 원점**에서
 /// 오프셋을 잰다. PR #1682 는 바탕쪽의 용지 원점 규칙을 머리말에도 유추해
 /// 이 테스트를 용지 원점으로 적었지만, 실문서 `pic-in-head-02.hwp` 를 한/글 2020·2022

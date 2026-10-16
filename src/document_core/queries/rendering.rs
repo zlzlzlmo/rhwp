@@ -7606,6 +7606,11 @@ impl DocumentCore {
         let total_pages: u32 = self.pagination.iter().map(|p| p.pages.len() as u32).sum();
         self.layout_engine.set_total_pages(total_pages);
         self.layout_engine.set_file_name(&self.file_name);
+        // 쪽 번호 글자 모양 — 문서의 «Page Number» 스타일 (pf-02)
+        self.layout_engine
+            .set_page_number_face(crate::renderer::page_number::page_number_face(
+                &self.document.doc_info,
+            ));
 
         // [Task #2102] 쪽 배경 이미지 채우기는 구역 첫 쪽에만 적용한다.
         // 현재 페이지가 소속 구역의 첫 글로벌 페이지인지 판정하여 엔진에 전달.

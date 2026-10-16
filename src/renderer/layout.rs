@@ -3149,6 +3149,8 @@ pub struct LayoutEngine {
     body_float_carve_evidence: std::cell::RefCell<Vec<super::float_placement::FloatCarveEvidence>>,
     /// 총 쪽수 (머리말/꼬리말 필드 치환용)
     total_pages: std::cell::Cell<u32>,
+    /// 쪽 번호 글자의 글꼴 면 — 문서의 «Page Number» 스타일 (없으면 `None` = 종전 «바탕» 10pt)
+    page_number_face: std::cell::Cell<Option<super::page_number::PageNumberFace>>,
     /// 현재 페이지 번호 (바탕쪽 글상자 쪽번호 치환용)
     current_page_number: std::cell::Cell<u32>,
     /// [Task #2102] 현재 렌더 중인 페이지가 소속 구역의 첫 쪽인지 여부.
@@ -3369,6 +3371,7 @@ impl LayoutEngine {
             cell_has_square_float: std::cell::Cell::new(false),
             body_float_carve_evidence: std::cell::RefCell::new(Vec::new()),
             total_pages: std::cell::Cell::new(0),
+            page_number_face: std::cell::Cell::new(None),
             current_page_number: std::cell::Cell::new(0),
             current_page_is_section_first: std::cell::Cell::new(true),
             page_border_fill_first_page_only: std::cell::Cell::new((false, false)),
@@ -4048,6 +4051,11 @@ impl LayoutEngine {
         self.total_pages.set(total);
     }
 
+    /// 쪽 번호 글자의 글꼴 면(문서의 «Page Number» 스타일)을 설정한다.
+    pub(crate) fn set_page_number_face(&self, face: Option<super::page_number::PageNumberFace>) {
+        self.page_number_face.set(face);
+    }
+
     /// [Task #2102] 현재 렌더 페이지가 소속 구역의 첫 쪽인지 설정한다.
     /// 쪽 배경 이미지 채우기를 구역 첫 쪽에만 적용하기 위한 페이지별 컨텍스트.
     pub fn set_current_page_is_section_first(&self, is_first: bool) {
@@ -4372,6 +4380,7 @@ impl LayoutEngine {
             page_content,
             layout,
             page_border_fill,
+            styles,
         );
         tree.root.children.push(footer_node);
 
@@ -5155,20 +5164,39 @@ impl LayoutEngine {
         layout: &PageLayoutInfo,
         footer_area: &LayoutRect,
         font_size: f64,
+        descent_em: Option<f64>,
     ) -> f64 {
-        // [Task #1728] 자동 쪽번호 세로 위치: HWP 실측상 glyph 은 body_bottom(footer_area.y) 에서
-        // margin_footer/2 + ~10px 아래에 온다(gc/ktx/aift 3문서 1~2px 정합). 종전 공식은
-        // footer_area.height(= margin_bottom)/2 를 써서, margin_footer ≠ margin_bottom 인 문서
-        // (margin_footer=0 인 giant cell, margin_footer≠margin_bottom 인 KTX)를 7~18px 낮게 놓았다.
-        // margin_footer = page_height - footer_area.bottom.
-        let center_y = if footer_area.height > 0.5 {
-            let margin_footer =
-                (layout.page_height - (footer_area.y + footer_area.height)).max(0.0);
-            footer_area.y + margin_footer / 2.0
-        } else {
-            (footer_area.y + layout.page_height) / 2.0
+        let Some(descent_em) = descent_em else {
+            // HWP3 변환본: 맥 정답 쌍이 없어 종전 식을 그대로 둔다.
+            // [Task #1728] 자동 쪽번호 세로 위치: HWP 실측상 glyph 은 body_bottom(footer_area.y) 에서
+            // margin_footer/2 + ~10px 아래에 온다(gc/ktx/aift 3문서 1~2px 정합). 종전 공식은
+            // footer_area.height(= margin_bottom)/2 를 써서, margin_footer ≠ margin_bottom 인 문서
+            // (margin_footer=0 인 giant cell, margin_footer≠margin_bottom 인 KTX)를 7~18px 낮게 놓았다.
+            // margin_footer = page_height - footer_area.bottom.
+            let center_y = if footer_area.height > 0.5 {
+                let margin_footer =
+                    (layout.page_height - (footer_area.y + footer_area.height)).max(0.0);
+                footer_area.y + margin_footer / 2.0
+            } else {
+                (footer_area.y + layout.page_height) / 2.0
+            };
+            return center_y + font_size / 3.0;
         };
-        center_y + font_size / 3.0
+        // [위비즈 pf-01] 맥 한글 12.30 의 쪽 번호 기준선 = 용지 아래 − 아래쪽 여백(꼬리말 높이가
+        // 있을 때) 또는 아래쪽 여백의 절반(꼬리말 높이 0) − 글꼴 descent × 크기. 글자 상자의
+        // 바닥이 꼬리말 영역 바닥(= 아래쪽 여백 위 가장자리)에 닿는다. 꼬리말 높이가 얼마든
+        // 같다 — 종전 «꼬리말 띠 가운데 + 크기/3» 식은 꼬리말 14.17pt 에서 7.6pt 낮고 42.5pt 에서
+        // 5.7pt 높았다(맥 PDF 20문서 중 0.5pt 안 1문서 → 식 적용 후 20문서 전부 0.2pt 안).
+        // footer_area.height = 아래쪽 여백(margin_bottom), 꼬리말 높이 = page_height - footer_area.bottom.
+        let margin_bottom = footer_area.height.max(0.0);
+        let footer_height = (layout.page_height - (footer_area.y + footer_area.height)).max(0.0);
+        let box_bottom_gap = if footer_height > 0.5 {
+            margin_bottom
+        } else {
+            margin_bottom / 2.0
+        };
+        // 반환은 런 상단 y — SVG 기준선은 run y + font_size 다.
+        layout.page_height - box_bottom_gap - descent_em * font_size - font_size
     }
 
     fn page_number_baseline_y(
@@ -5176,14 +5204,15 @@ impl LayoutEngine {
         layout: &PageLayoutInfo,
         page_border_fill: Option<&PageBorderFill>,
         font_size: f64,
+        descent_em: Option<f64>,
     ) -> Option<f64> {
         let pbf = page_border_fill.filter(|p| p.border_fill_id > 0)?;
         let paper_based = matches!(pbf.basis, PageBorderBasis::PaperBased);
         if paper_based {
             return None;
         }
-        // 꼬리말 영역 세로 중앙 baseline (기존 footer 중앙 공식과 동일).
-        Some(self.footer_page_number_y(layout, &layout.footer_area, font_size))
+        // 꼬리말 영역 baseline (기존 footer 공식과 동일).
+        Some(self.footer_page_number_y(layout, &layout.footer_area, font_size, descent_em))
     }
 
     fn build_page_borders(
@@ -6025,6 +6054,7 @@ impl LayoutEngine {
         page_content: &PageContent,
         layout: &PageLayoutInfo,
         page_border_fill: Option<&PageBorderFill>,
+        styles: &ResolvedStyleSet,
     ) {
         // 감추기(PageHide)에서 쪽 번호 감추기가 설정되어 있으면 건너뜀
         if let Some(ref ph) = page_content.page_hide {
@@ -6053,18 +6083,49 @@ impl LayoutEngine {
             // 0.707배 축소된 7.07pt 로 설명됨). 종전 값 10.0 은 pt 로 의도된 값이
             // px 필드에 들어가 96dpi 에서 7.5pt 로 렌더되던 단위 혼동이었다.
             const PAGE_NUMBER_PT: f64 = 10.0;
-            let font_size = PAGE_NUMBER_PT * self.dpi / 72.0;
+
+            // [위비즈 pf-02] 글꼴·크기는 문서의 «Page Number»(쪽 번호) 스타일이 가리키는 글자
+            // 모양이다(맥 한글 12.30 — 코퍼스 스타일 58개 중 57개가 고딕계, 크기 10pt 58/58).
+            // 숫자·줄표는 라틴 칸 글꼴이고 이름은 원본 그대로 둔다 — 폭은 그 이름의 폭 표로 재고
+            // 화면 면은 글꼴 등록부가 잇는다. 스타일이 없는 문서는 종전 «바탕» 10pt 로 그린다.
+            // HWP3 원본·변환본은 맥 정답 쌍이 없어 종전 «바탕» 10pt · 종전 위치 식을 그대로 둔다.
+            let hwp3_lineage = self.profile.get().legacy_hwp3_stored_geometry();
+            let face = self
+                .page_number_face
+                .get()
+                .filter(|_| !hwp3_lineage)
+                .filter(|face| {
+                    styles
+                        .char_styles
+                        .get(face.char_shape_id as usize)
+                        .is_some_and(|cs| cs.font_size > 0.0)
+                });
+            let (page_num_style, descent_em) = match face {
+                Some(face) => (
+                    resolved_to_text_style(
+                        styles,
+                        face.char_shape_id,
+                        super::page_number::PAGE_NUMBER_LANG_SLOT,
+                    ),
+                    Some(face.descent_em),
+                ),
+                None => (
+                    TextStyle {
+                        font_family: "바탕".to_string(),
+                        font_size: PAGE_NUMBER_PT * self.dpi / 72.0,
+                        color: 0x000000,
+                        ..Default::default()
+                    },
+                    // 스타일이 없는 HWP5/HWPX 는 새 위치 식에 «바탕» descent 를, HWP3 변환본은 종전 식.
+                    (!hwp3_lineage).then(|| super::page_number::page_number_descent_em("바탕")),
+                ),
+            };
+            let font_size = page_num_style.font_size;
 
             // [#3048] 폭은 실제 폰트 메트릭으로 잰다. 종전 `문자수 × 크기 × 0.6` 은
             // 장식 공백이 든 `- 1 -`(5자)을 30pt 로 과대평가해(실측 24.8pt) 가운데·
             // 오른쪽 정렬 위치를 약 2pt 왼쪽으로 밀었다. 아래 TextRunNode 가 쓰는
             // 스타일과 **같은 값**으로 재야 측정과 렌더가 어긋나지 않는다.
-            let page_num_style = TextStyle {
-                font_family: "바탕".to_string(),
-                font_size,
-                color: 0x000000,
-                ..Default::default()
-            };
             let text_width = estimate_text_width(&page_num_text, &page_num_style);
 
             let is_odd_page = page_content.page_number % 2 == 1;
@@ -6104,15 +6165,16 @@ impl LayoutEngine {
                 .unwrap_or(false);
             let is_footer = !matches!(pnp.position, 1..=3 | 7 | 9);
             let footer_center = if is_footer {
-                self.footer_page_number_y(layout, target_area, font_size)
+                self.footer_page_number_y(layout, target_area, font_size, descent_em)
             } else {
+                // 위 계열(1~3·7·9)은 맥 정답 쌍이 없어 종전 식을 유지한다(pf-13).
                 target_area.y + target_area.height / 2.0 + font_size / 3.0
             };
-            // body 기준 테두리 + 테두리 실제 그려질 때만 footer_area 중앙으로
+            // body 기준 테두리 + 테두리 실제 그려질 때만 footer_area 기준으로
             // 보정 (target_area 가 footer_area 와 다를 수 있는 경우 정합).
             // 그 외(paper 기준/테두리 없음/hide_border)는 기존 footer_center.
             let y = if is_footer {
-                self.page_number_baseline_y(layout, page_border_fill, font_size)
+                self.page_number_baseline_y(layout, page_border_fill, font_size, descent_em)
                     .filter(|_| border_drawn)
                     .unwrap_or(footer_center)
             } else {
