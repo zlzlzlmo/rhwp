@@ -6921,6 +6921,54 @@ mod tests {
         assert_eq!(positions, vec![None, Some(5), Some(5), Some(0)]);
     }
 
+    /// [위비즈 pf-03] 표 칸 안의 쪽 번호 위치(pgnp)도 등록된다 — 맥 한글 12.30 은 쪽을 채우며
+    /// 표 칸 안 컨트롤까지 훑는다(f5a3062b: pgnp 가 최상위 표 칸 안에 있는 양식에서 마지막 9쪽에
+    /// «- 9 -» 가 나온다). 표가 놓인 쪽부터 다음 pgnp 전까지 적용한다.
+    #[test]
+    fn page_number_position_inside_table_cell_applies_from_the_table_page() {
+        use crate::model::table::{Cell, Table};
+        let pnp = |position| crate::model::control::PageNumberPos {
+            position,
+            ..Default::default()
+        };
+        let table_with_pgnp = |position| {
+            let cell = Cell {
+                paragraphs: vec![Paragraph {
+                    controls: vec![Control::PageNumberPos(pnp(position))],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            Control::Table(Box::new(Table {
+                cells: vec![cell],
+                ..Default::default()
+            }))
+        };
+        let mut pages = vec![
+            page_with_items(vec![PageItem::FullParagraph { para_index: 0 }]),
+            page_with_items(vec![PageItem::Table {
+                para_index: 1,
+                control_index: 0,
+            }]),
+            page_with_items(vec![PageItem::FullParagraph { para_index: 2 }]),
+            page_with_items(vec![PageItem::Table {
+                para_index: 3,
+                control_index: 0,
+            }]),
+        ];
+        let mut paragraphs = vec![Paragraph::default(); 4];
+        paragraphs[1].controls = vec![table_with_pgnp(5)];
+        // 뒤의 표 칸 안 pgnp(pos=0)는 그 쪽부터 번호를 끈다 — 앞쪽 번호를 지우면 안 된다.
+        paragraphs[3].controls = vec![table_with_pgnp(0)];
+        state::finalize::finalize_pages(&mut pages, &[], &paragraphs);
+
+        let positions: Vec<_> = pages
+            .iter()
+            .map(|p| p.page_number_pos.as_ref().map(|pos| pos.position))
+            .collect();
+        assert_eq!(positions, vec![None, Some(5), Some(5), Some(0)]);
+    }
+
     #[test]
     fn footnote_area_reserve_uses_section_shape_metrics() {
         let engine = TypesetEngine::with_default_dpi();

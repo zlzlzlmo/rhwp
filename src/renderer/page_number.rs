@@ -247,6 +247,10 @@ impl PageControlEvents {
             Control::NewNumber(number) if number.number_type == AutoNumberType::Page => {
                 self.new_numbers.push((page, number.number));
             }
+            // [위비즈 pf-03] 표 칸 안의 쪽 번호 위치도 등록한다 — 맥 한글 12.30 은 쪽을 채우며
+            // 표 칸 안 컨트롤까지 훑고, 표가 놓인 쪽부터 적용한다. 같은 쪽 여럿은 문서 순서로
+            // 쌓여 `page_number_pos_at` 의 `max_by_key` 가 마지막을 고른다.
+            Control::PageNumberPos(pos) => self.page_number_positions.push((page, pos.clone())),
             // #6206: 셀 안 metadata는 외부 표의 첫 배치 쪽에 적용하는 기존 계약 유지.
             Control::Table(table) => {
                 for cell in &table.cells {
