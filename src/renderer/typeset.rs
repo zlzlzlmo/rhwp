@@ -6969,6 +6969,33 @@ mod tests {
         assert_eq!(positions, vec![None, Some(5), Some(5), Some(0)]);
     }
 
+    /// [위비즈 pf-05] 한 쪽에 쪽 감추기(pghd)가 둘이면 문서 순서상 **마지막**이 이긴다 — 맥 한글
+    /// 12.30 은 감추기 바이트를 합치지 않고 대입한다. tac-img-02 1쪽(머리말만 감춤 → 쪽 번호만
+    /// 감춤 순)에서 맥 PDF 는 쪽 번호를 그리지 않는다. 첫째만 쓰면 번호가 남는다.
+    #[test]
+    fn last_page_hide_on_a_page_wins() {
+        let hide_header = crate::model::control::PageHide {
+            hide_header: true,
+            ..Default::default()
+        };
+        let hide_page_num = crate::model::control::PageHide {
+            hide_page_num: true,
+            ..Default::default()
+        };
+        let mut pages = vec![page_with_items(vec![
+            PageItem::FullParagraph { para_index: 0 },
+            PageItem::FullParagraph { para_index: 1 },
+        ])];
+        let mut paragraphs = vec![Paragraph::default(); 2];
+        paragraphs[0].controls = vec![Control::PageHide(hide_header)];
+        paragraphs[1].controls = vec![Control::PageHide(hide_page_num)];
+        state::finalize::finalize_pages(&mut pages, &[], &paragraphs);
+
+        let hide = pages[0].page_hide.as_ref().expect("쪽 감추기가 걸린다");
+        assert!(hide.hide_page_num, "뒤의 감추기(쪽 번호)가 이긴다");
+        assert!(!hide.hide_header, "합치지 않고 대입한다");
+    }
+
     #[test]
     fn footnote_area_reserve_uses_section_shape_metrics() {
         let engine = TypesetEngine::with_default_dpi();

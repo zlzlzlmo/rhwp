@@ -118,8 +118,9 @@ pub(in crate::renderer::typeset) fn finalize_pages(
             page.page_number_pos = events.page_number_pos_at(i).cloned();
         }
 
-        // 한 컨트롤의 감추기는 소스 위치가 매핑된 한 쪽에만 적용한다.
-        if let Some((_, hide)) = events.hides.iter().find(|(target, _)| *target == i) {
+        // 한 컨트롤의 감추기는 소스 위치가 매핑된 한 쪽에만 적용한다. 한 쪽에 감추기가 둘
+        // 이상이면 문서 순서상 마지막이 이긴다 — 맥 한글은 감추기 바이트를 합치지 않고 대입한다.
+        if let Some((_, hide)) = events.hides.iter().rev().find(|(target, _)| *target == i) {
             page.page_hide = Some(hide.clone());
         }
     }
