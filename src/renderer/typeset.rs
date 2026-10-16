@@ -6969,6 +6969,40 @@ mod tests {
         assert_eq!(positions, vec![None, Some(5), Some(5), Some(0)]);
     }
 
+    /// [위비즈 pf-04] NewNumber 가 있어도 그 전 쪽의 쪽 번호를 숨기지 않는다 — 맥 한글 12.30 은
+    /// 쪽 번호를 pgnp 가 놓인 쪽부터 pghd(쪽 감추기)가 아닌 모든 쪽에 그리고 NewNumber 는 번호
+    /// 값만 바꾼다(tac-img-02: pgnp 1쪽 · NewNumber 61쪽 → 맥 PDF 3~60쪽에 «- 3 -»…«- 60 -»).
+    #[test]
+    fn new_number_does_not_hide_page_numbers_before_it() {
+        let mut pages: Vec<_> = (0..4)
+            .map(|pi| page_with_items(vec![PageItem::FullParagraph { para_index: pi }]))
+            .collect();
+        let mut paragraphs = vec![Paragraph::default(); 4];
+        paragraphs[0].controls = vec![Control::PageNumberPos(
+            crate::model::control::PageNumberPos {
+                position: 5,
+                ..Default::default()
+            },
+        )];
+        paragraphs[2].controls = vec![Control::NewNumber(crate::model::control::NewNumber {
+            number_type: crate::model::control::AutoNumberType::Page,
+            number: 1,
+        })];
+        state::finalize::finalize_pages(&mut pages, &[], &paragraphs);
+
+        let positions: Vec<_> = pages
+            .iter()
+            .map(|p| p.page_number_pos.as_ref().map(|pos| pos.position))
+            .collect();
+        assert_eq!(
+            positions,
+            vec![Some(5); 4],
+            "NewNumber 앞 쪽에도 쪽 번호가 선다"
+        );
+        let numbers: Vec<_> = pages.iter().map(|p| p.page_number).collect();
+        assert_eq!(numbers, vec![1, 2, 1, 2], "NewNumber 는 번호 값만 바꾼다");
+    }
+
     /// [위비즈 pf-05] 한 쪽에 쪽 감추기(pghd)가 둘이면 문서 순서상 **마지막**이 이긴다 — 맥 한글
     /// 12.30 은 감추기 바이트를 합치지 않고 대입한다. tac-img-02 1쪽(머리말만 감춤 → 쪽 번호만
     /// 감춤 순)에서 맥 PDF 는 쪽 번호를 그리지 않는다. 첫째만 쓰면 번호가 남는다.

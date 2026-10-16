@@ -114,9 +114,9 @@ pub(in crate::renderer::typeset) fn finalize_pages(
         let (current_header, current_footer) = active_hf.active(page_num);
         page.active_header = current_header;
         page.active_footer = current_footer;
-        if !assigner.should_hide_page_number() {
-            page.page_number_pos = events.page_number_pos_at(i).cloned();
-        }
+        // 쪽 번호는 pgnp 가 놓인 쪽부터 pghd 가 아닌 모든 쪽에 선다 — NewNumber 는 번호 값만
+        // 바꾸고 그 앞 쪽의 번호를 숨기지 않는다(맥 한글 12.30: tac-img-02 3~60쪽).
+        page.page_number_pos = events.page_number_pos_at(i).cloned();
 
         // 한 컨트롤의 감추기는 소스 위치가 매핑된 한 쪽에만 적용한다. 한 쪽에 감추기가 둘
         // 이상이면 문서 순서상 마지막이 이긴다 — 맥 한글은 감추기 바이트를 합치지 않고 대입한다.

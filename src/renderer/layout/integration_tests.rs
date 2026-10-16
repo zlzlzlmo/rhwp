@@ -2466,6 +2466,35 @@ mod tests {
         }
     }
 
+    /// [위비즈 pf-04] tac-img-02: pgnp 는 1쪽, NewNumber 는 61쪽, pghd 는 1·2·5쪽에 있다.
+    /// 맥 한글 PDF 는 3·4·6~60쪽에 «-n-» 을 그리고(1·2·5쪽은 없음) 61쪽부터 «-1-» 로 다시 센다.
+    /// 종전 «NewNumber 전 쪽 번호 숨김» 규칙은 3~60쪽 58쪽의 번호를 지웠다.
+    #[test]
+    fn test_pf04_tac_img_02_numbers_before_new_number_match_hancom() {
+        let Some(core) = load_document("samples/tac-img-02.hwp") else {
+            return;
+        };
+        // 맥 PDF 66쪽 전수: 1·2·5쪽은 번호 없음(pghd), 3~60쪽은 «-n-», 61쪽(NewNumber)부터 «-1-»…«-6-».
+        assert_eq!(core.page_count(), 66, "쪽 수가 맥 PDF 와 같아야 한다");
+        for page in 0..66u32 {
+            let shown = page + 1;
+            let expected = match shown {
+                1 | 2 | 5 => None,
+                3..=60 => Some(format!("-{shown}-")),
+                _ => Some(format!("-{}-", shown - 60)),
+            };
+            let svg = core.render_page_svg_native(page).unwrap_or_default();
+            // 맨 아래 글줄이 «-n-» 꼴(줄표·숫자뿐)일 때만 쪽 번호로 본다 — 본문 글줄은 번호가 아니다.
+            let number = bottom_svg_line(&svg)
+                .map(|line| line.0)
+                .filter(|t| t.chars().all(|c| c == '-' || c.is_ascii_digit()));
+            assert_eq!(
+                number, expected,
+                "tac-img-02 {shown}쪽 쪽 번호 (맥 PDF 와 같아야 한다)"
+            );
+        }
+    }
+
     /// [Task #683] pr-149.hwp 빈 paragraph + Para-relative TopAndBottom 그림
     /// cluster 간 거리 정합 검증.
     /// - 한컴 한글 2022 PDF 정합: 그림 cluster 당 18864 HU (= image_height + line(lh+ls)).

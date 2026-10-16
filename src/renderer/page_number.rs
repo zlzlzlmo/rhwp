@@ -81,9 +81,6 @@ pub(crate) struct PageNumberAssigner<'a> {
     /// production은 배치 후 확정된 쪽 이벤트를 사용한다.
     targets_are_pages: bool,
     page_ordinal: usize,
-    /// NewNumber 컨트롤이 1건 이상 소비되었는지 여부.
-    /// 한컴 호환: NewNumber가 존재하면 첫 발화 전 페이지에는 쪽번호 미표시.
-    numbering_started: bool,
     /// 직전 [`assign`](Self::assign) 호출에서 NewNumber 가 발화했는지 여부.
     /// 구역 간 carry 를 재시작 지점 앞에서 멈추는 데 쓴다 (Issue #6206).
     last_restarted: bool,
@@ -98,7 +95,6 @@ impl<'a> PageNumberAssigner<'a> {
             counter: initial,
             targets_are_pages: false,
             page_ordinal: 0,
-            numbering_started: false,
             last_restarted: false,
         }
     }
@@ -128,7 +124,6 @@ impl<'a> PageNumberAssigner<'a> {
             if applies {
                 self.counter = nn_num as u32;
                 self.consumed.insert(idx);
-                self.numbering_started = true;
                 self.last_restarted = true;
             }
         }
@@ -148,12 +143,6 @@ impl<'a> PageNumberAssigner<'a> {
     /// 다음 페이지에 적용될 카운터 값 (구역 carry 용).
     pub fn next_counter(&self) -> u32 {
         self.counter
-    }
-
-    /// NewNumber가 존재하지만 아직 발화되지 않은 상태인지 판별한다.
-    /// true이면 이 페이지에 쪽번호를 표시하지 않아야 한다 (한컴 호환).
-    pub fn should_hide_page_number(&self) -> bool {
-        !self.new_page_numbers.is_empty() && !self.numbering_started
     }
 
     fn para_first_appears(page: &PageContent, target_pi: usize) -> bool {
@@ -219,7 +208,7 @@ impl PageControlEvents {
                     Control::PageHide(_) | Control::NewNumber(_) | Control::Table(_)
                 ) {
                     let items = by_paragraph.get(&pi).map(Vec::as_slice).unwrap_or(&[]);
-                    // 미배치 NewNumber도 남겨 첫 발화 전 번호 숨김 계약을 보존한다.
+                    // 미배치 컨트롤은 usize::MAX 로 남겨 어느 쪽에도 걸리지 않게 한다.
                     let page = control_page(para, ci, items).unwrap_or(usize::MAX);
                     events.collect_control(control, page);
                 }
@@ -588,37 +577,6 @@ mod tests {
                 "{name}: {descent}"
             );
         }
-    }
-
-    #[test]
-    fn should_hide_before_first_new_number() {
-        let nns = vec![(5usize, 1u16)];
-        let mut a = PageNumberAssigner::new(&nns, 1);
-        assert!(
-            a.should_hide_page_number(),
-            "NewNumber 존재 + 미발화 → 숨김"
-        );
-
-        let p1 = mk_page(vec![PageItem::FullParagraph { para_index: 0 }]);
-        a.assign(&p1);
-        assert!(
-            a.should_hide_page_number(),
-            "아직 NewNumber 미트리거 → 숨김"
-        );
-
-        let p2 = mk_page(vec![PageItem::FullParagraph { para_index: 5 }]);
-        a.assign(&p2);
-        assert!(!a.should_hide_page_number(), "NewNumber 발화 후 → 표시");
-
-        let p3 = mk_page(vec![PageItem::FullParagraph { para_index: 6 }]);
-        a.assign(&p3);
-        assert!(!a.should_hide_page_number(), "이후에도 계속 표시");
-    }
-
-    #[test]
-    fn should_not_hide_when_no_new_numbers() {
-        let a = PageNumberAssigner::new(&[], 1);
-        assert!(!a.should_hide_page_number(), "NewNumber 없으면 항상 표시");
     }
 
     /// [#4369] 같은 문단에 NewNumber Page 컨트롤이 2개(12, 11 순)면 문서
