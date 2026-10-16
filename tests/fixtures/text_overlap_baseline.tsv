@@ -114,9 +114,9 @@ issue6310/press_release_cell_logo.hwpx	4
 issue6551/113424_evaluation_guideline.hwpx	3
 issue6601/36331407_side_by_side_tac_tables.hwpx	11
 issue6697/80550-agricultural-machinery-act-amendment.hwpx	13
-issue6764/1613000-202200037-air-traffic-controller-cbta.hwp	6
+issue6764/1613000-202200037-air-traffic-controller-cbta.hwp	5
 # 쪽 번호 위치·글꼴 pf-01·pf-02 (2026-10-17, 맥 한글 12.30 정합 3차): 쪽 번호 기준선이 맥 PDF 위치(0.2pt 안)로
-# 옮겨 합계 3712 -> 3611 (17개 문서 감소 — 이슈1937 271 -> 169 · 간장 hwpx 222 -> 213 · 80168 3 -> 2 …).
+# 옮겨 합계 3712 -> 3610 (18개 문서 감소 — 이슈1937 271 -> 169 · 간장 hwpx 222 -> 213 · 80168 3 -> 2 …).
 # 반대로 3개 문서가 늘었다: 78494 hwpx 0->1 · rowbreak-problem-pages 1->2 · 1342000 37->77. 늘어난 겹침은 셋 모두
 # «본문 표 글(Body/Table/…/TextRun) ↔ 쪽 번호(Footer/TextRun)» 쌍이다 — 표 글이 꼬리말 띠까지 내려온 쪽에서 올라온
 # 쪽 번호와 만난다. 1342000(늘어난 19쪽 전부)·78494(62쪽)는 같은 쪽에 layout-anomaly overflow 가 10~35px 로 잡힌 본문

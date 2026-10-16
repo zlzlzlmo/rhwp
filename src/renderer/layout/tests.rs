@@ -2900,22 +2900,36 @@ fn page_number_uses_the_page_number_style_face() {
     );
 }
 
-/// «Page Number» 스타일이 없는 문서는 종전대로 «바탕» 10pt 로 그린다.
+/// «Page Number» 스타일이 없는 문서도 맥 한글은 문서 글꼴이 아니라 내장 기본값으로 그린다 —
+/// 37787·70833(스타일 표에 «쪽 번호»가 없고 글꼴 목록에 함초롬돋움도 없는 규정 문서)의 맥 PDF
+/// 쪽 번호는 둘 다 HCRDotum 9.96pt · 기준선 용지 아래 30.56pt · 아래 28.35 · 꼬리말 28.35 이다.
 #[test]
-fn page_number_without_style_keeps_batang_10pt() {
-    let (run, _, _) = render_page_number_run(4250, 2835, None, false);
-    assert_eq!(run.style.font_family, "바탕");
+fn page_number_without_style_falls_back_to_builtin_hamchorom_dotum_10pt() {
+    let (run, bbox, page_height) = render_page_number_run(2835, 2835, None, false);
+    assert!(
+        run.style.font_family.starts_with("함초롬돋움"),
+        "스타일이 없으면 내장 기본 글꼴 함초롬돋움: {}",
+        run.style.font_family
+    );
     assert!((run.style.font_size - 10.0 * DEFAULT_DPI / 72.0).abs() < 0.01);
+    let got = page_number_baseline_from_bottom_pt(&run, &bbox, page_height);
+    assert!(
+        (got - 30.56).abs() <= 0.15,
+        "기준선 {got:.2}pt ↔ 맥 30.56pt (아래 28.35 + 함초롬돋움 descent 0.230 × 10)"
+    );
 }
 
 /// HWP3 변환본은 맥 정답 쌍이 없어 글꼴 면(«바탕» 10pt)도 위치 식(꼬리말 띠 가운데 + 크기/3)도
 /// 종전 그대로다: 아래 42.5pt · 꼬리말 28.35pt → 기준선 42.5 + 14.175 − 13.33 = 43.34pt.
+/// «Page Number» 스타일이 있든 없든 같다.
 #[test]
 fn page_number_of_hwp3_variant_keeps_legacy_face_and_position() {
-    let (run, bbox, page_height) = render_page_number_run(4250, 2835, Some("함초롬돋움"), true);
-    assert_eq!(run.style.font_family, "바탕");
-    let got = page_number_baseline_from_bottom_pt(&run, &bbox, page_height);
-    assert!((got - 43.34).abs() <= 0.05, "종전 위치 {got:.2}pt");
+    for style_font in [Some("함초롬돋움"), None] {
+        let (run, bbox, page_height) = render_page_number_run(4250, 2835, style_font, true);
+        assert_eq!(run.style.font_family, "바탕");
+        let got = page_number_baseline_from_bottom_pt(&run, &bbox, page_height);
+        assert!((got - 43.34).abs() <= 0.05, "종전 위치 {got:.2}pt");
+    }
 }
 
 /// [#6608] 머리말 안 용지 기준 그림은 물리 용지가 아니라 **머리말 틀 원점**에서

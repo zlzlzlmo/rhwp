@@ -2442,6 +2442,24 @@ mod tests {
             ),
             // 61쪽(NewNumber 뒤): 굴림 · 아래 42.5 · 꼬리말 14.17. 맥 PDF 61쪽 «-1-» 기준선 43.88.
             ("samples/tac-img-02.hwp", 60, "-1-", 43.88, 283.44, "굴림"),
+            // «Page Number» 스타일이 없는 규정 문서(글꼴 목록에도 함초롬돋움이 없다): 맥은 내장 기본값
+            // 함초롬돋움 10pt 로 그린다 — HCRDotum 9.96 · 아래 28.35 · 꼬리말 28.35 → 기준선 30.56.
+            (
+                "samples/issue5699/37787_regulatory_impact.hwp",
+                0,
+                "-1-",
+                30.56,
+                285.12,
+                "함초롬돋움",
+            ),
+            (
+                "samples/issue6854/70833-electrical-safety-rule-regulatory-analysis.hwp",
+                0,
+                "-1-",
+                30.56,
+                285.12,
+                "함초롬돋움",
+            ),
         ];
         for (path, page, text, mac_baseline, mac_x0, font) in cases {
             let Some(core) = load_document(path) else {

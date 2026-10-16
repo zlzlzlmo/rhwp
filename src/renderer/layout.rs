@@ -3149,7 +3149,7 @@ pub struct LayoutEngine {
     body_float_carve_evidence: std::cell::RefCell<Vec<super::float_placement::FloatCarveEvidence>>,
     /// 총 쪽수 (머리말/꼬리말 필드 치환용)
     total_pages: std::cell::Cell<u32>,
-    /// 쪽 번호 글자의 글꼴 면 — 문서의 «Page Number» 스타일 (없으면 `None` = 종전 «바탕» 10pt)
+    /// 쪽 번호 글자의 글꼴 면 — 문서의 «Page Number» 스타일 (없으면 `None` = 내장 기본값 함초롬돋움 10pt)
     page_number_face: std::cell::Cell<Option<super::page_number::PageNumberFace>>,
     /// 현재 페이지 번호 (바탕쪽 글상자 쪽번호 치환용)
     current_page_number: std::cell::Cell<u32>,
@@ -6087,7 +6087,7 @@ impl LayoutEngine {
             // [위비즈 pf-02] 글꼴·크기는 문서의 «Page Number»(쪽 번호) 스타일이 가리키는 글자
             // 모양이다(맥 한글 12.30 — 코퍼스 스타일 58개 중 57개가 고딕계, 크기 10pt 58/58).
             // 숫자·줄표는 라틴 칸 글꼴이고 이름은 원본 그대로 둔다 — 폭은 그 이름의 폭 표로 재고
-            // 화면 면은 글꼴 등록부가 잇는다. 스타일이 없는 문서는 종전 «바탕» 10pt 로 그린다.
+            // 화면 면은 글꼴 등록부가 잇는다. 스타일이 없는 문서는 내장 기본값 함초롬돋움 10pt 로 그린다.
             // HWP3 원본·변환본은 맥 정답 쌍이 없어 종전 «바탕» 10pt · 종전 위치 식을 그대로 둔다.
             let hwp3_lineage = self.profile.get().legacy_hwp3_stored_geometry();
             let face = self
@@ -6109,16 +6109,21 @@ impl LayoutEngine {
                     ),
                     Some(face.descent_em),
                 ),
-                None => (
-                    TextStyle {
-                        font_family: "바탕".to_string(),
-                        font_size: PAGE_NUMBER_PT * self.dpi / 72.0,
-                        color: 0x000000,
-                        ..Default::default()
-                    },
-                    // 스타일이 없는 HWP5/HWPX 는 새 위치 식에 «바탕» descent 를, HWP3 변환본은 종전 식.
-                    (!hwp3_lineage).then(|| super::page_number::page_number_descent_em("바탕")),
-                ),
+                // «Page Number» 스타일이 없는 문서: 맥 한글은 문서 글꼴이 아니라 내장 기본값 함초롬돋움
+                // 10pt 로 그린다(37787·70833 — 스타일 표에 «쪽 번호»도 글꼴 목록에 함초롬돋움도 없는데
+                // 맥 PDF 는 HCRDotum 9.96pt · 기준선 30.56). HWP3 변환본만 종전 «바탕» 10pt · 종전 식.
+                None => {
+                    let family = if hwp3_lineage { "바탕" } else { "함초롬돋움" };
+                    (
+                        TextStyle {
+                            font_family: family.to_string(),
+                            font_size: PAGE_NUMBER_PT * self.dpi / 72.0,
+                            color: 0x000000,
+                            ..Default::default()
+                        },
+                        (!hwp3_lineage).then(|| super::page_number::page_number_descent_em(family)),
+                    )
+                }
             };
             let font_size = page_num_style.font_size;
 

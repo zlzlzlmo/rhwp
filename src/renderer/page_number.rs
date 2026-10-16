@@ -34,7 +34,7 @@ pub(crate) const PAGE_NUMBER_LANG_SLOT: usize = 1;
 /// 문서에서 «Page Number» 스타일을 찾아 쪽 번호의 글자 모양을 돌려준다.
 ///
 /// 영문 이름으로 고른다(한글 이름 «쪽 번호» 스타일이 둘인 문서에서도 한컴은 영문 이름으로
-/// 고른다). 스타일이 없으면 `None` — 호출부가 종전 고정 글꼴로 그린다.
+/// 고른다). 스타일이 없으면 `None` — 호출부가 내장 기본값(함초롬돋움 10pt)으로 그린다.
 pub(crate) fn page_number_face(doc_info: &DocInfo) -> Option<PageNumberFace> {
     let style = doc_info.styles.iter().find(|style| {
         style
