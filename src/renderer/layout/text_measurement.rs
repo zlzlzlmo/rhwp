@@ -1139,6 +1139,21 @@ pub(crate) struct CharWidthDecision<'a> {
 /// literal 로 흩어 두지 않는다.
 const HALFWIDTH_PUNCTUATION_WIDTH_SOURCE: &str = "metricHalfwidthPunctuationOverlay";
 
+/// 굵게 요청이어도 advance 가 보통과 같은 글꼴 — 굵은 글꼴 파일이 없어 한컴이 합성 굵기(채움 + 선)로 그리는 글꼴.
+/// 맑은 고딕(+Semilight)으로 시작한다: 맥 PDF 굵은 비한글 1,013자가 평균 +41.9HU/자 넓었고(표 내용 오차의 22%), 저장 줄 88줄에서
+/// 재현 89.8% → 94.3% · 과대 추정 5줄 → 0줄로 두 정답이 같은 쪽이다. 라틴 글꼴(Arial·Times)의 굵은 항목은 맥 PDF 표본이 없어 그대로 둔다.
+fn synthetic_bold_keeps_regular_advance(name: &str) -> bool {
+    let key: String = name
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect();
+    matches!(
+        key.as_str(),
+        "malgungothic" | "malgungothicsemilight" | "맑은고딕" | "맑은고딕semilight"
+    )
+}
+
 #[derive(Debug, Clone, Copy)]
 struct EmbeddedWidthDecision<'a> {
     width_px: Option<f64>,
@@ -1191,6 +1206,8 @@ fn measure_char_width_embedded_decision_for_font<'a>(
             character_match: "hit",
         };
     }
+    // 굵은 글꼴 파일이 없는 글꼴은 한컴이 같은 글꼴을 채움 + 선으로 다시 그린다 — advance 는 보통과 같다(맥 한글 12.30 · FM-4).
+    let bold = bold && !synthetic_bold_keeps_regular_advance(primary_name);
     let Some(mm) = font_metrics_data::find_metric_decision(primary_name, bold, italic) else {
         return EmbeddedWidthDecision {
             width_px: None,
@@ -1954,6 +1971,34 @@ pub(crate) fn vertical_substitute_char(c: char) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn embedded_width(family: &str, bold: bool, c: char) -> f64 {
+        measure_char_width_embedded_decision_for_font(family, bold, false, c, 10.0, false, false)
+            .width_px
+            .unwrap_or_else(|| panic!("{family} {c:?} 폭 표가 있어야 한다"))
+    }
+
+    /// 맥 한글 12.30(FM-4): 맑은 고딕에는 굵은 글꼴 파일이 없어 한컴은 같은 글꼴을 채움 + 선으로 다시 그린다 —
+    /// **advance 는 보통과 같다**(한글 1,273쌍 1000.0 · 숫자 보통 553.5 / 굵게 552.5). 우리 표의 Windows 굵은 면 폭
+    /// (숫자 .580 · `.` .262 · `(` .358)을 굵게 요청에 쓰면 맥 PDF 굵은 비한글 1,013자가 평균 +41.9HU/자 넓어진다.
+    #[test]
+    fn malgun_gothic_bold_keeps_the_regular_advance() {
+        for family in ["Malgun Gothic", "맑은 고딕", "Malgun Gothic Semilight"] {
+            for c in ['0', '5', '.', '(', ')', '%', 'A', '가'] {
+                assert_eq!(
+                    embedded_width(family, true, c),
+                    embedded_width(family, false, c),
+                    "{family} {c:?} 굵게 폭이 보통과 달라서는 안 된다"
+                );
+            }
+        }
+    }
+
+    /// 굵은 글꼴 파일이 실제로 있는 글꼴(라틴 Arial)은 종전대로 굵은 면의 폭을 쓴다 — 범위를 맑은 고딕으로 가둔 대조.
+    #[test]
+    fn a_family_with_a_real_bold_face_keeps_its_bold_advance() {
+        assert!(embedded_width("Arial", true, 'i') > embedded_width("Arial", false, 'i'));
+    }
 
     #[test]
     fn issue_4442_noto_sans_kr_regular_ascii_shared_width_uses_tracked_advances() {
