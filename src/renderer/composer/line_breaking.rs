@@ -1605,15 +1605,7 @@ fn fill_one_interval(
                 })
                 .unwrap_or(text_chars.len());
 
-            // [LB-G01] 문단 끝 표지는 새 줄을 만들지 않는다. 앞 줄이 넘친 공백(들)을 흡수해 줄 시작이 글 끝에 닿았으면
-            // 남는 것은 표지뿐이라 빈 줄을 내지 않는다 — 맥 한글 12.30 저장 줄은 글이 상자를 꽉 채운 문단의 끝 공백·표지를
-            // 마지막 줄에 그대로 둔다(다줄 문단 928개 중 «표지만 있는 마지막 줄»은 앞이 강제 줄바꿈인 2건뿐, 오라클 29행 =
-            // 표지만 23 · 공백뿐 6). 강제 줄바꿈 뒤의 빈 마지막 줄은 한컴도 내므로 `LineBreak` 로 끝난 문단은 그대로다.
-            // 긴 공백 런은 이 규칙과 별개로 줄 끝에 둘까지만 남고 셋째부터 다음 줄 머리가 된다(LB-G05).
-            let only_end_mark_left = cursor.line_start_idx == last_end
-                && cursor.emitted_any
-                && matches!(tokens.last(), Some(BreakToken::Space { .. }));
-            if cursor.line_start_idx <= last_end && !only_end_mark_left {
+            if cursor.line_start_idx <= last_end {
                 cursor.emitted_any = true;
                 return Some(FilledInterval {
                     line: LineBreakResult {
@@ -1769,6 +1761,21 @@ fn fill_one_interval(
                         },
                         has_line_break: false,
                     };
+                    // [LB-G01] 문단 끝 표지는 새 줄을 만들지 않는다. 넘친 공백(들)을 흡수한 이 줄이 글의 마지막 줄이면
+                    // 남는 것은 표지뿐이라 빈 줄을 만들지 않고 이 줄로 문단을 끝낸다 — 맥 한글 12.30 저장 줄은 글이 상자를 꽉
+                    // 채운 문단의 끝 공백·표지를 마지막 줄에 그대로 둔다(다줄 문단 928개 중 «표지만 있는 마지막 줄»은 앞이 강제
+                    // 줄바꿈인 2건뿐, 오라클 29행 = 표지만 23 · 공백뿐 6). 강제 줄바꿈 뒤의 빈 마지막 줄은 한컴도 내므로
+                    // `LineBreak` 로 끝난 문단은 그대로다. 긴 공백 런은 줄 끝에 둘까지만 남고 셋째부터 다음 줄 머리가 된다.
+                    // 줄을 «다음 줄에 아무것도 없었다»는 None 으로 닫지 않고 ParagraphEnd 로 내야 프레임 경로가 문단을 버리지 않는다.
+                    if absorbed && ti + 1 + extra_tokens >= tokens.len() {
+                        cursor.finished = true;
+                        cursor.token_index = tokens.len();
+                        cursor.emitted_any = true;
+                        return Some(FilledInterval {
+                            line,
+                            termination: FillTermination::ParagraphEnd,
+                        });
+                    }
                     cursor.line_start_idx = cut;
                     cursor.lw = if absorbed { 0 } else { space_hwp };
                     cursor.line_space_savings = if absorbed { 0 } else { space_savings };
