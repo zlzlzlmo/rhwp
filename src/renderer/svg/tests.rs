@@ -599,6 +599,39 @@ fn test_svg_draw_path() {
     assert!(output.contains("Z"));
 }
 
+/// 밑줄색은 저장값 그대로다 — COLORREF 0 은 «글자색 따라가기»가 아니라 검정이다.
+/// 맥 한글 PDF 단일 밑줄 43개 중 «밑줄색 0 + 파랑(0x00ff0000) 글자» 9개·«밑줄색 0 + 빨강
+/// 글자» 2개가 전부 검정 선이었다. Canvas(web_canvas.rs)도 같은 계약이라 이 시험이
+/// 백엔드 공통 기준을 못박는다(Canvas 는 wasm32 전용이라 native 시험이 닿지 않는다).
+#[test]
+fn td03_underline_color_zero_is_black_even_with_colored_text() {
+    for text_color in [0x00FF_0000u32, 0x0000_00FF] {
+        let mut renderer = SvgRenderer::new();
+        renderer.begin_page(800.0, 600.0);
+        renderer.draw_text(
+            "밑줄",
+            10.0,
+            20.0,
+            &TextStyle {
+                font_size: 16.0,
+                color: text_color,
+                underline: UnderlineType::Bottom,
+                underline_color: 0,
+                ..Default::default()
+            },
+        );
+        let output = renderer.output();
+        let line = output
+            .lines()
+            .find(|l| l.starts_with("<line "))
+            .expect("밑줄 <line> 이 있어야 함");
+        assert!(
+            line.contains("stroke=\"#000000\""),
+            "밑줄색 0 은 검정이어야 함(글자색 {text_color:#x}): {line}"
+        );
+    }
+}
+
 #[test]
 fn test_svg_text_decoration() {
     let mut renderer = SvgRenderer::new();

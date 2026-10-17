@@ -2449,11 +2449,10 @@ impl Renderer for WebCanvasRenderer {
         // 밑줄 처리
         if !matches!(style.underline, UnderlineType::None) {
             let text_width = decoration_width;
-            let ul_color = if style.underline_color != 0 {
-                color_to_css(style.underline_color)
-            } else {
-                color_to_css(style.color)
-            };
+            // 밑줄 색은 저장값 그대로다. COLORREF 0 은 «글자색 따라가기»가 아니라 검정 —
+            // 맥 한글 PDF 단일 밑줄 43개 중 «밑줄색 0 + 유색 글자» 11개가 전부 검정 선이었다
+            // (svg.rs·skia·paint JSON 과 같은 계약).
+            let ul_color = color_to_css(style.underline_color);
             // [#5730] 아래 밑줄은 기준선 + 0.17em (한글 2022 프로브 실측, 고정
             // 2.0px 은 큰 글꼴에서 디센더 관통). 선 모양 내부 기하는 캔버스 경로
             // 현행 유지 — 오프셋만 SVG/Skia 와 같은 계약을 쓴다.
