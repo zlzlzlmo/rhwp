@@ -264,6 +264,26 @@ fn is_cjk_ideograph(ch: char) -> bool {
     lang == 2 || lang == 3 // Chinese or Japanese
 }
 
+/// [LB-G02] 글자 단위(bit7=1) 문단에서 `end_idx` 앞 글자가 숫자·기호·라틴이고 바로 다음 글자가 한글·한자이면
+/// 그 사이는 끊을 자리다 — 한컴은 폭이 넘친 비라틴 글자를 낱말 앞으로 되감지 않고 그 글자 앞에서 끊는다
+/// (`제15|조`·`/|기술`·`‧|조회`). 줄 끝 금칙(여는 괄호·통화 기호)과 줄 나눔을 막는 공백류 뒤는 제외한다.
+/// 어절 단위에서는 쓰지 않는다 — 같은 경계를 열면 한컴 저장 줄에서 고치는 1행보다 깨지는 행이 10배다.
+fn breaks_before_following_hangul(text_chars: &[char], end_idx: usize) -> bool {
+    let Some(&last) = end_idx.checked_sub(1).and_then(|i| text_chars.get(i)) else {
+        return false;
+    };
+    !is_hangul(last)
+        && !is_cjk_ideograph(last)
+        && !matches!(
+            last,
+            '\u{00A0}' | FIXED_WIDTH_BLANK | '\u{00AD}' | '\u{FEFF}' | '\u{2011}'
+        )
+        && !is_line_end_forbidden(last)
+        && text_chars
+            .get(end_idx)
+            .is_some_and(|next| is_hangul(*next) || is_cjk_ideograph(*next))
+}
+
 /// 문단 텍스트를 줄 나눔 토큰으로 분할한다.
 pub(crate) fn tokenize_paragraph(
     text_chars: &[char],
@@ -1895,7 +1915,7 @@ fn fill_one_interval(
                 let tail_all_line_start_forbidden = text_chars[*start_idx + 1..*end_idx]
                     .iter()
                     .all(|c| is_line_start_forbidden(*c));
-                let glyph_break_after = tail_all_line_start_forbidden && {
+                let glyph_break_after = (tail_all_line_start_forbidden && {
                     let c = text_chars[*start_idx];
                     if is_hangul(c) {
                         // [#2185] bit7=1 = 글자 단위 break 허용 (위 주석 참조)
@@ -1903,7 +1923,8 @@ fn fill_one_interval(
                     } else {
                         is_cjk_ideograph(c)
                     }
-                };
+                }) || (korean_break_unit == 1
+                    && breaks_before_following_hangul(text_chars, *end_idx));
                 if glyph_break_after && token_fits {
                     // 글자 모드의 후행 금칙 흡수분도 같은 "줄 끝 자리"로 본다.
                     //
@@ -5249,6 +5270,77 @@ mod frame_reflow_tests {
                     .collect::<Vec<_>>()
             );
         }
+    }
+
+    /// 토큰 앞 `count` 개의 폭 합(px) — 시험 상자 폭을 «이 토큰까지 + 1px» 로 잡는 데 쓴다.
+    fn token_width_sum(tokens: &[BreakToken], count: usize) -> f64 {
+        tokens[..count]
+            .iter()
+            .map(|token| match token {
+                BreakToken::Text { base_width, .. } | BreakToken::Space { width: base_width, .. } => {
+                    *base_width
+                }
+                _ => 0.0,
+            })
+            .sum()
+    }
+
+    fn broken_rows(text: &str, korean_break_unit: u8, fit_tokens: usize) -> Vec<(usize, usize)> {
+        let styles = styles(&[16.0]);
+        let chars = text.chars().collect::<Vec<_>>();
+        let para = paragraph(
+            text,
+            vec![CharShapeRef {
+                start_pos: 0,
+                char_shape_id: 0,
+            }],
+        );
+        let tokens = tokenize_paragraph(
+            &chars,
+            &para.char_offsets,
+            &para.char_shapes,
+            &styles,
+            0,
+            korean_break_unit,
+        );
+        let lines = fill_lines(
+            &tokens,
+            &chars,
+            token_width_sum(&tokens, fit_tokens) + 1.0,
+            0.0,
+            48.0,
+            korean_break_unit,
+            0,
+            &[],
+            0,
+            true,
+            None,
+        );
+        lines.iter().map(|l| (l.start_idx, l.end_idx)).collect()
+    }
+
+    /// [LB-G02] 글자 단위(bit7=1) 문단은 숫자·기호 **뒤 한글 앞**에서도 줄을 끊는다.
+    ///
+    /// 한컴 저장 줄에서 글자 단위 비공백 끊김 421개 중 21개(숫자|한글 7 · 기호|한글 9 · ASCII|한글 5)가
+    /// `제15|조`·`/|기술`·`‧|조회` 꼴이다 — 폭이 넘친 비라틴 글자는 낱말 앞으로 되감지 않고 그 앞에서 끊는다.
+    /// 우리는 끊을 자리가 «한글 글자 뒤»뿐이라 `제|15조` 처럼 낱말째 옮겼다.
+    #[test]
+    fn character_unit_mode_breaks_between_a_digit_or_symbol_and_the_next_hangul() {
+        // `연구 제15조` — 상자가 `연구 제15` 까지만 담는다(토큰 연·구·공백·제·15 다섯).
+        // 한컴은 `제15|조` — 우리는 `제|15조` 로 옮겼다.
+        assert_eq!(broken_rows("연구 제15조", 1, 5), vec![(0, 6), (6, 7)]);
+        // `연구/기술` — 상자가 `연구/` 까지만 담는다(토큰 연·구·/ 셋).
+        assert_eq!(broken_rows("연구/기술", 1, 3), vec![(0, 3), (3, 5)]);
+    }
+
+    /// [LB-G02] 짝 시험 — 어절 단위(bit7=0)는 같은 경계를 끊을 자리로 열지 않는다(한컴 저장 줄에서
+    /// 열면 A표본 1행 고치고 10행 깨뜨린다). 줄 끝 금칙(여는 괄호) 뒤도 끊지 않는다.
+    #[test]
+    fn word_unit_mode_and_line_end_forbidden_keep_the_old_boundaries() {
+        // 어절 모드: `제15조` 한 낱말이 통째로 다음 줄로 간다.
+        assert_eq!(broken_rows("가나 제15조", 0, 4), vec![(0, 2), (3, 7)]);
+        // 글자 모드라도 여는 괄호 뒤(줄 끝 금칙)는 끊는 자리가 아니다.
+        assert_eq!(broken_rows("가나(다라", 1, 3), vec![(0, 2), (2, 5)]);
     }
 
     #[test]
