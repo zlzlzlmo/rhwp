@@ -1791,11 +1791,20 @@ fn compute_line_extra_spacing(
     total_text_width: f64,
     available_width: f64,
     tab_width: f64,
+    // [JS-1] 줄에 글자처럼 취급한 개체(TAC)가 있으면 가시 끝 글자가 정렬 범위의 끝이 아니다 — 끝 글자 자간 몫을 두지 않는다.
+    has_inline_objects: bool,
 ) -> (f64, f64, f64) {
     // [JS-1] 정렬 범위의 끝 글자는 자간을 받지 않는다(맥 한글 12.30) — 범위 폭 = 자연 폭 + 끝 글자 자간 몫.
     // 음수 자간은 마지막 글자의 advance도 줄이지만 글리프 잉크는 줄이지 않으므로, 자간을 뺀 폭을 기준으로 분배해야
     // 글리프 오른쪽 끝이 줄 끝에 닿는다(나눔은 종전부터 이 보정을 가졌고, 양쪽·배분도 같은 규칙이다).
-    let range_end_spacing_credit = || range_end_glyph_spacing_credit(comp_line, styles, tab_width);
+    let range_end_spacing_credit = || {
+        // 나눔(Split)은 종전부터 개체가 있어도 이 보정을 가졌다 — 그대로 둔다.
+        if has_inline_objects && alignment != Alignment::Split {
+            0.0
+        } else {
+            range_end_glyph_spacing_credit(comp_line, styles, tab_width)
+        }
+    };
 
     // Task #352: 라인 내 dash leader (3+ 연속 '-') 글자 수 카운트.
     // visible_count 까지의 chars 에서만 카운트 (후행 공백 제외).
@@ -5786,6 +5795,7 @@ impl LayoutEngine {
                     total_text_width,
                     available_width,
                     tab_width,
+                    !line_tac_offsets_for_width.is_empty(),
                 )
             };
 
@@ -9920,6 +9930,7 @@ mod issue_2809_split_alignment_tests {
             30.0,
             90.0,
             40.0,
+            false,
         );
 
         assert!((extra_word - 30.0).abs() < 0.001);
@@ -9958,6 +9969,7 @@ mod issue_2809_split_alignment_tests {
             natural_width,
             available_width,
             40.0,
+            false,
         );
         let mut distributed_style = text_style;
         distributed_style.extra_word_spacing = extra_word;
@@ -9999,6 +10011,7 @@ mod issue_2809_split_alignment_tests {
             total_text_width,
             90.0,
             40.0,
+            false,
         );
 
         let mut distributed_style = text_style.clone();
@@ -10050,6 +10063,7 @@ mod issue_2809_split_alignment_tests {
             62.5,
             481.8,
             40.0,
+            false,
         );
         assert_eq!(extra_word, 0.0);
         assert_eq!(extra_char, 0.0);
@@ -10074,6 +10088,7 @@ mod issue_2809_split_alignment_tests {
             62.5,
             481.8,
             40.0,
+            false,
         );
         assert!(extra_char_mid > 0.0);
     }
@@ -10146,6 +10161,7 @@ mod alignment_range_tests {
             natural,
             avail,
             40.0,
+            false,
         );
         (extra_word, extra_char)
     }
@@ -10184,6 +10200,41 @@ mod alignment_range_tests {
             char_style.letter_spacing = 0.0;
         }
         plain
+    }
+
+    /// [JS-1] 줄에 글자처럼 취급한 개체(TAC)가 있으면 가시 끝 글자는 정렬 범위의 끝이 아니다 — 끝 글자 자간 몫을 두지 않는다.
+    /// (개체가 줄 끝을 잡은 줄은 종전 폭 그대로 분배한다.)
+    #[test]
+    fn justified_line_with_an_inline_object_keeps_the_last_letter_spacing_in_its_width() {
+        let styles = styles(16.0, -1.6);
+        let text = "가 나 다";
+        let natural = width_with(&styles, text, 0.0, 0.0);
+        let avail = natural + 30.0;
+        let (extra_word, extra_char, _) = compute_line_extra_spacing(
+            &line(text),
+            usize::MAX,
+            &styles,
+            Alignment::Justify,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            text.chars().count(),
+            natural,
+            avail,
+            40.0,
+            true,
+        );
+        let rendered = width_with(&styles, text, extra_word, extra_char);
+        assert!(
+            (rendered - avail).abs() < 0.001,
+            "개체가 있는 줄은 펜 끝이 줄 끝이다: {rendered} ↔ {avail}"
+        );
     }
 
     /// [JS-1] 정렬 범위의 끝 글자는 자간을 받지 않는다 — 줄 오른쪽 끝에 자간 없는 글리프가 정확히 닿는다.
@@ -10491,6 +10542,7 @@ mod alignment_range_tests {
             natural,
             avail,
             40.0,
+            false,
         );
         // 추가 간격은 모든 글자 뒤에 붙는다 — 끝 글자 뒤 몫은 그려지지 않는다.
         let glyph_right =
@@ -10546,6 +10598,7 @@ mod issue_4657_distribute_alignment_tests {
             text_width,
             avail,
             40.0,
+            false,
         );
         assert_eq!(extra_word, 0.0);
         assert_eq!(extra_dash, 0.0);
