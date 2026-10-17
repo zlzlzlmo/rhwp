@@ -1605,7 +1605,15 @@ fn fill_one_interval(
                 })
                 .unwrap_or(text_chars.len());
 
-            if cursor.line_start_idx <= last_end {
+            // [LB-G01] 문단 끝 표지는 새 줄을 만들지 않는다. 앞 줄이 넘친 공백(들)을 흡수해 줄 시작이 글 끝에 닿았으면
+            // 남는 것은 표지뿐이라 빈 줄을 내지 않는다 — 맥 한글 12.30 저장 줄은 글이 상자를 꽉 채운 문단의 끝 공백·표지를
+            // 마지막 줄에 그대로 둔다(다줄 문단 928개 중 «표지만 있는 마지막 줄»은 앞이 강제 줄바꿈인 2건뿐, 오라클 29행 =
+            // 표지만 23 · 공백뿐 6). 강제 줄바꿈 뒤의 빈 마지막 줄은 한컴도 내므로 `LineBreak` 로 끝난 문단은 그대로다.
+            // 긴 공백 런은 이 규칙과 별개로 줄 끝에 둘까지만 남고 셋째부터 다음 줄 머리가 된다(LB-G05).
+            let only_end_mark_left = cursor.line_start_idx == last_end
+                && cursor.emitted_any
+                && matches!(tokens.last(), Some(BreakToken::Space { .. }));
+            if cursor.line_start_idx <= last_end && !only_end_mark_left {
                 cursor.emitted_any = true;
                 return Some(FilledInterval {
                     line: LineBreakResult {
@@ -1717,35 +1725,6 @@ fn fill_one_interval(
                 max_font_size,
                 has_inline_control,
             } => {
-                // [LB-G01] 문단 끝에 이어진 공백 꼬리는 상자를 넘어도 새 줄을 만들지 않는다.
-                //
-                // 맥 한글 12.30 이 저장한 줄은 글이 상자를 꽉 채운 문단의 끝 공백·문단 끝 표지를 마지막 줄에
-                // 그대로 둔다(한컴 다줄 문단 928개 중 «표지만 있는 마지막 줄»은 앞이 강제 줄바꿈인 2건뿐).
-                // 종전에는 넘친 첫 공백을 흡수해 `line_start_idx` 를 글 끝으로 옮기고, 토큰 소진 블록이
-                // 그 자리에 빈 줄 하나를 더 냈다(오라클 29행 — 표지만 23 · 공백뿐 6, 모두 줄 수 어긋남).
-                // 뒤가 전부 평범한 공백이면 줄을 닫지 않고 꼬리를 이 줄에 얹는다. 강제 줄바꿈 뒤의 빈
-                // 마지막 줄은 한컴도 내므로 `LineBreak` 로 끝난 문단은 그대로다.
-                if !*has_inline_control
-                    && tokens[ti..].iter().all(|token| {
-                        matches!(
-                            token,
-                            BreakToken::Space {
-                                has_inline_control: false,
-                                ..
-                            }
-                        )
-                    })
-                {
-                    for token in &tokens[ti..] {
-                        if let BreakToken::Space { max_font_size, .. } = token {
-                            if *max_font_size > cursor.line_max_fs {
-                                cursor.line_max_fs = *max_font_size;
-                            }
-                        }
-                    }
-                    cursor.token_index = tokens.len();
-                    continue;
-                }
                 let previous_line_max_fs = cursor.line_max_fs;
                 if *max_font_size > cursor.line_max_fs {
                     cursor.line_max_fs = *max_font_size;
@@ -4970,6 +4949,28 @@ mod fill_cursor_tests {
         let lines =
             collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
         assert_eq!(rows(&lines), vec![(0, 3)]);
+    }
+
+    /// [LB-G01] 정정 — 긴 공백 런은 문단 끝에서도 줄바꿈한다: 가득 찬 뒤 줄 끝에는 공백이 둘까지만 남고 셋째부터는
+    /// 다음 줄 머리다(문단 끝 표지만이 새 줄을 만들지 않는다).
+    ///
+    /// 맥 한글 2020 이 저장한 `trailing-spaces-2020.hwp`: `Left 10` 뒤의 긴 공백 런이 «뒤따르는 낱말이 없어도» 두 줄로
+    /// 저장된다(둘째 줄 = 공백 29개). 꼬리 공백을 전부 마지막 줄에 얹던 첫 구현은 이 줄을 없애 `stored_column_width_
+    /// quantization` 이 빨갛게 됐다.
+    #[test]
+    fn a_long_trailing_space_run_still_wraps_after_two_blanks() {
+        let text_chars = "가나다라     ".chars().collect::<Vec<_>>();
+        let tokens = vec![
+            word(0, 4, 100.0),
+            blank(4, 5.0),
+            blank(5, 5.0),
+            blank(6, 5.0),
+            blank(7, 5.0),
+            blank(8, 5.0),
+        ];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 6), (6, 9)]);
     }
 
     /// [LB-G01] 짝 시험 — 낱말 사이 공백과 강제 줄바꿈 뒤의 빈 마지막 줄은 그대로다(한컴도 낸다:
