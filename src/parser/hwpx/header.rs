@@ -1136,6 +1136,15 @@ fn parse_para_shape_child(
                             ps.attr1 &= !(1 << 19);
                         }
                     }
+                    b"lineWrap" => {
+                        // [LB-G04] 문단 모양 속성2 bit0-1 (0 BREAK · 1 SQUEEZE · 2 KEEP) — 표 칸 lineWrap 과 같은 열거.
+                        let value = match attr_str(&attr).as_str() {
+                            "SQUEEZE" => 1,
+                            "KEEP" => 2,
+                            _ => 0,
+                        };
+                        ps.attr2 = (ps.attr2 & !0x03) | value;
+                    }
                     _ => {}
                 }
             }
@@ -2899,6 +2908,38 @@ mod tests {
             doc_info.para_shapes[2].break_latin_word.as_deref(),
             Some("HYPHENATION")
         );
+    }
+
+    /// [LB-G04] `breakSetting@lineWrap` → 문단 모양 속성2 bit0-1 (0 BREAK · 1 SQUEEZE · 2 KEEP).
+    /// 표 칸의 `lineWrap` 과 같은 열거다. 읽지 않으면 «한 줄로 입력» 문단이 HWPX 에서 항상 줄을 나눈다.
+    #[test]
+    fn test_parse_hwpx_para_shape_line_wrap() {
+        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head">
+  <hh:refList>
+    <hh:paraProperties itemCnt="3">
+      <hh:paraPr id="1" tabPrIDRef="0">
+        <hh:align horizontal="JUSTIFY" vertical="BASELINE"/>
+        <hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="BREAK"/>
+      </hh:paraPr>
+      <hh:paraPr id="2" tabPrIDRef="0">
+        <hh:align horizontal="JUSTIFY" vertical="BASELINE"/>
+        <hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="SQUEEZE"/>
+        <hh:autoSpacing eAsianEng="1" eAsianNum="0"/>
+      </hh:paraPr>
+      <hh:paraPr id="3" tabPrIDRef="0">
+        <hh:align horizontal="JUSTIFY" vertical="BASELINE"/>
+        <hh:breakSetting breakLatinWord="KEEP_WORD" breakNonLatinWord="KEEP_WORD" widowOrphan="0" keepWithNext="0" keepLines="0" pageBreakBefore="0" lineWrap="KEEP"/>
+      </hh:paraPr>
+    </hh:paraProperties>
+  </hh:refList>
+</hh:head>"##;
+        let (doc_info, _) = parse_hwpx_header(xml).unwrap();
+        assert_eq!(doc_info.para_shapes[1].attr2 & 0x03, 0);
+        assert_eq!(doc_info.para_shapes[2].attr2 & 0x03, 1);
+        assert_eq!(doc_info.para_shapes[3].attr2 & 0x03, 2);
+        // 자동 간격(bit4/5)은 그대로 — 같은 속성2 를 쓰지만 비트가 다르다.
+        assert_eq!(doc_info.para_shapes[2].attr2 & (1 << 4), 1 << 4);
     }
 
     #[test]

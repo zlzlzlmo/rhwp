@@ -5708,7 +5708,13 @@ impl LayoutEngine {
             );
             // «한 줄로 입력»(SQUEEZE) 칸 줄은 넘치는 폭을 글자 사이(N-1곳)에 고르게 줄인다 — 한/글은 바닥 없이
             // 줄여 글자가 겹쳐도 한 줄을 지킨다(맥 한글 12.30: c3fb5220 채움 5쪽 매출 비중 칸, 자간 −8.04pt/12pt).
-            let squeeze_line = self.squeeze_cell_line.get()
+            // [LB-G04] 문단 모양이 «한 줄로 입력»(속성2 bit0-1 = 1)인 칸 문단도 같은 규칙이다 — 칸 속성 없이 문단만
+            // 그렇게 저장된 라벨 칸을 한컴이 자간을 줄여 한 줄에 넣는다.
+            let para_line_wrap_squeeze = styles
+                .para_styles
+                .get(composed.para_style_id as usize)
+                .is_some_and(|style| style.line_wrap_squeeze);
+            let squeeze_line = (self.squeeze_cell_line.get() || para_line_wrap_squeeze)
                 && cell_ctx.is_some()
                 && total_char_count > 1
                 && !has_tabs
@@ -7006,7 +7012,13 @@ impl LayoutEngine {
             text_style.extra_word_spacing = extra_word_sp;
             text_style.extra_char_spacing = extra_char_sp;
             // 음수 자간은 «한 줄로 입력» 칸에서 squeeze 분기만 만든다(넘치면 늘 그 분기다).
-            text_style.squeeze_unclamped = self.squeeze_cell_line.get() && extra_char_sp < 0.0;
+            text_style.squeeze_unclamped = (self.squeeze_cell_line.get()
+                || (cell_ctx.is_some()
+                    && styles
+                        .para_styles
+                        .get(composed.para_style_id as usize)
+                        .is_some_and(|style| style.line_wrap_squeeze)))
+                && extra_char_sp < 0.0;
             text_style.extra_dash_advance = extra_dash_sp;
             // [Task #874 #2] composer lang split (예: "F3→Alt+I" → "F3"/"→"/"Alt+I")
             // 으로 auto_tab_right post-tab 콘텐츠가 후속 run 으로 흩어진 경우, 현재

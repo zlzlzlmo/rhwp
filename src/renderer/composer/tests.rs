@@ -1495,6 +1495,53 @@ fn test_reflow_korean_eojeol_wrap() {
     assert_eq!(para.line_segs[1].text_start, 6);
 }
 
+/// [LB-G04] 문단 모양 속성2 bit0-1 = 1(«한 줄로 입력») 문단은 폭이 모자라도 자동으로 줄을 나누지 않는다.
+///
+/// 맥 한글이 저장한 줄에서 이 속성을 가진 «거주지 주소»·«휴대폰 번호» 같은 라벨 칸(a9284b26 0/64·0/73,
+/// b7fb9d20 0/27, B표본 9행)이 한 줄이었다 — 우리는 칸 폭에서 글자·낱말째 쪼갰다. 한컴은 강제 줄바꿈
+/// 사이마다 한 줄만 둔다.
+#[test]
+fn test_reflow_squeeze_paragraph_keeps_one_line_per_forced_break() {
+    let mut styles = make_styles_with_font_size(16.0);
+    let one_paragraph = |text: &str| Paragraph {
+        text: text.to_string(),
+        char_offsets: (0..text.chars().count() as u32).collect(),
+        char_count: text.chars().count() as u32 + 1,
+        char_shapes: vec![CharShapeRef {
+            start_pos: 0,
+            char_shape_id: 0,
+        }],
+        line_segs: vec![LineSeg {
+            text_start: 0,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let narrow = ParagraphBox::content_width_px(100.0, 96.0);
+
+    // 대조: 속성이 없으면 어절 경계에서 두 줄이다.
+    let mut plain = one_paragraph("안녕하세요 반갑습니다");
+    reflow_line_segs(&mut plain, narrow.clone(), &styles, 96.0);
+    assert_eq!(plain.line_segs.len(), 2);
+
+    styles.para_styles[0].line_wrap_squeeze = true;
+    let mut squeezed = one_paragraph("안녕하세요 반갑습니다");
+    reflow_line_segs(&mut squeezed, narrow.clone(), &styles, 96.0);
+    assert_eq!(squeezed.line_segs.len(), 1, "한 줄로 입력은 줄을 나누지 않는다");
+
+    // 강제 줄바꿈 뒤는 새 줄이다 — 줄바꿈 사이마다 한 줄.
+    let mut forced = one_paragraph("안녕하세요 반갑습니다\n안녕하세요 반갑습니다");
+    reflow_line_segs(&mut forced, narrow, &styles, 96.0);
+    assert_eq!(
+        forced
+            .line_segs
+            .iter()
+            .map(|s| s.text_start)
+            .collect::<Vec<_>>(),
+        vec![0, 12]
+    );
+}
+
 /// 한글 줄 나눔 단위 계약: 0=어절, 1=글자
 #[test]
 fn test_reflow_korean_break_unit_contract() {

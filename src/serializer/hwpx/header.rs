@@ -994,7 +994,7 @@ fn write_para_pr<W: Write>(
     // keepWithNext, keepLines, pageBreakBefore} 를 상수로 하드코딩해, 파서가
     // attr1 비트로 보존한 값을 직렬화에서 모두 잃었다(예: vertical=CENTER →
     // BASELINE, breakNonLatinWord=BREAK_WORD → KEEP_WORD). 이제 보존 비트에서
-    // 역매핑한다. (breakLatinWord/lineWrap 은 파서가 아직 미수집 → 상수 유지.)
+    // 역매핑한다. (breakLatinWord 는 아래 [#1986] · lineWrap 은 속성2 bit0-1.)
     let vertical = vertical_alignment_str((ps.attr1 >> 20) & 0x03);
     // attr1 bit7: KEEP_WORD=1, BREAK_WORD=0 (parse_para_shape_child 와 정합).
     let break_non_latin = if (ps.attr1 >> 7) & 1 == 1 {
@@ -1016,6 +1016,12 @@ fn write_para_pr<W: Write>(
     let keep_with_next = ((ps.attr1 >> 17) & 1).to_string();
     let keep_lines = ((ps.attr1 >> 18) & 1).to_string();
     let page_break_before = ((ps.attr1 >> 19) & 1).to_string();
+    // [LB-G04] 속성2 bit0-1 = 문단의 줄 안 입력 방식(표 칸 lineWrap 과 같은 열거).
+    let line_wrap = match ps.attr2 & 0x03 {
+        1 => "SQUEEZE",
+        2 => "KEEP",
+        _ => "BREAK",
+    };
     let auto_space_kr_en = ((ps.attr2 >> 4) & 1).to_string();
     let auto_space_kr_num = ((ps.attr2 >> 5) & 1).to_string();
     empty_tag(
@@ -1045,7 +1051,7 @@ fn write_para_pr<W: Write>(
             ("keepWithNext", &keep_with_next),
             ("keepLines", &keep_lines),
             ("pageBreakBefore", &page_break_before),
-            ("lineWrap", "BREAK"),
+            ("lineWrap", line_wrap),
         ],
     )?;
 
@@ -2120,6 +2126,22 @@ mod tests {
             xml.contains(r#"<hh:autoSpacing eAsianEng="0" eAsianNum="1""#),
             "autoSpacing은 attr2 4/5에서 역매핑해야 함: {xml}"
         );
+    }
+
+    /// [LB-G04] 속성2 bit0-1 → `breakSetting@lineWrap` (0 BREAK · 1 SQUEEZE · 2 KEEP) — 파서의 역매핑.
+    #[test]
+    fn write_para_pr_emits_line_wrap_from_attr2() {
+        for (attr2, token) in [(0u32, "BREAK"), (1, "SQUEEZE"), (2, "KEEP"), (1 | (1 << 4), "SQUEEZE")] {
+            let mut ps = ParaShape::default();
+            ps.attr2 = attr2;
+            let mut writer = Writer::new(Vec::new());
+            write_para_pr(&mut writer, 1, &ps).expect("write paraPr");
+            let xml = String::from_utf8(writer.into_inner()).unwrap();
+            assert!(
+                xml.contains(&format!(r#"lineWrap="{token}""#)),
+                "attr2={attr2:#x} → lineWrap={token}: {xml}"
+            );
+        }
     }
 
     #[test]

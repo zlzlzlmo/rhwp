@@ -3812,6 +3812,38 @@ fn reflow_line_segs_impl(
     split_stale_cell_reflow: bool,
     object_line_font_basis: bool,
 ) -> bool {
+    let prefix_preserved = reflow_line_segs_unmerged(
+        para,
+        paragraph_box,
+        styles,
+        dpi,
+        preserve_prefix_for_edit,
+        split_stale_cell_reflow,
+        object_line_font_basis,
+    );
+    // [LB-G04] 문단 모양이 «한 줄로 입력»(속성2 bit0-1 = 1)이면 한컴은 폭이 모자라도 줄을 나누지 않고
+    // 강제 줄바꿈 사이마다 한 줄만 저장한다. 자동 줄나눔 줄은 앞 줄에 합친다(칸 속성의 같은 규칙과 한 함수).
+    if styles
+        .para_styles
+        .get(para.para_shape_id as usize)
+        .is_some_and(|style| style.line_wrap_squeeze)
+    {
+        super::merge_squeeze_line_segs(para);
+        // 줄을 합쳤으니 앞 줄을 그대로 둔 결과가 아니다.
+        return false;
+    }
+    prefix_preserved
+}
+
+fn reflow_line_segs_unmerged(
+    para: &mut Paragraph,
+    paragraph_box: ParagraphBox,
+    styles: &ResolvedStyleSet,
+    dpi: f64,
+    preserve_prefix_for_edit: Option<usize>,
+    split_stale_cell_reflow: bool,
+    object_line_font_basis: bool,
+) -> bool {
     // An impossible box publishes nothing, and this must be the first thing
     // that happens — before the memo invalidation below, which is already a
     // mutation.
