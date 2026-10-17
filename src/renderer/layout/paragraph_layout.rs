@@ -10560,7 +10560,9 @@ mod issue_4657_distribute_alignment_tests {
     use super::compute_line_extra_spacing;
     use crate::model::style::Alignment;
     use crate::renderer::composer::{ComposedLine, ComposedTextRun};
-    use crate::renderer::layout::text_measurement::{estimate_text_width, resolved_to_text_style};
+    use crate::renderer::layout::text_measurement::{
+        estimate_text_width, estimate_text_width_exact, resolved_to_text_style,
+    };
     use crate::renderer::style_resolver::ResolvedStyleSet;
 
     fn line(text: &str) -> ComposedLine {
@@ -10626,7 +10628,8 @@ mod issue_4657_distribute_alignment_tests {
         let styles = ResolvedStyleSet::default();
         let mut ts = resolved_to_text_style(&styles, 0, 0);
         ts.default_tab_width = 40.0;
-        let space_w = estimate_text_width(" ", &ts);
+        // 줄 자연 폭(`total_text_width`)과 같은 잣대 — 반올림하지 않은 공백 폭이다(JS-4·JS-6).
+        let space_w = estimate_text_width_exact(" ", &ts);
         let avail = 368.0;
         let visible_w = 52.5;
         let extra = distribute_extra("기관명 : ", 6, visible_w + space_w, avail);

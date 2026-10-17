@@ -1297,6 +1297,14 @@ fn measure_char_width_embedded_decision_for_font<'a>(
     }
 }
 
+/// [JS-6] 한컴의 공백 정규 폭(px): 글꼴과 무관하게 `4 × ⌊h/8⌋` HU 다(h = 글자 크기 HU, 장평 100).
+/// 반각(h/2)이 아니라 4HU 단위로 내린 값이라 h 가 8의 배수가 아닌 크기(900·1100·1300·1500·1700 …)에서 공백마다
+/// 2HU 작다. 장평은 호출부가 곱한다.
+fn hancom_space_advance_px(font_size_px: f64) -> f64 {
+    let size_hu = (font_size_px * 75.0 + 0.5).floor() as i64;
+    (4 * (size_hu / 8)) as f64 / 75.0
+}
+
 pub(crate) fn char_width_decision<'a>(
     chars: &[char],
     cluster_len: &[u8],
@@ -1444,6 +1452,14 @@ pub(crate) fn char_width_decision<'a>(
     let (base_width_raw, width_source) = supplement
         .map(|entry| (entry.natural_advance_px(), entry.width_source()))
         .unwrap_or((base_width_raw, width_source));
+    // [JS-6] 공백(U+0020·묶음 빈칸)의 정규 폭 — 글꼴 폭이 반각(em/2)으로 잡힌 자리만 한컴 공식으로 바꾼다.
+    let base_width_raw = if (c == ' ' || c == '\u{00A0}')
+        && matches!(width_source, "metricHalfSpace" | "heuristicHalfwidth")
+    {
+        hancom_space_advance_px(font_size)
+    } else {
+        base_width_raw
+    };
     let base_width_px = if dash_leader {
         base_width_raw.min(font_size * 0.3)
     } else {
@@ -2431,6 +2447,32 @@ mod tests {
             "expected 16.0 (2*8.0 heuristic), got {}",
             w
         );
+    }
+
+    /// [JS-6] 공백(U+0020)의 폭은 글꼴 폭이 아니라 정규 공식 `4 × ⌊h/8⌋` HU 다(h = 글자 크기 HU).
+    ///
+    /// 맥 한글 PDF: 한글+공백만 있는 늘이지 않는 줄에서 h=1100 공백당 +1.94HU(54공백, 예측 +2.0) · h=1000 +0.18HU(예측 0) ·
+    /// h=1200 0 — 반각(h/2)보다 4HU 단위로 내린 값이다. 직접 증거: h=1500·장평 92 → 688HU(관측 평균 688.0, 9공백)·
+    /// h=1600·장평 96 → 768HU(정확). 글자 크기의 37.9% 가 h%8≠0(900·1100·1300·1500·1700 …).
+    #[test]
+    fn test_space_advance_follows_the_hancom_integer_formula() {
+        let m = EmbeddedTextMeasurer;
+        for family in ["", "함초롬바탕"] {
+            for size_hu in [900, 950, 1000, 1100, 1200, 1300, 1500, 1700] {
+                let style = TextStyle {
+                    font_family: family.to_string(),
+                    font_size: size_hu as f64 / 75.0,
+                    ratio: 1.0,
+                    ..Default::default()
+                };
+                let want_hu = 4 * (size_hu / 8);
+                let got_hu = m.estimate_text_width_exact(" ", &style) * 75.0;
+                assert!(
+                    (got_hu - want_hu as f64).abs() < 0.01,
+                    "{family:?} h={size_hu}: 공백 {got_hu:.2}HU, 한컴은 {want_hu}HU"
+                );
+            }
+        }
     }
 
     #[test]
