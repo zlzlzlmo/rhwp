@@ -3542,9 +3542,8 @@ impl LayoutEngine {
         }
 
         // ── 5-1. 표 전체 외곽 테두리 보충 ──
-        // 칸이 바깥을 덮지 않는 구멍은 표 테두리 fallback. 제목 칸만 바깥
-        // SOLID 를 그린 일러두기 부분 프레임만 occupancy+NONE 슬롯을 메운다
-        // (#6311). 일반 표·부분 시작 박스의 의도적 NONE 은 그대로 둔다.
+        // 칸이 바깥을 덮지 않는 구멍만 표 테두리 fallback. 칸이 NONE 으로 덮은 변은
+        // 메우지 않는다(맥 한글은 셀 간격 0 인 표의 자기 테두리를 그리지 않는다).
         if table.border_fill_id > 0 {
             let tbl_idx = (table.border_fill_id as usize).saturating_sub(1);
             if let Some(tbl_bs) = styles.border_styles.get(tbl_idx) {

@@ -1,6 +1,12 @@
-//! [#6311] 일러두기 틀은 3×3 표의 `borderFillIDRef` 가 바깥 네 변 SOLID 인데
-//! 칸은 그 변을 NONE 으로 둔다. 표 테두리를 occupancy 로 막으면 왼쪽·아래·
-//! 제목왼쪽이 레이아웃에서 사라진다.
+//! [#6311] 일러두기 틀은 표의 `borderFillIDRef` 가 바깥 네 변 SOLID 인데 칸은 그 변을
+//! NONE 으로 둔다.
+//!
+//! 이 시험은 처음엔 표 테두리가 칸이 덮은 NONE 변까지 메워야 한다고 못 박았다(합성 문서,
+//! 한컴 정답 없음). 맥 한글 12.30 PDF 는 반대다 — 셀 간격이 0이면 한컴은 표 자신의
+//! `borderFill` 테두리를 **그리지 않고** 바깥 선은 칸이 선언한 변만 그린다. 안전관리우수연구실
+//! 인증신청서 2쪽 «처리절차» 상자(첫 행 제목 칸만 선, 나머지 칸 NONE, 표 테두리 SOLID)에서
+//! 맥은 아래 칸 틀·화살표 칸 밑줄 6개를 그리지 않았다. 정답 PDF 가 있는 쪽을 따른다.
+//! 그 일러두기 틀(156745900)의 선은 #6619 가 들인 `cellzone` 테두리가 맡는다.
 
 #![cfg(not(target_arch = "wasm32"))]
 
@@ -113,7 +119,7 @@ fn find_table(node: &RenderNode) -> Option<&RenderNode> {
 }
 
 #[test]
-fn issue_6311_table_border_fill_emits_left_bottom_and_title_left() {
+fn issue_6311_table_border_fill_is_not_drawn_over_cells_that_declare_none() {
     let bytes = serialize_hwpx(&callout_document()).expect("serialize");
     let core = DocumentCore::from_bytes(&bytes).expect("reload");
     let page = core.build_page_render_tree(0).expect("render tree");
@@ -139,8 +145,7 @@ fn issue_6311_table_border_fill_emits_left_bottom_and_title_left() {
             && (x1.min(x2) - left).abs() <= 4.0
             && x1.max(x2) >= right - 4.0
     });
-    // 제목 칸 윗변과 표 테두리가 같은 스타일이면 한 세그먼트로 병합된다.
-    // 왼쪽에서 시작해 제목 칸까지 덮으면 제목왼쪽이 있는 것이다.
+    // 표 테두리가 메웠다면 제목 칸 윗변이 왼쪽 끝부터 이어져 한 세그먼트가 됐을 것이다.
     let has_title_left = lines.iter().any(|&(x1, y1, x2, y2)| {
         (y1 - top).abs() <= 2.0
             && (y2 - top).abs() <= 2.0
@@ -148,20 +153,32 @@ fn issue_6311_table_border_fill_emits_left_bottom_and_title_left() {
             && x1.max(x2) >= mid_x - 2.0
             && (x1 - x2).abs() >= 8.0
     });
+    // 제목 칸이 스스로 선언한 윗변(가운데 → 오른쪽 끝)은 그대로 그려진다.
+    let has_title_top = lines.iter().any(|&(x1, y1, x2, y2)| {
+        (y1 - top).abs() <= 2.0
+            && (y2 - top).abs() <= 2.0
+            && (x1.min(x2) - mid_x).abs() <= 4.0
+            && x1.max(x2) >= right - 4.0
+    });
 
     assert!(
-        has_left,
-        "표 왼쪽 세로선이 있어야 한다 (got {lines:?}, bbox={:?})",
+        !has_left,
+        "칸이 NONE 으로 둔 표 왼쪽을 표 테두리가 메우면 안 된다 (got {lines:?}, bbox={:?})",
         table.bbox
     );
     assert!(
-        has_bottom,
-        "표 아래 가로선이 있어야 한다 (got {lines:?}, bbox={:?})",
+        !has_bottom,
+        "칸이 NONE 으로 둔 표 아래를 표 테두리가 메우면 안 된다 (got {lines:?}, bbox={:?})",
         table.bbox
     );
     assert!(
-        has_title_left,
-        "제목 왼쪽 가로선이 있어야 한다 (got {lines:?}, bbox={:?})",
+        !has_title_left,
+        "제목 칸 왼쪽 위를 표 테두리가 메우면 안 된다 (got {lines:?}, bbox={:?})",
+        table.bbox
+    );
+    assert!(
+        has_title_top,
+        "제목 칸 자신의 윗변은 그려진다 (got {lines:?}, bbox={:?})",
         table.bbox
     );
 }
