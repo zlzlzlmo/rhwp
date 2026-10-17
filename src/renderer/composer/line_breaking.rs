@@ -1278,6 +1278,12 @@ const LINE_BREAK_TOLERANCE_MAX_HWP: i32 = 50;
 /// 여유 1 HWPUNIT 당 상자 폭 — 38,640 / 50 ≈ 760.
 const LINE_BREAK_TOLERANCE_WIDTH_PER_HWP: i32 = 760;
 
+/// [LB-G06] 첫 줄에 남겨야 하는 최소 폭(HWPUNIT). `줄 상자 − 왼쪽 오프셋`이 이보다 좁으면 한컴은
+/// 오프셋을 0으로 둔다 — 들여쓰기 50000HU가 상자 22104HU에 걸린 문단 6개(`03a1a71f` «기업명 :»·«대표자 :»)가
+/// 한컴 저장 줄에서 한 줄이었다. 문서 옵션이 서 있으면 1mm(283HU)를 쓰는 갈래가 있으나 어느 쪽이 기본인지
+/// 오라클 행(두 문턱 모두 같은 결과)으로는 가르지 못해 1440HU를 쓴다.
+const FIRST_ROW_MIN_REMAINING_HWP: i32 = 1440;
+
 /// 상자 폭에 비례하는 줄바꿈 여유(HWPUNIT).
 #[inline]
 fn line_break_tolerance_hwp(box_width_hwp: i32) -> i32 {
@@ -1545,7 +1551,13 @@ fn fill_one_interval(
     let eff_w = |first: bool| -> i32 {
         if indent_px > 0.0 {
             if first {
-                to_hwp((available_width_px - indent_px).max(1.0))
+                // [LB-G06] 첫 줄에 남는 폭(`줄 상자 − 왼쪽 오프셋`)이 1440HU 미만이면 오프셋을 0으로 둔다.
+                // 종전에는 `max(…, 1px)` 로 줄 폭을 1px까지 줄여 글자마다 줄이 바뀌었다.
+                if to_hwp(available_width_px - indent_px) < FIRST_ROW_MIN_REMAINING_HWP {
+                    to_hwp(available_width_px)
+                } else {
+                    to_hwp((available_width_px - indent_px).max(1.0))
+                }
             } else {
                 to_hwp(available_width_px)
             }
@@ -4966,6 +4978,38 @@ mod fill_cursor_tests {
         let lines =
             collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
         assert_eq!(rows(&lines), vec![(0, 5), (5, 7)]);
+    }
+
+    /// [LB-G06] 첫 줄에서 `줄 상자 − 왼쪽 오프셋`이 1440HU 미만이면 오프셋을 0으로 둔다.
+    ///
+    /// 맥 한글이 저장한 `03a1a71f`: 들여쓰기 50000HU(666.67px)가 상자 22104HU(294.72px)에 걸린
+    /// «기업명 :»·«대표자 :» 문단 6개가 한컴은 `[0]` 한 줄, 우리는 줄 폭을 1px로 줄여 글자마다 줄을 바꿨다.
+    #[test]
+    fn first_row_offset_is_dropped_when_it_leaves_less_than_1440_hu() {
+        let text_chars = "기업명 :".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 3, 45.0), blank(3, 5.0), word(4, 5, 6.0)];
+        let lines = collect_one_interval_at_a_time(
+            &tokens,
+            &text_chars,
+            22104.0 / 75.0,
+            50000.0 / 75.0,
+            48.0,
+            0,
+            0,
+            0,
+            true,
+        );
+        assert_eq!(rows(&lines), vec![(0, 5)]);
+
+        // 경계: 남는 폭이 20px(1500HU)이면 오프셋을 지키고, 18.4px(1380HU)이면 버린다.
+        let text_chars = "가나".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 2, 40.0)];
+        let kept =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 80.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&kept), vec![(0, 1), (1, 2)]);
+        let dropped =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 81.6, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&dropped), vec![(0, 2)]);
     }
 }
 
