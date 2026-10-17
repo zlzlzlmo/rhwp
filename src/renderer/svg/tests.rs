@@ -1331,3 +1331,32 @@ fn char_overlap_with_border_keeps_charsz_reduction() {
         "border_type=4 는 사각 테두리를 그린다: {output}"
     );
 }
+
+/// 굵기별 점선 막대(`dash_array`)는 고정 패턴(`2 2`)을 대신해 stroke-dasharray 로 나간다.
+#[test]
+fn test_svg_draw_line_dash_array_replaces_fixed_dash_pattern() {
+    let mut dotted = LineStyle {
+        width: 0.48,
+        dash: StrokeDash::Dot,
+        ..Default::default()
+    };
+    let mut renderer = SvgRenderer::new();
+    renderer.begin_page(100.0, 100.0);
+    renderer.draw_line(0.0, 10.0, 50.0, 10.0, &dotted);
+    assert!(
+        renderer.output().contains("stroke-dasharray=\"2 2\""),
+        "dash_array 가 없으면 종전 고정 패턴: {}",
+        renderer.output()
+    );
+
+    dotted.dash_array = Some((0.64, 0.96));
+    let mut renderer = SvgRenderer::new();
+    renderer.begin_page(100.0, 100.0);
+    renderer.draw_line(0.0, 10.0, 50.0, 10.0, &dotted);
+    let output = renderer.output();
+    assert!(
+        output.contains("stroke-dasharray=\"0.640 0.960\""),
+        "굵기별 막대 패턴: {output}"
+    );
+    assert!(!output.contains("stroke-dasharray=\"2 2\""));
+}

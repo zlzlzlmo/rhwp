@@ -1224,6 +1224,8 @@ export interface LayerLineStyle {
   color?: string;
   width?: number;
   dash?: LayerStrokeDash;
+  /** 굵기별 점선 (막대, 빈 칸) px. 있으면 `dash` 의 고정 패턴 대신 쓴다(한컴 표 테두리). */
+  dashArray?: [number, number];
   lineType?: string;
   startArrow?: string;
   endArrow?: string;

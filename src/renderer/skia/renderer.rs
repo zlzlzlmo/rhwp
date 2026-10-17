@@ -742,7 +742,14 @@ impl SkiaLayerRenderer {
                 1.0
             });
             paint.set_color(colorref_to_skia(style.color, 1.0));
-            apply_dash(&mut paint, style.dash);
+            if let Some((on, off)) = style.dash_array {
+                // 굵기별 막대 패턴(한컴 표)은 굵기 배율 없이 px 그대로다.
+                if let Some(effect) = PathEffect::dash(&[on as f32, off as f32], 0.0) {
+                    paint.set_path_effect(effect);
+                }
+            } else {
+                apply_dash(&mut paint, style.dash);
+            }
             paint
         };
         let draw_placeholder = |bbox: crate::renderer::render_tree::BoundingBox, label: &str| {

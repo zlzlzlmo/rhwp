@@ -916,6 +916,23 @@ fn hancom_compound_strokes(
     )
 }
 
+/// 점선의 (막대 길이, 빈 칸 길이) px — 맥 한글 PDF 에서 잰 굵기별 표다.
+///
+/// 한컴 값 3(우리 이름 `Dot`)은 짧은 막대: 굵기 2·3·4·7점 → (막대, 주기) = (3,7)·(4,10)·(5,12)·(10,25)점.
+/// 한컴 값 2(우리 이름 `Dash`)는 긴 막대: 굵기 3점 → (20,32)점.
+/// 표에 없는 굵기·종류(일점쇄선·긴 파선·원형 점선 포함)는 정답이 없어 `None` 이다.
+fn hancom_dash_bars(line_type: BorderLineType, base_width_px: f64) -> Option<(f64, f64)> {
+    let (bar, period) = match (line_type, width_px_to_dots(base_width_px)) {
+        (BorderLineType::Dot, 2) => (3.0, 7.0),
+        (BorderLineType::Dot, 3) => (4.0, 10.0),
+        (BorderLineType::Dot, 4) => (5.0, 12.0),
+        (BorderLineType::Dot, 7) => (10.0, 25.0),
+        (BorderLineType::Dash, 3) => (20.0, 32.0),
+        _ => return None,
+    };
+    Some((bar * DEVICE_DOT_PX, (period - bar) * DEVICE_DOT_PX))
+}
+
 /// 테두리선 Line 노드 생성 (이중선/삼중선 지원)
 /// None 타입이면 빈 벡터 반환
 pub(crate) fn create_border_line_nodes(
@@ -1032,12 +1049,63 @@ pub(crate) fn create_border_line_nodes(
         // 단일선 타입들
         _ => {
             if let Some(dash) = border_line_type_to_dash(border.line_type) {
+                if let Some(bars) = hancom_dash_bars(border.line_type, base_width) {
+                    return create_dashed_line(
+                        tree,
+                        border.color,
+                        base_width,
+                        dash,
+                        bars,
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                    );
+                }
                 create_single_line(tree, border.color, base_width, dash, x1, y1, x2, y2)
             } else {
                 vec![]
             }
         }
     }
+}
+
+/// 굵기별 막대 패턴(`bars` = 막대, 빈 칸)을 가진 점선 한 줄.
+///
+/// 패턴은 선의 시작점에서 출발하고, 끝에 남아 안 들어가는 막대는 그리지 않는다(한컴 PDF 에서
+/// 늘린 시작점부터 막대를 놓다가 마지막 온전한 막대에서 끝나는 것을 확인했다). 남는 길이가
+/// 막대보다 짧아 막대가 토막으로 들어갈 때만 그 토막만큼 끝점을 당긴다 — 백엔드가 마지막 막대를
+/// 토막 내 그리지 않는다. 마지막 막대가 온전히 들어가거나 빈 칸에서 끝나면 끝점을 그대로 둔다
+/// (보이는 모양은 같고, 선 노드가 표 폭에서 벗어나지 않는다). 선이 막대 하나보다 짧으면 그대로 둔다.
+fn create_dashed_line(
+    tree: &mut PageLayoutContext,
+    color: u32,
+    width: f64,
+    dash: StrokeDash,
+    bars: (f64, f64),
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+) -> Vec<RenderNode> {
+    let (bar, gap) = bars;
+    let period = bar + gap;
+    let (dx, dy) = (x2 - x1, y2 - y1);
+    let len = (dx * dx + dy * dy).sqrt();
+    let leftover = len % period;
+    let (x2, y2) = if len >= bar && leftover > 1e-6 && leftover < bar - 1e-6 {
+        let drawn = len - leftover;
+        (x1 + dx / len * drawn, y1 + dy / len * drawn)
+    } else {
+        (x2, y2)
+    };
+    let mut nodes = create_single_line(tree, color, width, dash, x1, y1, x2, y2);
+    for node in &mut nodes {
+        if let RenderNodeType::Line(line) = &mut node.node_type {
+            line.style.dash_array = Some(bars);
+        }
+    }
+    nodes
 }
 
 /// 평행선 노드 생성 (이중선/삼중선용)
@@ -2194,5 +2262,102 @@ mod tests {
         let (x1, x2) = top_horizontal_span(&nodes);
         assert_close(x1, 50.0, 1e-9, "시작 그대로");
         assert_close(x2, 150.0, 1e-9, "끝 그대로");
+    }
+
+    /// 굵기 인덱스 `idx` 인 점선 가로선(길이 `len_pt` 점)의 노드 하나.
+    fn dashed_line(line_type: BorderLineType, idx: u8, len_pt: f64) -> LineNode {
+        let mut tree = PageLayoutContext::new(0, 800.0, 100.0);
+        let nodes = create_border_line_nodes(
+            &mut tree,
+            &line_of(line_type, idx),
+            10.0,
+            50.0,
+            10.0 + len_pt * PT,
+            50.0,
+        );
+        assert_eq!(nodes.len(), 1, "점선은 막대를 노드로 풀지 않고 한 노드다");
+        line_node(&nodes[0]).clone()
+    }
+
+    /// BF-04 — 한컴 점선(값 3, 우리 이름 `Dot`)의 굵기별 (막대, 주기) 점.
+    /// 맥 PDF: 굵기 2→(3,7) · 3→(4,10) · 4→(5,12) · 7→(10,25).
+    #[test]
+    fn dot_value3_bar_and_period_follow_the_mac_table_by_width() {
+        // (굵기 인덱스, 막대 점, 주기 점)
+        for (idx, bar, period) in [
+            (0u8, 3.0, 7.0),
+            (1, 4.0, 10.0),
+            (2, 5.0, 12.0),
+            (5, 10.0, 25.0),
+        ] {
+            let line = dashed_line(BorderLineType::Dot, idx, 400.0);
+            let (on, off) = line.style.dash_array.expect("굵기별 점선");
+            assert_close(on, bar * PT, 1e-9, &format!("idx {idx} 막대"));
+            assert_close(on + off, period * PT, 1e-9, &format!("idx {idx} 주기"));
+        }
+    }
+
+    /// BF-04 — 한컴 점선(값 2, 우리 이름 `Dash`) 굵기 3점: 막대 20 · 주기 32점(도약 양식 45·35줄).
+    #[test]
+    fn dash_value2_is_20_of_32_points_at_width_3() {
+        let line = dashed_line(BorderLineType::Dash, 1, 400.0);
+        let (on, off) = line.style.dash_array.expect("굵기별 점선");
+        assert_close(on, 20.0 * PT, 1e-9, "막대");
+        assert_close(on + off, 32.0 * PT, 1e-9, "주기");
+    }
+
+    /// BF-04 — 안 들어가는 막대는 그리지 않는다: 03a1a71f 쪽 0 의 굵기 3점 점선은
+    /// 늘린 시작점에서 3387점 길이에 막대 339개(0..338번째)고, 마지막 막대가 [4459,4463)에서 끝나
+    /// 4466 까지의 남는 3점은 빈 칸으로 둔다. 마지막 막대가 온전하니 끝점은 그대로(3387점)다 —
+    /// 보이는 막대는 3384점에서 끝난다(주기 10 · 막대 4 → 338·10+4).
+    #[test]
+    fn dashed_line_keeps_its_end_when_the_last_bar_fits_whole() {
+        for len_pt in [3387.0, 3384.0] {
+            let line = dashed_line(BorderLineType::Dot, 1, len_pt);
+            assert_close(
+                (line.x2 - line.x1).abs(),
+                len_pt * PT,
+                1e-6,
+                "마지막 막대가 온전하면 끝점 그대로",
+            );
+        }
+    }
+
+    /// BF-04 — 끝에 막대가 토막으로만 들어가면 그 토막은 그리지 않는다: 3382점 길이면
+    /// 마지막 막대 [3380,3384)가 [3380,3382)로 잘리니 선을 3380점에서 끝낸다(한컴은 안 들어가는 막대를 생략).
+    /// 막대 하나보다 짧은 선은 그대로 둔다.
+    #[test]
+    fn dashed_line_drops_a_partial_last_bar() {
+        let line = dashed_line(BorderLineType::Dot, 1, 3382.0);
+        assert_close(
+            (line.x2 - line.x1).abs(),
+            3380.0 * PT,
+            1e-6,
+            "토막 막대를 덜어 낸 길이",
+        );
+        let short = dashed_line(BorderLineType::Dot, 1, 3.0);
+        assert_close(
+            (short.x2 - short.x1).abs(),
+            3.0 * PT,
+            1e-6,
+            "막대보다 짧은 선",
+        );
+    }
+
+    /// BF-04 — 맥에 정답이 없는 굵기·종류는 종전 모양(고정 패턴)을 지킨다.
+    #[test]
+    fn dash_width_without_mac_ground_truth_keeps_legacy_pattern() {
+        // 굵기 12점(0.5mm)의 점선, 일점쇄선, 실선.
+        assert!(dashed_line(BorderLineType::Dot, 7, 400.0)
+            .style
+            .dash_array
+            .is_none());
+        assert!(dashed_line(BorderLineType::DashDot, 1, 400.0)
+            .style
+            .dash_array
+            .is_none());
+        let solid_line = dashed_line(BorderLineType::Solid, 1, 400.0);
+        assert!(solid_line.style.dash_array.is_none());
+        assert_eq!(solid_line.style.dash, StrokeDash::Solid);
     }
 }

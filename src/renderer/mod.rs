@@ -693,6 +693,10 @@ pub struct LineStyle {
     pub width: f64,
     /// 선 종류
     pub dash: StrokeDash,
+    /// 점선 (막대 길이, 빈 칸 길이) px. Some 이면 `dash` 의 고정 패턴 대신 이 값으로 긋는다.
+    /// 한컴은 점선 막대·주기가 굵기마다 다르다 — 표 테두리가 굵기별 표에서 채운다.
+    /// `dash` 는 이 값을 모르는 소비자를 위한 근사로 그대로 남긴다.
+    pub dash_array: Option<(f64, f64)>,
     /// 선 렌더링 종류 (이중선/삼중선 등)
     pub line_type: LineRenderType,
     /// 시작 화살표

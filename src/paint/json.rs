@@ -2779,6 +2779,10 @@ fn write_line_style(buf: &mut String, style: &LineStyle) {
         style.start_arrow_size,
         style.end_arrow_size,
     );
+    if let Some((on, off)) = style.dash_array {
+        // 굵기별 점선 막대(한컴 표). 없으면 키를 내지 않아 기존 소비자의 JSON 은 그대로다.
+        let _ = write!(buf, ",\"dashArray\":[{:.3},{:.3}]", on, off);
+    }
     if let Some(shadow) = &style.shadow {
         buf.push_str(",\"shadow\":");
         write_shadow_style(buf, shadow);
@@ -4630,6 +4634,39 @@ mod tests {
         assert!(json.contains("\"label\":\"OLE\""));
         assert!(json.contains("\"type\":\"rawSvg\""));
         assert!(json.contains("\"svg\":\"<g><path d=\\\"M0 0L1 1\\\"/></g>\""));
+    }
+
+    /// 굵기별 점선 막대(`dashArray`)는 있을 때만 키로 나가고, 없으면 기존 JSON 그대로다.
+    #[test]
+    fn serializes_dash_array_only_when_the_line_has_one() {
+        let mut dotted = LineStyle {
+            width: 0.48,
+            dash: StrokeDash::Dot,
+            ..Default::default()
+        };
+        let plain =
+            crate::renderer::render_tree::LineNode::new(0.0, 5.0, 40.0, 5.0, dotted.clone());
+        dotted.dash_array = Some((0.64, 0.96));
+        let barred = crate::renderer::render_tree::LineNode::new(0.0, 9.0, 40.0, 9.0, dotted);
+        let tree = PageLayerTree::new(
+            60.0,
+            20.0,
+            LayerNode::leaf(
+                BoundingBox::new(0.0, 0.0, 60.0, 20.0),
+                None,
+                vec![
+                    PaintOp::line(BoundingBox::new(0.0, 5.0, 40.0, 0.5), plain),
+                    PaintOp::line(BoundingBox::new(0.0, 9.0, 40.0, 0.5), barred),
+                ],
+            ),
+        );
+
+        let value: Value = serde_json::from_str(&tree.to_json()).expect("valid layer JSON");
+        let ops = &value["root"]["ops"];
+        assert!(ops[0]["style"].get("dashArray").is_none());
+        assert_eq!(ops[1]["style"]["dash"], "dot");
+        assert_eq!(ops[1]["style"]["dashArray"][0], 0.64);
+        assert_eq!(ops[1]["style"]["dashArray"][1], 0.96);
     }
 
     #[test]

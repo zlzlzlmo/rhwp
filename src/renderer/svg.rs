@@ -3888,12 +3888,19 @@ impl Renderer for SvgRenderer {
             "x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{}\"",
             lx1, ly1, lx2, ly2, color, width,
         );
-        match style.dash {
-            super::StrokeDash::Dash => attrs.push_str(" stroke-dasharray=\"6 3\""),
-            super::StrokeDash::Dot => attrs.push_str(" stroke-dasharray=\"2 2\""),
-            super::StrokeDash::DashDot => attrs.push_str(" stroke-dasharray=\"6 3 2 3\""),
-            super::StrokeDash::DashDotDot => attrs.push_str(" stroke-dasharray=\"6 3 2 3 2 3\""),
-            _ => {} // Solid
+        if let Some((on, off)) = style.dash_array {
+            // 굵기별 막대 패턴(한컴 표) — 고정 패턴 대신 이 값으로 긋는다.
+            attrs.push_str(&format!(" stroke-dasharray=\"{:.3} {:.3}\"", on, off));
+        } else {
+            match style.dash {
+                super::StrokeDash::Dash => attrs.push_str(" stroke-dasharray=\"6 3\""),
+                super::StrokeDash::Dot => attrs.push_str(" stroke-dasharray=\"2 2\""),
+                super::StrokeDash::DashDot => attrs.push_str(" stroke-dasharray=\"6 3 2 3\""),
+                super::StrokeDash::DashDotDot => {
+                    attrs.push_str(" stroke-dasharray=\"6 3 2 3 2 3\"")
+                }
+                _ => {} // Solid
+            }
         }
         attrs.push_str(&marker_start_attr);
         attrs.push_str(&marker_end_attr);

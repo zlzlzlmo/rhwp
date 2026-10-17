@@ -3931,7 +3931,7 @@ export class CanvasKitLayerRenderer {
       try {
         this.drawStrokeWithDash(style.dash, paint, () => {
           canvas.drawLine(x1 + ox, y1 + oy, x2 + ox, y2 + oy, paint);
-        });
+        }, style.dashArray);
       } finally {
         paint.delete?.();
       }
@@ -4066,8 +4066,11 @@ export class CanvasKitLayerRenderer {
     dash: LayerStrokeDash | undefined,
     paint: SkPaint,
     draw: () => void,
+    dashArray?: [number, number],
   ): void {
-    const intervals = dash === undefined || dash === 'solid'
+    const intervals = dashArray && dash !== undefined && dash !== 'solid'
+      ? [dashArray[0], dashArray[1]]
+      : dash === undefined || dash === 'solid'
       ? null
       : dash === 'dash'
         ? [6, 3]

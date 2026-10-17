@@ -2675,7 +2675,15 @@ impl Renderer for WebCanvasRenderer {
         }
 
         self.ctx.set_stroke_style_str(&color);
-        self.set_line_dash(&style.dash);
+        match style.dash_array {
+            // 굵기별 막대 패턴(한컴 표) — 고정 패턴 대신 이 값으로 긋는다.
+            Some((on, off)) => {
+                let _ = self
+                    .ctx
+                    .set_line_dash(&js_sys::Array::of2(&on.into(), &off.into()));
+            }
+            None => self.set_line_dash(&style.dash),
+        }
 
         // 이중선/삼중선: SVG draw_multi_line과 동일한 오프셋 비율 방식
         // (width_ratio, offset_ratio) — offset은 선 중심으로부터의 거리 비율
