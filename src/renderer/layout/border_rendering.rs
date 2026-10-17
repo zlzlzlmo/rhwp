@@ -815,6 +815,57 @@ pub(crate) fn render_transparent_borders(
     nodes
 }
 
+/// 한컴 장치 점 하나(600dpi)의 96dpi px 길이. 맥 한글 PDF 의 선 굵기·좌표는 이 격자의 정수다.
+const DEVICE_DOT_PX: f64 = 0.16;
+
+/// 굵기(px)를 한컴 장치 점 수로 바꾼다.
+fn width_px_to_dots(width_px: f64) -> i32 {
+    (width_px / DEVICE_DOT_PX).round() as i32
+}
+
+/// 겹선(이중선·가는-굵은·굵은-가는)의 성분 선 — `(선 중심 오프셋, 선 폭)` px.
+///
+/// 맥 한글 12.30 PDF 벡터에서 잰 규칙이다. 전체 폭 W(장치 점)에 대해 u = ⌊W/4⌋ 이고
+/// 묶음은 격자선 중심에 대칭이다. 오프셋이 음수면 위·왼쪽이다.
+///
+/// ```text
+///   이중선        = 선 u · 틈 2u · 선 u            (W=12 → 3·6·3 · W=17 → 4·8·4)
+///   가는-굵은(9)  = 가는 u · 틈 u · 굵은 W−2u      (W=17 → 4·4·9, 가는 쪽이 왼쪽·위쪽)
+///   굵은-가는(10) = 굵은 W−2u · 틈 u · 가는 u      (거울)
+/// ```
+///
+/// W=12·17 만 정답이 있고 W=8~11·13 이상은 같은 식의 외삽이다. W<8(0.3mm 이하)은
+/// 정답이 없어 `None` 을 돌려 종전 비율을 쓰게 한다. 삼중선(11)도 정답이 없어 손대지 않는다.
+fn hancom_compound_strokes(
+    line_type: BorderLineType,
+    base_width_px: f64,
+) -> Option<Vec<(f64, f64)>> {
+    let w = width_px_to_dots(base_width_px);
+    if w < 8 {
+        return None;
+    }
+    let u = (w / 4) as f64;
+    let w = w as f64;
+    let thick = w - 2.0 * u;
+    let strokes_in_dots: [(f64, f64); 2] = match line_type {
+        BorderLineType::Double => [(-1.5 * u, u), (1.5 * u, u)],
+        BorderLineType::ThinThickDouble => [
+            (-w / 2.0 + u / 2.0, u),
+            (-w / 2.0 + 2.0 * u + thick / 2.0, thick),
+        ],
+        BorderLineType::ThickThinDouble => {
+            [(-w / 2.0 + thick / 2.0, thick), (w / 2.0 - u / 2.0, u)]
+        }
+        _ => return None,
+    };
+    Some(
+        strokes_in_dots
+            .iter()
+            .map(|&(offset, width)| (offset * DEVICE_DOT_PX, width * DEVICE_DOT_PX))
+            .collect(),
+    )
+}
+
 /// 테두리선 Line 노드 생성 (이중선/삼중선 지원)
 /// None 타입이면 빈 벡터 반환
 pub(crate) fn create_border_line_nodes(
@@ -830,6 +881,19 @@ pub(crate) fn create_border_line_nodes(
     }
 
     let base_width = border_width_to_px(border.width);
+
+    if let Some(strokes) = hancom_compound_strokes(border.line_type, base_width) {
+        return create_parallel_lines(
+            tree,
+            border.color,
+            x1,
+            y1,
+            x2,
+            y2,
+            &strokes,
+            StrokeDash::Solid,
+        );
+    }
 
     match border.line_type {
         BorderLineType::None => vec![],
@@ -1098,6 +1162,19 @@ fn create_diagonal_line_nodes(
     }
 
     let base_width = border_width_to_px(width_index);
+    // 대각선도 같은 펜으로 그려지므로 겹선 성분 규칙을 곧은 선과 함께 쓴다(정답은 곧은 선만 있다).
+    if let Some(strokes) = hancom_compound_strokes(line_type, base_width) {
+        return create_parallel_lines_perpendicular(
+            tree,
+            color,
+            x1,
+            y1,
+            x2,
+            y2,
+            &strokes,
+            StrokeDash::Solid,
+        );
+    }
     match line_type {
         BorderLineType::None => vec![],
         BorderLineType::Double => {
@@ -1210,9 +1287,10 @@ fn create_crooked_diagonal_line_nodes(
 
 /// BorderLine이 시각적으로 차지하는 전체 폭(px).
 ///
-/// `create_border_line_nodes`의 이중선/삼중선 분해 규칙과 같은 값을 써서,
 /// 쪽 기준 테두리 박스를 바깥쪽으로 확장할 때 렌더된 선 묶음이 본문 쪽으로
-/// 파고들지 않게 한다.
+/// 파고들지 않게 하는 값이다. 표 선의 겹선 분해는 한컴 규칙(`hancom_compound_strokes`)으로
+/// 바뀌었지만 쪽 테두리 위치는 정답 쌍이 없어 종전 값(`max(b, 3.0)`)을 그대로 둔다 —
+/// 실제 선 묶음은 이 값보다 좁거나 같아 본문 쪽으로 파고들지 않는다.
 pub(crate) fn border_line_visual_span(border: &BorderLine) -> f64 {
     if border.line_type == BorderLineType::None {
         return 0.0;
@@ -1830,5 +1908,165 @@ mod tests {
         assert_eq!(cell_bbox.y, cell_bbox_before.y);
         assert_eq!(cell_bbox.width, cell_bbox_before.width);
         assert_eq!(cell_bbox.height, cell_bbox_before.height);
+    }
+
+    // ── 맥 한글 12.30 PDF 벡터 정답 (A2-borders) ─────────────────────────
+    // 한컴 장치 점 1개(600dpi) = 96dpi 0.16px. 아래 기대값은 전부 맥 PDF 에서 잰
+    // 점 수(폭·막대·주기·끝 연장)이고, 우리 출력으로 만든 값이 아니다.
+    const PT: f64 = 0.16;
+
+    fn solid(width: u8) -> BorderLine {
+        BorderLine {
+            line_type: BorderLineType::Solid,
+            width,
+            color: 0,
+        }
+    }
+
+    fn line_of(line_type: BorderLineType, width: u8) -> BorderLine {
+        BorderLine {
+            line_type,
+            width,
+            color: 0,
+        }
+    }
+
+    /// 가로선 노드의 (y, 폭)을 위에서 아래 순으로.
+    fn horizontal_strokes(nodes: &[RenderNode]) -> Vec<(f64, f64)> {
+        let mut v: Vec<(f64, f64)> = nodes
+            .iter()
+            .map(|n| (line_node(n).y1, line_node(n).style.width))
+            .collect();
+        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        v
+    }
+
+    /// 세로선 노드의 (x, 폭)을 왼쪽에서 오른쪽 순으로.
+    fn vertical_strokes(nodes: &[RenderNode]) -> Vec<(f64, f64)> {
+        let mut v: Vec<(f64, f64)> = nodes
+            .iter()
+            .map(|n| (line_node(n).x1, line_node(n).style.width))
+            .collect();
+        v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        v
+    }
+
+    fn assert_close(actual: f64, expected: f64, tol: f64, what: &str) {
+        assert!(
+            (actual - expected).abs() <= tol,
+            "{what}: {actual} != {expected} (±{tol})"
+        );
+    }
+
+    /// BF-01 — 이중선 0.5mm(굵기 12점): «선 3 · 틈 6 · 선 3» 점.
+    /// 맥 PDF 316(가로)+11(세로)건: 선 0.36pt = 3점, 중심 간격 1.08pt = 9점.
+    #[test]
+    fn double_line_half_mm_is_3_6_3_points_centered_on_the_grid_line() {
+        let mut tree = PageLayoutContext::new(0, 200.0, 100.0);
+        let nodes = create_border_line_nodes(
+            &mut tree,
+            &line_of(BorderLineType::Double, 7),
+            10.0,
+            50.0,
+            110.0,
+            50.0,
+        );
+        let s = horizontal_strokes(&nodes);
+        assert_eq!(s.len(), 2);
+        assert_close(s[0].1, 3.0 * PT, 1e-9, "윗선 폭");
+        assert_close(s[1].1, 3.0 * PT, 1e-9, "아랫선 폭");
+        assert_close(s[1].0 - s[0].0, 9.0 * PT, 1e-9, "중심 간격");
+        assert_close((s[0].0 + s[1].0) / 2.0, 50.0, 1e-9, "격자선 중심 대칭");
+    }
+
+    /// BF-01 — 이중선 0.7mm(굵기 17점): «선 4 · 틈 8 · 선 4» 점.
+    /// 맥 PDF 24(세로)+14(가로)건 + 골든 3양식 424/340쌍: 선 0.48pt, 간격 1.44pt.
+    #[test]
+    fn double_line_seven_tenth_mm_is_4_8_4_points() {
+        let mut tree = PageLayoutContext::new(0, 200.0, 100.0);
+        let nodes = create_border_line_nodes(
+            &mut tree,
+            &line_of(BorderLineType::Double, 9),
+            50.0,
+            10.0,
+            50.0,
+            90.0,
+        );
+        let s = vertical_strokes(&nodes);
+        assert_eq!(s.len(), 2);
+        assert_close(s[0].1, 4.0 * PT, 1e-9, "왼선 폭");
+        assert_close(s[1].1, 4.0 * PT, 1e-9, "오른선 폭");
+        assert_close(s[1].0 - s[0].0, 12.0 * PT, 1e-9, "중심 간격");
+        assert_close((s[0].0 + s[1].0) / 2.0, 50.0, 1e-9, "격자선 중심 대칭");
+    }
+
+    /// BF-01 — 가는-굵은(9) 0.7mm: 가는 4 · 틈 4 · 굵은 9 = 17점, 가는 쪽이 왼쪽.
+    /// 맥 PDF 03a1a71f 쪽 1 세로선: 가는 w4(x 258.12) · 굵은 w9(x 259.32).
+    #[test]
+    fn slim_thick_seven_tenth_mm_is_4_4_9_points_slim_on_the_left() {
+        let mut tree = PageLayoutContext::new(0, 200.0, 100.0);
+        let nodes = create_border_line_nodes(
+            &mut tree,
+            &line_of(BorderLineType::ThinThickDouble, 9),
+            50.0,
+            10.0,
+            50.0,
+            90.0,
+        );
+        let s = vertical_strokes(&nodes);
+        assert_eq!(s.len(), 2);
+        assert_close(s[0].1, 4.0 * PT, 1e-9, "가는 선 폭");
+        assert_close(s[1].1, 9.0 * PT, 1e-9, "굵은 선 폭");
+        // 두 선 중심 간격: 맥은 600dpi 격자에 앉혀 10점 또는 11점으로 나온다(모델 10.5점).
+        let d = (s[1].0 - s[0].0) / PT;
+        assert!((10.0..=11.0).contains(&d), "중심 간격 {d}점");
+        // 묶음 전체 17점이 격자선을 가운데 둔다.
+        let left = s[0].0 - s[0].1 / 2.0;
+        let right = s[1].0 + s[1].1 / 2.0;
+        assert_close(right - left, 17.0 * PT, 1e-9, "묶음 폭 17점");
+        assert_close((left + right) / 2.0, 50.0, 0.5 * PT, "격자선 중심 대칭");
+    }
+
+    /// BF-01 — 굵은-가는(10) 0.7mm: 굵은 9 · 틈 4 · 가는 4, 굵은 쪽이 위(왼쪽).
+    /// 맥 PDF govtech 쪽 0 위 변: 굵은 w9(y 89.16) 가 가는 w4(y 90.48) 위.
+    #[test]
+    fn thick_slim_seven_tenth_mm_is_9_4_4_points_thick_on_top() {
+        let mut tree = PageLayoutContext::new(0, 200.0, 100.0);
+        let nodes = create_border_line_nodes(
+            &mut tree,
+            &line_of(BorderLineType::ThickThinDouble, 9),
+            10.0,
+            50.0,
+            110.0,
+            50.0,
+        );
+        let s = horizontal_strokes(&nodes);
+        assert_eq!(s.len(), 2);
+        assert_close(s[0].1, 9.0 * PT, 1e-9, "굵은 선 폭");
+        assert_close(s[1].1, 4.0 * PT, 1e-9, "가는 선 폭");
+        let d = (s[1].0 - s[0].0) / PT;
+        assert!((10.0..=11.0).contains(&d), "중심 간격 {d}점");
+        let top = s[0].0 - s[0].1 / 2.0;
+        let bottom = s[1].0 + s[1].1 / 2.0;
+        assert_close(bottom - top, 17.0 * PT, 1e-9, "묶음 폭 17점");
+        assert_close((top + bottom) / 2.0, 50.0, 0.5 * PT, "격자선 중심 대칭");
+    }
+
+    /// BF-01 — 맥에 정답이 없는 얇은 이중선(0.3mm 이하 = 7점 이하)은 종전 모양을 지킨다.
+    #[test]
+    fn thin_double_line_without_mac_ground_truth_keeps_legacy_shape() {
+        let mut tree = PageLayoutContext::new(0, 200.0, 100.0);
+        let nodes = create_border_line_nodes(
+            &mut tree,
+            &line_of(BorderLineType::Double, 5),
+            10.0,
+            50.0,
+            110.0,
+            50.0,
+        );
+        let s = horizontal_strokes(&nodes);
+        assert_eq!(s.len(), 2);
+        assert_close(s[0].1, 0.9, 1e-9, "종전 선 폭");
+        assert_close(s[1].0 - s[0].0, 2.1, 1e-9, "종전 중심 간격");
     }
 }
