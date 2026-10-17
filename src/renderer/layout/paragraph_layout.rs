@@ -2059,7 +2059,9 @@ fn compute_line_extra_spacing(
                     0.0,
                 )
             } else {
-                let raw = slack / total_char_count as f64;
+                // [JS-7] 남는 폭은 글자 틈 N−1 곳에 나눈다(추가 간격은 모든 글자 뒤에 붙지만 끝 글자 뒤 몫은 그려지지
+                // 않는다) — N 으로 나누면 마지막 글자가 slack/N 만큼 안쪽에 선다. 배분(#4657)은 이미 N−1 이다.
+                let raw = slack / (total_char_count - 1) as f64;
                 let avg_char_w = total_text_width / total_char_count as f64;
                 let min_sp = -avg_char_w * 0.5;
                 (0.0, raw.max(min_sp), 0.0)
@@ -10395,6 +10397,26 @@ mod alignment_range_tests {
                 block_center - (col_left + col_width / 2.0)
             );
         }
+    }
+
+    /// [JS-7] 공백 없는 양쪽 줄은 남는 폭을 글자 틈 N−1 곳에 나눈다 — 마지막 글자가 오른쪽 끝에 닿는다.
+    ///
+    /// 맥 한글 PDF(a05cee0f p3 `[대분류]` 5자 줄 셋): 글자 피치 평균 맥 876 ↔ 우리 854, 마지막 글자가 −81HU(= slack/N)
+    /// 안쪽에 섰다. 한컴은 `L ÷ 글자 틈 수(N−1)` 을 글자 틈에 더한다(DoNotAdjustWordInJustify 꺼짐). 배분은 이미 N−1 이다.
+    #[test]
+    fn justified_word_without_spaces_spreads_over_the_gaps_between_glyphs() {
+        let styles = styles(16.0, 0.0);
+        let text = "[대분류]";
+        let natural = width_with(&styles, text, 0.0, 0.0);
+        let avail = natural + 40.0;
+        let (_, extra_char) = justify(&styles, text, avail);
+        // 추가 간격은 모든 글자 뒤에 붙는다 — 끝 글자 뒤 몫은 그려지지 않는다.
+        let glyph_right = width_with(&styles, text, 0.0, extra_char) - extra_char;
+        assert!(
+            (glyph_right - avail).abs() < 0.001,
+            "끝 글리프 우변이 줄 끝에서 {:.3}px 벗어났다 (몫 {extra_char:.3}px)",
+            glyph_right - avail
+        );
     }
 
     /// [JS-3] 가운데 정렬은 끝줄이 아니어도 줄 끝 공백을 폭에서 뺀다.
