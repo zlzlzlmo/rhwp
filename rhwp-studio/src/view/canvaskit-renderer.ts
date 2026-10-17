@@ -2954,7 +2954,10 @@ export class CanvasKitLayerRenderer {
             x2,
             y,
             decoration.color,
-            1,
+            // 밑줄은 글자 크기에 비례한 굵기(Rust 가 낸다), 취소선·옛 JSON 은 1px.
+            decoration.kind === 'underline' && Number.isFinite(decoration.thickness) && (decoration.thickness ?? 0) > 0
+              ? decoration.thickness as number
+              : 1,
             dash,
             decoration.shape === 6,
           );

@@ -2679,7 +2679,22 @@ fn write_text_decoration(
         }
         let _ = write!(buf, "{:.3}", position);
     }
-    let _ = write!(buf, "],\"positionsComplete\":{complete}}}");
+    let _ = write!(buf, "],\"positionsComplete\":{complete}");
+    if matches!(kind, TextDecorationKind::Underline) {
+        // 밑줄 굵기(px) — 맥 한글: 글자 크기에 비례하는 정수 HU. 첨자·장평 보정 전 크기.
+        // 소비자가 모르는 키는 무시하므로 없던 때의 JSON 을 읽는 쪽은 그대로 돈다.
+        let base = if run.style.font_size > 0.0 {
+            run.style.font_size
+        } else {
+            12.0
+        };
+        let _ = write!(
+            buf,
+            ",\"thickness\":{:.3}",
+            crate::renderer::text_decoration::underline_thickness_px(base, shape)
+        );
+    }
+    buf.push('}');
 }
 
 fn write_shape_style(buf: &mut String, style: &ShapeStyle) {
@@ -3653,6 +3668,9 @@ mod tests {
         assert_eq!(decoration["baseline"], 14.0);
         assert_eq!(decoration["positions"], ops[0]["displayPositions"]);
         assert_eq!(decoration["positionsComplete"], true);
+        // 밑줄 굵기: 맥 한글 규칙 round(39 × 크기HU ÷ 1000) HU — 첨자로 줄이기 전 20px(=1500HU)
+        // 기준이라 59HU = 0.787px (그려진 14px 기준이면 41HU = 0.547px 로 얇아진다).
+        assert_eq!(decoration["thickness"], 0.787);
     }
 
     #[test]

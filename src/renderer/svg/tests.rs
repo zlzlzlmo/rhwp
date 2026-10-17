@@ -632,6 +632,60 @@ fn td03_underline_color_zero_is_black_even_with_colored_text() {
     }
 }
 
+fn underline_stroke_width(output: &str) -> String {
+    let line = output
+        .lines()
+        .find(|l| l.starts_with("<line "))
+        .expect("밑줄 <line> 이 있어야 함");
+    let start = line.find("stroke-width=\"").expect("stroke-width") + "stroke-width=\"".len();
+    let rest = &line[start..];
+    rest[..rest.find('"').unwrap()].to_string()
+}
+
+/// 밑줄 굵기는 글자 크기에 비례하는 정수 HU 다(맥 한글: T = round(39 × 크기HU ÷ 1000)).
+/// 종전에는 1px 고정이라 16px(12pt) 본문 밑줄이 맥(0.47pt)의 1.6배였다.
+#[test]
+fn td01_svg_single_underline_stroke_width_follows_font_size() {
+    for (size_px, want) in [(16.0, "0.627"), (32.0, "1.253")] {
+        let mut renderer = SvgRenderer::new();
+        renderer.begin_page(800.0, 600.0);
+        renderer.draw_text(
+            "밑줄",
+            10.0,
+            40.0,
+            &TextStyle {
+                font_size: size_px,
+                underline: UnderlineType::Bottom,
+                ..Default::default()
+            },
+        );
+        assert_eq!(underline_stroke_width(renderer.output()), want, "{size_px}px");
+    }
+}
+
+/// 위첨자 run 의 밑줄 굵기는 줄의 글자 크기(첨자 축소 전)를 따른다 — 0.7배로 줄어든
+/// 그리기 크기로 재면 본문 밑줄보다 얇아진다.
+#[test]
+fn td01_svg_script_underline_thickness_uses_unscaled_font_size() {
+    let thickness = |superscript: bool| {
+        let mut renderer = SvgRenderer::new();
+        renderer.begin_page(800.0, 600.0);
+        renderer.draw_text(
+            "1",
+            10.0,
+            40.0,
+            &TextStyle {
+                font_size: 20.0,
+                underline: UnderlineType::Bottom,
+                superscript,
+                ..Default::default()
+            },
+        );
+        underline_stroke_width(renderer.output())
+    };
+    assert_eq!(thickness(true), thickness(false));
+}
+
 #[test]
 fn test_svg_text_decoration() {
     let mut renderer = SvgRenderer::new();
@@ -662,11 +716,16 @@ fn test_svg_text_decoration() {
     // (부동소수 표기 꼬리가 붙을 수 있어 닫는 따옴표 없이 접두 일치로 확인한다.)
     let underline_count = output.matches("y1=\"22.72").count();
     assert!(underline_count > 0, "밑줄 <line> 요소가 있어야 함");
+    // 밑줄 굵기는 글자 크기에 비례(16px → 47HU = 0.627px), 취소선은 1px 고정(정답 쌍 없음).
+    let underline_width = output
+        .matches("stroke=\"#000000\" stroke-width=\"0.627\"")
+        .count();
+    assert_eq!(underline_width, 1, "밑줄 <line> 은 굵기 0.627px");
     // 취소선: <line> 요소로 출력
     let strike_count = output
         .matches("stroke=\"#000000\" stroke-width=\"1\"")
         .count();
-    assert!(strike_count >= 2, "취소선과 밑줄 <line> 요소가 있어야 함");
+    assert_eq!(strike_count, 1, "취소선 <line> 요소가 있어야 함");
 }
 
 #[test]

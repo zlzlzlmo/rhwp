@@ -2460,6 +2460,18 @@ impl Renderer for WebCanvasRenderer {
                 UnderlineType::Top => y - font_size + 1.0,
                 _ => y + font_size * crate::renderer::text_decoration::UNDERLINE_BASELINE_RATIO,
             };
+            // 굵기는 글자 크기에 비례하는 정수 HU(맥 한글) — 첨자·장평 보정 전 크기. 화면
+            // 배율이 낮으면 0.5px 선이 흐려지므로 장치 1px(= 1/배율) 밑으로는 내려가지 않는다.
+            let ul_base_size = if style.font_size > 0.0 {
+                style.font_size
+            } else {
+                12.0
+            };
+            let ul_width = crate::renderer::text_decoration::underline_thickness_px(
+                ul_base_size,
+                style.underline_shape,
+            )
+            .max(1.0 / self.scale.max(f64::EPSILON));
             self.draw_line_shape_canvas(
                 x,
                 ul_y,
@@ -2467,6 +2479,7 @@ impl Renderer for WebCanvasRenderer {
                 ul_y,
                 &ul_color,
                 style.underline_shape,
+                ul_width,
             );
         }
 
@@ -2486,6 +2499,7 @@ impl Renderer for WebCanvasRenderer {
                 strike_y,
                 &st_color,
                 style.strike_shape,
+                1.0,
             );
         }
 
@@ -3351,7 +3365,17 @@ impl WebCanvasRenderer {
     }
 
     /// 선 모양(shape)에 따라 Canvas 라인을 그린다.
-    fn draw_line_shape_canvas(&self, x1: f64, y1: f64, x2: f64, y2: f64, color: &str, shape: u8) {
+    /// `width` 는 단선·파선(0~6)의 굵기(px) — 다중선·물결은 자기 굵기를 쓴다.
+    fn draw_line_shape_canvas(
+        &self,
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        color: &str,
+        shape: u8,
+        width: f64,
+    ) {
         match shape {
             7 => {
                 // 이중선
@@ -3397,7 +3421,7 @@ impl WebCanvasRenderer {
                 if shape == 6 {
                     self.ctx.set_line_cap("round");
                 }
-                self.draw_single_canvas_line(x1, y1, x2, y2, color, 1.0, dash);
+                self.draw_single_canvas_line(x1, y1, x2, y2, color, width, dash);
                 if shape == 6 {
                     self.ctx.set_line_cap("butt");
                 }

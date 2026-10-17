@@ -1454,6 +1454,8 @@ export interface LayerTextDecorationOp {
     emphasisDot: number;
     positions: number[];
     positionsComplete: boolean;
+    /** 밑줄 굵기(px) — 글자 크기에 비례하는 정수 HU(한컴). 없으면 1px. */
+    thickness?: number;
   };
 }
 
