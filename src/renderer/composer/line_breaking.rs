@@ -1720,7 +1720,7 @@ fn fill_one_interval(
                 }
                 let space_hwp = to_hwp(*width);
                 let space_savings = condense_space_savings_hwp(space_hwp, condense_min_space);
-                if let Some(cut) = overflowing_space_cut(
+                if let Some(mut cut) = overflowing_space_cut(
                     cursor.line_start_idx,
                     *idx,
                     cursor.lw + space_hwp,
@@ -1729,6 +1729,25 @@ fn fill_one_interval(
                     *has_inline_control,
                 ) {
                     let absorbed = cut > *idx;
+                    // [LB-G05] 가득 찬 뒤 이어지는 공백은 줄 끝에 **둘까지** 남는다 — 공백 런의 첫 공백이
+                    // 곧바로 넘칠 때 다음 평범한 공백까지 같이 흡수한다(셋째부터 다음 줄 머리).
+                    // 한컴 저장 줄에서 머리 공백이 있는 줄 나눔 11개 중 9개가 줄 끝 공백 정확히 2개였다.
+                    // 런 한가운데서 넘친 둘째 공백은 이미 둘째라 그대로 둔다(총 셋이 되는 «무조건 +1»은
+                    // 오라클 A에서 4행을 고치고 5행을 깨뜨려 기각).
+                    let mut extra_tokens = 0usize;
+                    if absorbed
+                        && !(ti > 0 && matches!(tokens[ti - 1], BreakToken::Space { .. }))
+                        && matches!(
+                            tokens.get(ti + 1),
+                            Some(BreakToken::Space {
+                                has_inline_control: false,
+                                ..
+                            })
+                        )
+                    {
+                        cut += 1;
+                        extra_tokens = 1;
+                    }
                     let line = LineBreakResult {
                         start_idx: cursor.line_start_idx,
                         end_idx: cut,
@@ -1745,7 +1764,7 @@ fn fill_one_interval(
                     cursor.line_max_fs = if absorbed { 0.0 } else { *max_font_size };
                     cursor.is_first_line = false;
                     cursor.last_break_token_idx = None;
-                    cursor.token_index += 1;
+                    cursor.token_index += 1 + extra_tokens;
                     cursor.emitted_any = true;
                     return Some(FilledInterval {
                         line,
@@ -4903,6 +4922,50 @@ mod fill_cursor_tests {
         let lines =
             collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
         assert_eq!(rows(&lines), vec![(0, 5), (5, 5)]);
+    }
+
+    /// [LB-G05] 가득 찬 뒤 이어지는 공백은 줄 끝에 둘까지 남고 셋째부터 다음 줄 머리로 간다.
+    ///
+    /// 한컴 저장 줄에서 머리 공백이 있는 줄 나눔 11개 중 9개가 줄 끝 공백 정확히 2개(나머지 2개는 3개 —
+    /// 앞 공백이 상자 안이라 넘침이 늦게 시작한 경우). 우리는 첫 번째 넘친 공백만 흡수해 둘째 공백이
+    /// 다음 줄 머리로 갔다(정제한 규칙: 두 표본 A 4행·B 4행 고침, 틀어짐 0).
+    #[test]
+    fn two_blanks_stay_at_the_row_end_when_the_first_one_overflows() {
+        let text_chars = "가나다라  마바".chars().collect::<Vec<_>>();
+        let tokens = vec![
+            word(0, 4, 100.0),
+            blank(4, 5.0),
+            blank(5, 5.0),
+            word(6, 8, 20.0),
+        ];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 6), (6, 8)]);
+
+        // 셋째 공백부터는 다음 줄 머리다.
+        let text_chars = "가나다라   마바".chars().collect::<Vec<_>>();
+        let tokens = vec![
+            word(0, 4, 100.0),
+            blank(4, 5.0),
+            blank(5, 5.0),
+            blank(6, 5.0),
+            word(7, 9, 20.0),
+        ];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 6), (6, 9)]);
+
+        // 첫 공백이 상자 안에 들면 둘째 공백이 넘친 것을 흡수해 이미 둘이다 — 셋이 되지 않는다.
+        let text_chars = "가나다  마바".chars().collect::<Vec<_>>();
+        let tokens = vec![
+            word(0, 3, 96.0),
+            blank(3, 2.0),
+            blank(4, 5.0),
+            word(5, 7, 20.0),
+        ];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 5), (5, 7)]);
     }
 }
 
