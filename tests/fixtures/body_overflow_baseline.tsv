@@ -230,7 +230,10 @@ task1718/table_giant_cell_overfill.hwp	1
 task1725/text_footnote_tail_overpagination.hwp	15
 task1725/text_footnote_tail_overpagination.hwpx	15
 task1749/saved_bounds_cumulative_page_break.hwpx	1
-task1768/distribution_doc.hwpx	1
+# task1768 1 -> 2: 2쪽 «□ 집행범위 … 등 » 문단이 글이 상자를 꽉 채운 뒤 끝 공백이 넘쳐 빈 줄을 하나 더 내던 것을 없앴다(LB-G01 ·
+# 한컴은 표지만의 줄을 내지 않는다). 한 줄 올라온 뒤 쪽 끝 «1. 이재민 및 불우소외계층…» 줄이 2쪽 바닥에 들어앉아 본문
+# 아래로 넘친다 — 쪽 수는 그대로(3쪽).
+task1768/distribution_doc.hwpx	2
 task2070/1130000-201900011_D0150004-1-002_2017년기준 시장구조조사.hwp	27
 task2070/hy_ladder3.hwpx	2
 task2093/1192000_hydrogen_policy_research.hwp	1

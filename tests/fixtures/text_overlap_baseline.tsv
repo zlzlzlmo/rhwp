@@ -73,6 +73,10 @@ hwpx/opengov/36387103_결재문서본문_수질검사 신청 민원 처리 결�
 issue-986-receipt.hwp	4
 issue1549_multipositive_float_tables.hwpx	6
 issue1858_paper_anchor_float_stack.hwpx	6
+# issue1891/76076 0 -> 1: 줄 나눔·폭 규칙(제3조제1|항 · 문단 끝 공백 · 정수 공백/자간)이 6쪽 표 칸의 줄을 위로 끌어올려
+# (한컴 2024 PDF 대비 쪽 줄 집합 일치 6쪽 0.51 -> 0.67 · 2쪽 0.46 -> 0.52 · 4쪽 0.24 -> 0.27 · 7쪽 0.67 -> 0.69 · 50쪽
+# 0.79 -> 0.89, 멀어진 쪽 없음) 표 칸 글 한 줄이 꼬리말 쪽번호 줄과 1px 겹친다. 쪽 수는 그대로(83쪽).
+issue1891/76076_regulatory_analysis.hwpx	1
 issue1891/80168_regulatory_analysis.hwpx	3
 issue1891/80250_regulatory_analysis.hwpx	2
 issue1891_external_bindata_link.hwpx	3
@@ -87,7 +91,9 @@ issue2006/1790387_prep_final_report.hwpx	14
 issue2470/36341511_masked.hwpx	4
 issue2559/1341000_research_report_footnotes.hwp	16
 issue3637/regulatory_impact_nested_table_escape.hwpx	14
-issue3837/stored_vpos_rewind_form.hwp	3
+# issue3837 3 -> 4: 서명 칸의 가운데 줄이 줄 끝 공백을 폭에서 빼게 되어(JS-3 · 맥 한글 PDF 가운데 끝 공백 줄 시작 x 일치
+# 3.2% -> 75.8%) 공백 반폭(+2.9px)만큼 오른쪽으로 서서 칸 위에 떠 있는 그룹 도형(도장 자리)의 글자와 한 군데 더 겹친다.
+issue3837/stored_vpos_rewind_form.hwp	4
 issue4599/36374873_night_guard_log.hwpx	10
 issue5169_viewtext_changetracking.hwp	17
 issue5679/10857_delegation_rules.hwp	1
