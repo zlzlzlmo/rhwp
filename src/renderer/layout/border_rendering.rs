@@ -561,6 +561,53 @@ pub(crate) fn render_edge_borders(
     let mut nodes = Vec::new();
     let row_count = if row_y.len() > 1 { row_y.len() - 1 } else { 0 };
 
+    // 단선(종류 1~7) 가로선은 양 끝을 이어지는 세로 단선의 굵기만큼 바깥으로 늘린다
+    // (한컴: 시작 −⌊w/2⌋ · 끝 +⌈w/2⌉ 장치 점, w≤1이면 0). 세로선은 늘리지 않는다.
+    // 겹선·물결·입체선은 한컴이 이음 규칙으로 따로 다뤄(끝을 안쪽으로 당긴다) 늘리지 않는다.
+    let is_single_line = |b: &BorderLine| {
+        matches!(
+            b.line_type,
+            BorderLineType::Solid
+                | BorderLineType::Dash
+                | BorderLineType::Dot
+                | BorderLineType::DashDot
+                | BorderLineType::DashDotDot
+                | BorderLineType::LongDash
+                | BorderLineType::Circle
+        )
+    };
+    // 행 경계 `ri` 의 열 경계 `cb` 에 이어지는 세로 단선 굵기(점) — 경계 위·아래 칸 중 굵은 쪽.
+    let vertical_dots_at = |cb: usize, ri: usize| -> i32 {
+        [ri.wrapping_sub(1), ri]
+            .into_iter()
+            .filter_map(|r| v_edges.get(cb)?.get(r)?.as_ref())
+            .filter(|b| is_single_line(b))
+            .map(|b| width_px_to_dots(border_width_to_px(b.width)))
+            .max()
+            .unwrap_or(0)
+    };
+    let extend_horizontal = |seg: &BorderLine,
+                             start_col: usize,
+                             end_col: usize,
+                             ri: usize,
+                             x1: f64,
+                             x2: f64|
+     -> (f64, f64) {
+        if !is_single_line(seg) {
+            return (x1, x2);
+        }
+        let (w0, w1) = (
+            vertical_dots_at(start_col, ri),
+            vertical_dots_at(end_col, ri),
+        );
+        let before = if w0 > 1 { w0 / 2 } else { 0 };
+        let after = if w1 > 1 { (w1 + 1) / 2 } else { 0 };
+        (
+            x1 - before as f64 * DEVICE_DOT_PX,
+            x2 + after as f64 * DEVICE_DOT_PX,
+        )
+    };
+
     // 수평 엣지 렌더링
     for (ri, h_row) in h_edges.iter().enumerate() {
         let row_node_start = nodes.len();
@@ -587,6 +634,7 @@ pub(crate) fn render_edge_borders(
                     if let (Some(start), Some(ref sb)) = (seg_start, seg_border) {
                         let x1 = table_x + ref_cx[start];
                         let x2 = table_x + ref_cx[ci];
+                        let (x1, x2) = extend_horizontal(sb, start, ci, ri, x1, x2);
                         nodes.extend(create_border_line_nodes(tree, &sb, x1, y, x2, y));
                     }
                     seg_start = Some(ci);
@@ -596,6 +644,7 @@ pub(crate) fn render_edge_borders(
                 if let (Some(start), Some(ref sb)) = (seg_start, seg_border) {
                     let x1 = table_x + ref_cx[start];
                     let x2 = table_x + ref_cx[ci];
+                    let (x1, x2) = extend_horizontal(sb, start, ci, ri, x1, x2);
                     nodes.extend(create_border_line_nodes(tree, &sb, x1, y, x2, y));
                 }
                 seg_start = None;
@@ -606,6 +655,7 @@ pub(crate) fn render_edge_borders(
         if let (Some(start), Some(ref sb)) = (seg_start, seg_border) {
             let x1 = table_x + ref_cx[start];
             let x2 = table_x + ref_cx.get(h_row.len()).copied().unwrap_or(ref_cx[start]);
+            let (x1, x2) = extend_horizontal(sb, start, h_row.len(), ri, x1, x2);
             nodes.extend(create_border_line_nodes(tree, &sb, x1, y, x2, y));
         }
         if ri == 0 {
@@ -2068,5 +2118,81 @@ mod tests {
         assert_eq!(s.len(), 2);
         assert_close(s[0].1, 0.9, 1e-9, "종전 선 폭");
         assert_close(s[1].0 - s[0].0, 2.1, 1e-9, "종전 중심 간격");
+    }
+
+    /// 1×1 칸의 위 경계 가로선 하나가 나가도록 엣지 격자를 만든다.
+    /// 가로 경계는 `horizontal`, 양옆 세로 경계는 `vertical`.
+    fn one_cell_frame(
+        horizontal: BorderLine,
+        left: BorderLine,
+        right: BorderLine,
+    ) -> Vec<RenderNode> {
+        let h_edges = vec![vec![Some(horizontal)], vec![Some(horizontal)]];
+        let v_edges = vec![vec![Some(left)], vec![Some(right)]];
+        let row_col_x = vec![vec![0.0, 100.0]];
+        let row_y = vec![0.0, 20.0];
+        let mut tree = PageRenderTree::new(0, 300.0, 200.0);
+        render_edge_borders(
+            &mut tree, &h_edges, &v_edges, &row_col_x, &row_y, 50.0, 30.0, None,
+        )
+    }
+
+    /// 위 경계의 가로선(y = 30)만 골라 (시작 x, 끝 x)를 낸다.
+    fn top_horizontal_span(nodes: &[RenderNode]) -> (f64, f64) {
+        let top = nodes
+            .iter()
+            .map(line_node)
+            .find(|l| (l.y1 - 30.0).abs() < 1e-9 && (l.y2 - 30.0).abs() < 1e-9)
+            .expect("위 경계 가로선");
+        (top.x1.min(top.x2), top.x1.max(top.x2))
+    }
+
+    /// BF-03 — 단선 가로선은 양 끝을 이어지는 세로선 굵기만큼 늘린다:
+    /// 시작 −⌊w/2⌋ · 끝 +⌈w/2⌉ 점. 맥 PDF(36양식)에서 잰 직교 굵기별 값.
+    #[test]
+    fn horizontal_single_line_extends_by_adjacent_vertical_width_like_hancom() {
+        // (굵기 인덱스, 굵기 점, 시작 오프셋 점, 끝 오프셋 점)
+        let table = [
+            (0u8, 2.0, -1.0, 1.0),
+            (1, 3.0, -1.0, 2.0),
+            (5, 7.0, -3.0, 4.0),
+            (6, 9.0, -4.0, 5.0),
+            (7, 12.0, -6.0, 6.0),
+        ];
+        for (idx, w, start, end) in table {
+            let nodes = one_cell_frame(solid(idx), solid(idx), solid(idx));
+            let (x1, x2) = top_horizontal_span(&nodes);
+            assert_close(x1, 50.0 + start * PT, 1e-9, &format!("굵기 {w}점 시작"));
+            assert_close(x2, 150.0 + end * PT, 1e-9, &format!("굵기 {w}점 끝"));
+        }
+    }
+
+    /// BF-03 — 세로선은 늘리지 않고, 왼쪽·오른쪽 세로선 굵기가 다르면 끝마다 따로 읽는다.
+    #[test]
+    fn vertical_lines_stay_put_and_each_end_reads_its_own_neighbour() {
+        let nodes = one_cell_frame(solid(1), solid(1), solid(6));
+        let (x1, x2) = top_horizontal_span(&nodes);
+        assert_close(x1, 50.0 - PT, 1e-9, "왼쪽 3점 → 시작 −1");
+        assert_close(x2, 150.0 + 5.0 * PT, 1e-9, "오른쪽 9점 → 끝 +5");
+        let verticals: Vec<_> = nodes
+            .iter()
+            .map(line_node)
+            .filter(|l| (l.x1 - l.x2).abs() < 1e-9)
+            .collect();
+        assert_eq!(verticals.len(), 2);
+        for v in verticals {
+            assert_close(v.y1.min(v.y2), 30.0, 1e-9, "세로선 위 끝");
+            assert_close(v.y1.max(v.y2), 50.0, 1e-9, "세로선 아래 끝");
+        }
+    }
+
+    /// BF-03 — 세로선이 겹선(8 이상)이면 가로선은 늘지 않는다(한컴은 이 가지를 이음 규칙으로 처리).
+    #[test]
+    fn horizontal_single_line_is_not_extended_by_compound_vertical_neighbours() {
+        let double = line_of(BorderLineType::Double, 9);
+        let nodes = one_cell_frame(solid(1), double, double);
+        let (x1, x2) = top_horizontal_span(&nodes);
+        assert_close(x1, 50.0, 1e-9, "시작 그대로");
+        assert_close(x2, 150.0, 1e-9, "끝 그대로");
     }
 }
