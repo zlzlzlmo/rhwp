@@ -1984,7 +1984,14 @@ fn compute_line_extra_spacing(
                 (0.0, 0.0, 0.0)
             } else {
                 // 양쪽 정렬: 단어 간격 분배 (또는 음수 슬랙 시 압축)
-                let raw_ews = slack / rendered_space_slots as f64;
+                // [JS-2] 정정: 줄이는 줄(slack < 0)은 줄머리 공백도 줄이는 공백으로 센다 — 늘이는 쪽만 근거가 있고, 줄이는 쪽은
+                // 공백 수에 비례하는 압축 하한(−50%)이 용량이라 줄머리 공백을 빼면 같은 줄이 덜 줄어 상자를 더 넘는다.
+                let space_slots = if slack < 0.0 {
+                    rendered_space_slots + leading_spaces
+                } else {
+                    rendered_space_slots
+                };
+                let raw_ews = slack / space_slots as f64;
                 let space_base_w = estimate_text_width_exact(
                     " ",
                     &resolved_to_text_style(
@@ -1999,7 +2006,7 @@ fn compute_line_extra_spacing(
                 // 실폰트보다 넓으면 공백 -50% 클램프만으로는 잔여 초과가 남아 우측
                 // 테두리에서 클리핑된다. 공백-없는 분기와 동일하게 잔여 음수 슬랙을
                 // 자간으로 흡수한다 (narrow glyph 역진은 #229 per-char 클램프가 방어).
-                let leftover = slack - ews * rendered_space_slots as f64;
+                let leftover = slack - ews * space_slots as f64;
                 let ecs = if in_cell && leftover < 0.0 && total_char_count > 1 && !has_tabs {
                     let avg_char_w = total_text_width / total_char_count as f64;
                     let min_ecs = -avg_char_w * 0.5;
@@ -7080,7 +7087,7 @@ impl LayoutEngine {
             } else {
                 0
             };
-            text_style.leading_space_skip = if extra_word_sp != 0.0 {
+            text_style.leading_space_skip = if extra_word_sp > 0.0 {
                 leading_spaces_in_run
             } else {
                 0
@@ -10491,6 +10498,32 @@ mod alignment_range_tests {
             (run.x + positions[7] - (run.col_left + run.col_width)).abs() < 0.01,
             "끝 글리프 우변이 줄 끝에서 {:.3}px 벗어났다",
             run.x + positions[7] - (run.col_left + run.col_width)
+        );
+    }
+
+    /// [JS-2] 정정 — 줄이 상자보다 **넓어 줄여야 할 때**는 줄머리 공백도 줄이는 공백으로 센다.
+    ///
+    /// JS-2 의 근거(맥 한글 PDF)는 늘이는 줄(L ≥ 0)뿐이다. 줄이는 쪽은 우리 압축 하한(공백 −50%)이 공백 수에 비례하는 용량이라,
+    /// 줄머리 공백을 빼면 같은 줄이 덜 줄어 상자를 더 넘는다 — HWP3 변환 샘플(hwp3-sample10-hwpx) 5쪽에서 용지 밖 줄이
+    /// 49 → 54건으로 늘었다(JS-2 를 끄면 모두 사라진다). 한컴의 넘침 압축은 글자 틈까지 줄이는 규칙(JS-11, 근거 없음)이라
+    /// 거기까지는 모르고, 이 갈래에서는 종전 몫을 지킨다.
+    #[test]
+    fn overfull_justified_line_still_compresses_its_leading_spaces() {
+        let styles = styles(16.0, 0.0);
+        let text = "  가 나 다"; // 앞 공백 2 · 안쪽 공백 2 — 자연 폭 80px
+        let avail = width_with(&styles, text, 0.0, 0.0) - 12.0; // 12px 넘친다(공백 −50% 하한은 칸당 −4px)
+        let (extra_word, extra_char) = justify(&styles, text, avail);
+        assert!(extra_word < 0.0);
+        // 그릴 때 줄머리 공백을 건너뛰는 쪽은 여분이 양수일 때뿐이다(`leading_space_skip`).
+        let mut style = resolved_to_text_style(&styles, 0, 0);
+        style.extra_word_spacing = extra_word;
+        style.extra_char_spacing = extra_char;
+        style.leading_space_skip = if extra_word > 0.0 { 2 } else { 0 };
+        let rendered = estimate_text_width_exact(text, &style);
+        assert!(
+            (rendered - avail).abs() < 0.001,
+            "넘치는 줄이 {:.3}px 덜 줄었다 (몫 {extra_word:.3}px, 하한 −4px)",
+            rendered - avail
         );
     }
 
