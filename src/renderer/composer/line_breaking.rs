@@ -1675,6 +1675,35 @@ fn fill_one_interval(
                 max_font_size,
                 has_inline_control,
             } => {
+                // [LB-G01] 문단 끝에 이어진 공백 꼬리는 상자를 넘어도 새 줄을 만들지 않는다.
+                //
+                // 맥 한글 12.30 이 저장한 줄은 글이 상자를 꽉 채운 문단의 끝 공백·문단 끝 표지를 마지막 줄에
+                // 그대로 둔다(한컴 다줄 문단 928개 중 «표지만 있는 마지막 줄»은 앞이 강제 줄바꿈인 2건뿐).
+                // 종전에는 넘친 첫 공백을 흡수해 `line_start_idx` 를 글 끝으로 옮기고, 토큰 소진 블록이
+                // 그 자리에 빈 줄 하나를 더 냈다(오라클 29행 — 표지만 23 · 공백뿐 6, 모두 줄 수 어긋남).
+                // 뒤가 전부 평범한 공백이면 줄을 닫지 않고 꼬리를 이 줄에 얹는다. 강제 줄바꿈 뒤의 빈
+                // 마지막 줄은 한컴도 내므로 `LineBreak` 로 끝난 문단은 그대로다.
+                if !*has_inline_control
+                    && tokens[ti..].iter().all(|token| {
+                        matches!(
+                            token,
+                            BreakToken::Space {
+                                has_inline_control: false,
+                                ..
+                            }
+                        )
+                    })
+                {
+                    for token in &tokens[ti..] {
+                        if let BreakToken::Space { max_font_size, .. } = token {
+                            if *max_font_size > cursor.line_max_fs {
+                                cursor.line_max_fs = *max_font_size;
+                            }
+                        }
+                    }
+                    cursor.token_index = tokens.len();
+                    continue;
+                }
                 let previous_line_max_fs = cursor.line_max_fs;
                 if *max_font_size > cursor.line_max_fs {
                     cursor.line_max_fs = *max_font_size;
@@ -4789,6 +4818,78 @@ mod fill_cursor_tests {
                 .collect::<Vec<_>>(),
             vec![(0, 3), (3, 9), (9, 12)]
         );
+    }
+
+    fn word(start_idx: usize, end_idx: usize, width: f64) -> BreakToken {
+        let n = end_idx - start_idx;
+        BreakToken::Text {
+            start_idx,
+            end_idx,
+            base_width: width,
+            width,
+            max_font_size: 12.0,
+            base_char_widths: vec![width / n as f64; n],
+            char_widths: vec![width / n as f64; n],
+        }
+    }
+
+    fn blank(idx: usize, width: f64) -> BreakToken {
+        BreakToken::Space {
+            idx,
+            width,
+            max_font_size: 12.0,
+            has_inline_control: false,
+        }
+    }
+
+    fn rows(lines: &[LineBreakResult]) -> Vec<(usize, usize)> {
+        lines.iter().map(|l| (l.start_idx, l.end_idx)).collect()
+    }
+
+    /// [LB-G01] 문단 끝의 공백은 상자를 넘어도 새 줄을 만들지 않는다.
+    ///
+    /// 맥 한글 12.30 이 저장한 줄 정보(오라클 29행: `c3fb5220 0/1560` 한컴 `[0]` ↔ 우리 `[0,9]`,
+    /// `b7ef0592 0/161` `[0]` ↔ `[0,39]` …)에서 한컴은 글이 상자를 꽉 채운 문단의 끝 공백·문단 끝
+    /// 표지를 마지막 줄에 그대로 두고, 우리는 «표지/공백만 있는» 줄을 한 줄 더 냈다.
+    #[test]
+    fn trailing_blanks_never_open_a_row_of_their_own() {
+        // 글이 상자(100px)를 꽉 채우고 끝 공백 둘(각 5px)이 넘친다 → 한컴은 한 줄.
+        let text_chars = "가나다라  ".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 4, 100.0), blank(4, 5.0), blank(5, 5.0)];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 6)]);
+
+        // 끝 공백이 하나여도 (표지만 남는 줄) 한 줄이다.
+        let text_chars = "가나다라 ".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 4, 100.0), blank(4, 5.0)];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 5)]);
+
+        // 공백만 있는 문단도 한 줄이다.
+        let text_chars = "   ".chars().collect::<Vec<_>>();
+        let tokens = vec![blank(0, 40.0), blank(1, 40.0), blank(2, 40.0)];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 3)]);
+    }
+
+    /// [LB-G01] 짝 시험 — 낱말 사이 공백과 강제 줄바꿈 뒤의 빈 마지막 줄은 그대로다(한컴도 낸다:
+    /// 다줄 문단 928개 중 «표지만 있는 마지막 줄» 2건은 모두 앞이 LF).
+    #[test]
+    fn blanks_between_words_and_the_row_after_a_forced_break_are_kept() {
+        let text_chars = "가나다라 마".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 4, 100.0), blank(4, 5.0), word(5, 6, 20.0)];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 5), (5, 6)]);
+
+        let text_chars = "가나다라\n".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 4, 100.0), BreakToken::LineBreak { idx: 4 }];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 5), (5, 5)]);
     }
 }
 
