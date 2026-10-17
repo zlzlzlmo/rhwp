@@ -5878,7 +5878,9 @@ impl LayoutEngine {
             // 좌측 이탈, 한글 PDF x=229.56pt 는 공백 제외 중심). 반례 셋으로
             // 한정한다: ① 셀 내부는 한글이 말미 공백을 포함해 정렬(issue_1285
             // 수험번호 TAC 우단 = 셀 inner 우단 오라클 앵커) — cell_ctx 부재.
-            // ② soft-wrap 지점의 줄끝 공백은 포함 — 문단 마지막 줄 한정.
+            // ② [JS-3] soft-wrap 지점의 줄끝 공백도 뺀다 — 종전엔 «문단 마지막 줄 한정»이라 가운데 비끝줄이
+            // 공백 반폭만큼 왼쪽에 섰다(맥 한글 PDF 62줄: 시작 x 중앙값 −247HU = 10pt 공백 500HU 의 절반).
+            // 한컴은 범위 끝을 뒤에서 걷어 끝줄이든 아니든 줄 끝 공백을 폭에서 제외한다(오른쪽 정렬과 같은 규칙).
             // ③ TAC 컨트롤이 있는 줄은 공백이 시각적 말미가 아니다 —
             // line_tac_offsets_for_width 비어 있을 때 한정. ④ 전부 공백인
             // 줄(밑줄 친 서명란)과 밑줄 스타일 말미 공백은 보이는 콘텐츠라
@@ -5889,7 +5891,6 @@ impl LayoutEngine {
             // 한/글도 칸 안에서 말미 공백을 빼고 정렬한다(3079571 취소신청서 1쪽,
             // '신청하는' + 공백 5칸 — 한/글 대비 -15.02px = 5 × 6.008 ÷ 2).
             let center_excludes_trailing_ws = alignment == Alignment::Center
-                && is_last_line_of_para
                 && line_tac_offsets_for_width.is_empty()
                 && comp_line
                     .runs
@@ -10190,6 +10191,16 @@ mod alignment_range_tests {
         letter_spacing: f64,
         text: &str,
     ) -> (f64, f64, f64, f64) {
+        laid_out_first_run_in_lines(alignment, letter_spacing, text, &[0])
+    }
+
+    /// `line_starts` 는 줄마다 시작 UTF-16 위치(저장 LINE_SEG 의 text_start) — 첫 줄의 첫 TextRun 을 돌려준다.
+    fn laid_out_first_run_in_lines(
+        alignment: Alignment,
+        letter_spacing: f64,
+        text: &str,
+        line_starts: &[u32],
+    ) -> (f64, f64, f64, f64) {
         use crate::model::page::{ColumnDef, PageDef};
         use crate::model::paragraph::{LineSeg, Paragraph};
         use crate::renderer::composer::compose_paragraph;
@@ -10225,12 +10236,16 @@ mod alignment_range_tests {
             char_offsets: (0..text.chars().count() as u32).collect(),
             text: text.to_string(),
             para_shape_id: 0,
-            line_segs: vec![LineSeg {
-                line_height: 1200,
-                baseline_distance: 960,
-                segment_width: 42520,
-                ..Default::default()
-            }],
+            line_segs: line_starts
+                .iter()
+                .map(|text_start| LineSeg {
+                    text_start: *text_start,
+                    line_height: 1200,
+                    baseline_distance: 960,
+                    segment_width: 42520,
+                    ..Default::default()
+                })
+                .collect(),
             ..Default::default()
         }];
         let composed: Vec<_> = paragraphs.iter().map(compose_paragraph).collect();
@@ -10325,6 +10340,26 @@ mod alignment_range_tests {
                 block_center - (col_left + col_width / 2.0)
             );
         }
+    }
+
+    /// [JS-3] 가운데 정렬은 끝줄이 아니어도 줄 끝 공백을 폭에서 뺀다.
+    ///
+    /// 맥 한글 PDF(가운데 비끝줄 71개 중 줄 끝 공백이 있는 62개): 시작 x 가 공백 반폭만큼 왼쪽으로 어긋난다 —
+    /// 중앙값 −247HU(10pt 공백 500HU 의 절반 −250) · 크기별 −198(8pt)·−249(10pt)·−274(11pt)·−324(13pt). 반 공백 예측을
+    /// 더하면 ±12HU 일치율 3.6% → 69.6%(n=56). 한컴은 범위 끝을 뒤에서 걷어 줄 끝 공백을 제외한다(끝줄이든 아니든).
+    #[test]
+    fn centered_soft_wrapped_line_excludes_its_trailing_space() {
+        let styles = styles(16.0, 0.0);
+        // 첫 줄 `가나다 `(저장 줄은 줄바꿈 공백을 앞 줄 끝에 둔다) · 둘째 줄 `라마바`.
+        let (x, _width, col_left, col_width) =
+            laid_out_first_run_in_lines(Alignment::Center, 0.0, "가나다 라마바", &[0, 4]);
+        let visible = width_with(&styles, "가나다", 0.0, 0.0);
+        let expected_x = col_left + (col_width - visible) / 2.0;
+        assert!(
+            (x - expected_x).abs() < 0.01,
+            "줄 끝 공백이 가운데 정렬 폭에 들어갔다: x={x:.3} 기대 {expected_x:.3} (반 공백 {:.3}px 어긋남)",
+            x - expected_x
+        );
     }
 
     /// [JS-1] 배분(DISTRIBUTE) 줄도 같다 — 한컴은 글자 틈 N−1 곳에 고르게 나누고 끝 글자 자간은 없다.
