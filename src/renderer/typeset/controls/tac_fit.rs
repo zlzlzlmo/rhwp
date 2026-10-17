@@ -98,6 +98,62 @@ pub(super) fn prepare(
             })
         })
         .flatten();
+    // 🔴 한 문단에 글자처럼 취급한 표가 **둘 이상**이면 표 하나가 줄 하나이고 줄 높이는 표 전체다 — 줄이 쌓인다(맥 한글 12.30).
+    // 위는 «처음 자란 표 하나»의 실측만 흐름에 세어 둘째 표가 자란 만큼이 빠졌다(u1-fill-b7ef0592 pi=53: 표 6×7 + 2×2, 8쪽 흐름
+    // 860.6px ↔ 품목 합 1086px → 뒤 표 5줄이 쪽 밖 y 849~883pt 로 그려졌다. 맥은 «6-1»을 9쪽 머리로 보낸다). 자란 표가 있는 줄은
+    // `max(저장 줄 높이, 실측)`으로 바꾸고 표가 아닌 줄은 줄 높이 그대로 더한다. 표가 하나인 문단은 위 값 그대로다(영향 범위를 좁힌다).
+    let multi_grown_tac_total = (tac_count >= 2)
+        .then(|| {
+            let mut lines: Vec<f64> = (0..fmt.line_heights.len().max(1))
+                .map(|i| {
+                    fmt.line_heights
+                        .get(i)
+                        .copied()
+                        .unwrap_or_else(|| fmt.line_advance(i))
+                })
+                .collect();
+            let mut any_grown = false;
+            let mut tac_ordinal = 0usize;
+            for (ci, ctrl) in para.controls.iter().enumerate() {
+                let Control::Table(t) = ctrl else { continue };
+                if !flow.is_effective_tac_table(para, t, fmt) {
+                    continue;
+                }
+                // 줄 번호를 못 구한 표(문단 첫 표가 흔하다)는 줄 수가 표 수와 같을 때 표 순서가 줄 번호다 — 표 하나가 줄 하나.
+                let ordinal = tac_ordinal;
+                tac_ordinal += 1;
+                let line_index = flow
+                    .tac_table_line_index(para, t, fmt)
+                    .or((lines.len() == tac_count).then_some(ordinal));
+                let Some(measured) = measured_tables
+                    .iter()
+                    .find(|m| m.para_index == para_idx && m.control_index == ci)
+                else {
+                    continue;
+                };
+                let declared = hwpunit_to_px(t.common.height as i32, dpi);
+                let grown_in_session =
+                    flow.session_edited() && measured.total_height > declared + 8.0;
+                let predates = crate::renderer::typeset::stored_host_line_growth_hu(
+                    para,
+                    t,
+                    flow.tac_table_line_index(para, t, fmt),
+                    ci,
+                )
+                .is_some();
+                grown_before_save |= predates;
+                if !(grown_in_session || predates) {
+                    continue;
+                }
+                if let Some(line) = line_index.and_then(|idx| lines.get_mut(idx)) {
+                    *line = line.max(measured.total_height);
+                    any_grown = true;
+                }
+            }
+            any_grown.then(|| lines.iter().sum::<f64>())
+        })
+        .flatten();
+    let session_grown_tac_total = multi_grown_tac_total.or(session_grown_tac_total);
     // 실제 TAC 배치가 사용하는 소유 줄 상자는 바깥여백을 이미 포함한다.
     // pre-flush에서 fmt와 여백을 다시 더하면 실제로 들어가는 표를 먼저 이월한다.
     let owned_single_tac_frame = (page.profile.hwpx_stored_layout()
