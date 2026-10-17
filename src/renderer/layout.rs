@@ -6113,7 +6113,11 @@ impl LayoutEngine {
                 // 10pt 로 그린다(37787·70833 — 스타일 표에 «쪽 번호»도 글꼴 목록에 함초롬돋움도 없는데
                 // 맥 PDF 는 HCRDotum 9.96pt · 기준선 30.56). HWP3 변환본만 종전 «바탕» 10pt · 종전 식.
                 None => {
-                    let family = if hwp3_lineage { "바탕" } else { "함초롬돋움" };
+                    let family = if hwp3_lineage {
+                        "바탕"
+                    } else {
+                        "함초롬돋움"
+                    };
                     (
                         TextStyle {
                             font_family: family.to_string(),
