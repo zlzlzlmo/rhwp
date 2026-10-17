@@ -4437,8 +4437,17 @@ impl LayoutEngine {
                     // 기반이어야 하고, rowspan 가시분은 아래 블록-합 보정이 채운다
                     // (교육부 r3: rs=1 셀 2개 전체 소비 17.1px 인데 선언 max 로
                     // 2107.1 유지 → 셀 bbox 2354.6 → valign 이 페이지 밖으로).
+                    // 다만 그 행이 쪽 한 장에 들어가는 높이이고 칸이 전부 이 조각에서 온전히 끝나면 선언 높이가 한컴의
+                    // 행 높이다 — 맥 한글 12.30 80168 17·18쪽(행 8~10 걸침 블록): 행 8 이 선언 33.1pt(+걸침 칸 몫)로
+                    // 쪽 바닥까지 닿고 이어진 쪽 첫 행이 선언 37.6pt. 종전엔 내용 높이(17.4·15.5pt)만 그려 블록이 47pt 짧았다.
                     let h = if !has_visible_range {
                         0.0
+                    } else if !has_row_cut
+                        && (in_start || in_end)
+                        && self.row_cut_content_height(table, r, &[], &[], styles)
+                            <= col_area.height
+                    {
+                        self.row_cut_content_height(table, r, &[], &[], styles)
                     } else if has_row_cut || in_start || in_end {
                         self.row_cut_content_height(table, r, &per_start, &per_end, styles)
                     } else {
