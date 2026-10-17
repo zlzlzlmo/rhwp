@@ -53,12 +53,23 @@ fn build_cluster_len(chars: &[char]) -> Vec<u8> {
 /// 전각(1.0em) 글자는 fs-비례와 동일하므로 CJK 자간 동작은 불변이고,
 /// 반각/좁은 글자에서만 압축·확장이 글자폭에 비례해 정확해진다.
 /// style.letter_spacing 은 fs×% 로 저장되어 있으므로 (base/fs) 로 환산한다.
+///
+/// [JS-5] 한컴은 이 몫을 4HU 단위 정수로 센다 — 글자마다 `4 × MulDiv(⌊w/4⌋, 자간%, 100)` (w = 그 글자의 전진폭 HU,
+/// MulDiv 는 가장 가까운 정수로 반올림하고 절반은 0에서 멀어진다). 자간이 정수 %가 아니면 종전 실수 식을 쓴다.
 #[inline]
 fn glyph_letter_spacing(letter_spacing_px: f64, glyph_base_px: f64, font_size: f64) -> f64 {
     if font_size <= 0.0 {
         return letter_spacing_px;
     }
-    letter_spacing_px * (glyph_base_px / font_size)
+    let percent = letter_spacing_px / font_size * 100.0;
+    let whole_percent = percent.round();
+    if (percent - whole_percent).abs() > 1e-4 || glyph_base_px < 0.0 {
+        return letter_spacing_px * (glyph_base_px / font_size);
+    }
+    let width_hu = (glyph_base_px * 75.0).round() as i64;
+    let scaled = (width_hu / 4) * whole_percent as i64;
+    let rounded = (scaled + 50 * scaled.signum()) / 100;
+    (4 * rounded) as f64 / 75.0
 }
 
 /// 스타일에서 공통 파라미터 추출 (font_size, ratio, tab_w)
@@ -2473,6 +2484,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// [JS-5] 자간 보정은 글자마다 `4 × MulDiv(⌊w/4⌋, 자간%, 100)` HU 다(w = 그 글자의 전진폭 HU, 절반은 0에서 멀어지게).
+    ///
+    /// 맥 한글 PDF 칠곡 p2 — h=1400·자간 −9% 한글+공백 25자(공백 5) 줄: 첫 글자 원점에서 마지막 글자 원점까지
+    /// **27348.1HU** = 한글 1272×19 + 공백 636×5. 한글 ⌊1400/4⌋×−9/100 = −31.5 → −32 → ×4 = −128 (실수 모형은 −126),
+    /// 공백 700HU(JS-6) ⌊700/4⌋×−9/100 = −15.75 → −16 → ×4 = −64 (실수 −63). 실수 모형 합 27391HU 는 43HU(0.43pt) 어긋난다.
+    /// 같은 식 검산: h=1700·자간 +4% 9공백 줄 정확, h=900·자간 −10% 27자 줄 0.0.
+    #[test]
+    fn test_letter_spacing_follows_the_hancom_integer_formula() {
+        let m = EmbeddedTextMeasurer;
+        // h=1400 → 18.667px, 자간 −9% → −1.68px
+        let style = TextStyle {
+            font_size: 1400.0 / 75.0,
+            letter_spacing: -0.09 * 1400.0 / 75.0,
+            ratio: 1.0,
+            ..Default::default()
+        };
+        // 한글 20 + 공백 5, 마지막 글자는 한글(원점까지의 거리에는 마지막 글자의 전진폭이 들지 않는다).
+        let text = "가나다라 가나다라 가나다라 가나다라 가나다 가";
+        assert_eq!(text.chars().count(), 25);
+        let positions = m.compute_char_positions(text, &style);
+        let origin_to_origin_hu = positions[24] * 75.0;
+        assert!(
+            (origin_to_origin_hu - 27348.0).abs() < 0.5,
+            "첫 글자 원점 → 마지막 글자 원점 {origin_to_origin_hu:.1}HU, 한컴은 27348HU"
+        );
     }
 
     #[test]
