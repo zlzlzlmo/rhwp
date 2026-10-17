@@ -928,6 +928,27 @@ pub(crate) fn is_medium_weight_face(font_family: &str) -> bool {
         || lower.contains("hymedium")
 }
 
+/// 문단 모양의 여백·들여쓰기·위/아래 간격 원값 → HWPUNIT. 원값은 **2배 값**이고 최하위 비트가 «글자 단위(CHAR)» 표시다
+/// (HWPX `unit="CHAR"` 가 이 비트를 켠다 · 저장값 = value×2+1). 짝수면 값>>1, 홀수면 (값>>1) × (문서 기본 글자 크기 ÷ 2) ÷ 100 이다 —
+/// 기준은 문단의 글자가 아니라 **문서 기본 글자 모양 크기의 절반**이다(맥 한글 12.30 · 칠곡 paraPr 111 오른쪽 여백 500 CHAR → 2500HU).
+pub(crate) fn para_margin_hwpunit(raw: i32, default_char_hu: i32) -> f64 {
+    let half = raw >> 1;
+    if raw & 1 == 0 {
+        half as f64
+    } else {
+        half as f64 * (default_char_hu as f64 / 2.0) / 100.0
+    }
+}
+
+/// 원값 → px. 짝수는 종전 식(`/2`) 그대로 둬 부동소수 결과가 바뀌지 않게 하고, 홀수(글자 단위)만 환산한다.
+fn para_margin_px(raw: i32, default_char_hu: i32, dpi: f64, variant_div: f64) -> f64 {
+    if raw & 1 == 0 {
+        hwpunit_to_px(raw, dpi) / variant_div
+    } else {
+        para_margin_hwpunit(raw, default_char_hu) * dpi / 7200.0
+    }
+}
+
 /// ParaShape → ResolvedParaStyle 목록
 fn resolve_para_styles(doc_info: &DocInfo, dpi: f64) -> Vec<ResolvedParaStyle> {
     resolve_para_styles_with_variant(doc_info, dpi, false)
@@ -939,10 +960,25 @@ fn resolve_para_styles_with_variant(
     dpi: f64,
     is_hwp3_variant: bool,
 ) -> Vec<ResolvedParaStyle> {
+    // 글자 단위(CHAR) 환산의 기준 — 문서 기본 글자 모양(0번)의 크기. 없거나 이상하면 10pt.
+    let default_char_hu = doc_info
+        .char_shapes
+        .first()
+        .map(|shape| shape.base_size)
+        .filter(|size| (100..=100_000).contains(size))
+        .unwrap_or(1000);
     doc_info
         .para_shapes
         .iter()
-        .map(|ps| resolve_single_para_style(ps, &doc_info.tab_defs, dpi, is_hwp3_variant))
+        .map(|ps| {
+            resolve_single_para_style(
+                ps,
+                &doc_info.tab_defs,
+                dpi,
+                is_hwp3_variant,
+                default_char_hu,
+            )
+        })
         .collect()
 }
 
@@ -952,6 +988,7 @@ fn resolve_single_para_style(
     tab_defs: &[TabDef],
     dpi: f64,
     is_hwp3_variant: bool,
+    default_char_hu: i32,
 ) -> ResolvedParaStyle {
     // [#2070] 비-Percent 줄간격(Fixed/SpaceOnly/Minimum)도 여백·문단간격·탭과
     // 동일하게 저장값이 유효 HWPUNIT 의 2배다 — 통제 사다리(#2197)로 확정한
@@ -999,11 +1036,11 @@ fn resolve_single_para_style(
         alignment: ps.alignment,
         line_spacing,
         line_spacing_type: ps.line_spacing_type,
-        margin_left: hwpunit_to_px(ps.margin_left, dpi) / variant_div,
-        margin_right: hwpunit_to_px(ps.margin_right, dpi) / variant_div,
-        indent: hwpunit_to_px(ps.indent, dpi) / variant_div,
-        spacing_before: hwpunit_to_px(ps.spacing_before, dpi) / variant_div,
-        spacing_after: hwpunit_to_px(ps.spacing_after, dpi) / variant_div,
+        margin_left: para_margin_px(ps.margin_left, default_char_hu, dpi, variant_div),
+        margin_right: para_margin_px(ps.margin_right, default_char_hu, dpi, variant_div),
+        indent: para_margin_px(ps.indent, default_char_hu, dpi, variant_div),
+        spacing_before: para_margin_px(ps.spacing_before, default_char_hu, dpi, variant_div),
+        spacing_after: para_margin_px(ps.spacing_after, default_char_hu, dpi, variant_div),
         head_type: ps.head_type,
         para_level: ps.para_level,
         numbering_id: ps.numbering_id,
@@ -1642,5 +1679,31 @@ mod tests {
         assert_eq!(cs.font_family_for_lang(1), "Arial");
         assert_eq!(cs.font_family_for_lang(3), "함초롬돋움"); // 빈 문자열 → 한국어 폴백
         assert_eq!(cs.font_family_for_lang(99), "함초롬돋움"); // 범위 초과 → 한국어 폴백
+    }
+}
+
+#[cfg(test)]
+mod char_unit_para_margin_tests {
+    use super::para_margin_hwpunit;
+
+    /// 맥 한글 12.30(G1): 여백·들여쓰기·간격 원값은 2배 값이고 최하위 비트가 «글자 단위(CHAR)» 표시다.
+    /// 홀수면 HWPUNIT = (값>>1) × (문서 기본 글자 크기 ÷ 2) ÷ 100, 짝수면 값>>1.
+    #[test]
+    fn even_raw_is_half() {
+        assert_eq!(para_margin_hwpunit(2000, 1000), 1000.0);
+        assert_eq!(para_margin_hwpunit(-800, 1000), -400.0);
+        assert_eq!(para_margin_hwpunit(0, 1000), 0.0);
+    }
+
+    #[test]
+    fn odd_raw_is_char_units_of_half_the_default_char_size() {
+        // 칠곡 paraPr 111: 오른쪽 여백 500 CHAR(저장 1001) → 2500 HWPUNIT(기본 글자 1000).
+        assert_eq!(para_margin_hwpunit(1001, 1000), 2500.0);
+        // 칠곡 paraPr 114: 내어쓰기 −400 CHAR(저장 −799) → −2000 HWPUNIT.
+        assert_eq!(para_margin_hwpunit(-799, 1000), -2000.0);
+        // e13e7b4a(HWP5): 아래 간격 저장 161(= CHAR 80) → 400 HWPUNIT.
+        assert_eq!(para_margin_hwpunit(161, 1000), 400.0);
+        // 기본 글자 크기가 다르면 기준도 따라간다(12pt → 절반 600).
+        assert_eq!(para_margin_hwpunit(161, 1200), 480.0);
     }
 }
