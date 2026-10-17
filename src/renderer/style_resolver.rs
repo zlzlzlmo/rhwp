@@ -245,6 +245,9 @@ pub struct ResolvedParaStyle {
     pub keep_lines: bool,
     /// 문단 앞에서 항상 쪽 나눔 — attr1 bit 19
     pub page_break_before: bool,
+    /// «한 줄로 입력» — attr2 bit 0-1 = 1 (0 나눔 · 1 한 줄로 입력 · 2 유지). 폭이 모자라도 자동 줄나눔 없이
+    /// 강제 줄바꿈 사이마다 한 줄만 둔다.
+    pub line_wrap_squeeze: bool,
 }
 
 impl Default for ResolvedParaStyle {
@@ -274,6 +277,7 @@ impl Default for ResolvedParaStyle {
             keep_with_next: false,
             keep_lines: false,
             page_break_before: false,
+            line_wrap_squeeze: false,
         }
     }
 }
@@ -994,6 +998,7 @@ fn resolve_single_para_style(
         keep_with_next: (ps.attr1 >> 17) & 1 != 0,
         keep_lines: (ps.attr1 >> 18) & 1 != 0,
         page_break_before: (ps.attr1 >> 19) & 1 != 0,
+        line_wrap_squeeze: ps.attr2 & 0x03 == 1,
     }
 }
 

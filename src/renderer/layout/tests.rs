@@ -1974,16 +1974,20 @@ fn test_square_bullet_with_space_preserves_layout() {
         "positions[1] expected 18.4, got {}",
         positions[1]
     );
-    // 공백: 반각(10) + 자간(10×-8% = -0.8) = advance 9.2 (min_clamp 5.0 미작동)
+    // 공백: 한컴 정규 폭 4×⌊1500/8⌋ = 748HU = 9.9733px (반각 10px 이 아니다 — JS-6, 맥 한글 PDF h=1500 공백 748HU)
+    // + 자간(−8% × 폭 9.9733 = −0.7979) = advance 9.1755 (min_clamp 5.0 미작동)
+    let space_advance = 748.0 / 75.0 * 0.92;
     assert!(
-        (positions[2] - 27.6).abs() < 0.01,
-        "positions[2] expected 27.6, got {}",
+        (positions[2] - (18.4 + space_advance)).abs() < 0.01,
+        "positions[2] expected {}, got {}",
+        18.4 + space_advance,
         positions[2]
     );
     // 가: 전각(20) + 자간(-1.6) = advance 18.4
     assert!(
-        (positions[3] - 46.0).abs() < 0.01,
-        "positions[3] expected 46.0, got {}",
+        (positions[3] - (18.4 + space_advance + 18.4)).abs() < 0.01,
+        "positions[3] expected {}, got {}",
+        18.4 + space_advance + 18.4,
         positions[3]
     );
 }

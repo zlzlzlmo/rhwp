@@ -53,12 +53,23 @@ fn build_cluster_len(chars: &[char]) -> Vec<u8> {
 /// 전각(1.0em) 글자는 fs-비례와 동일하므로 CJK 자간 동작은 불변이고,
 /// 반각/좁은 글자에서만 압축·확장이 글자폭에 비례해 정확해진다.
 /// style.letter_spacing 은 fs×% 로 저장되어 있으므로 (base/fs) 로 환산한다.
+///
+/// [JS-5] 한컴은 이 몫을 4HU 단위 정수로 센다 — 글자마다 `4 × MulDiv(⌊w/4⌋, 자간%, 100)` (w = 그 글자의 전진폭 HU,
+/// MulDiv 는 가장 가까운 정수로 반올림하고 절반은 0에서 멀어진다). 자간이 정수 %가 아니면 종전 실수 식을 쓴다.
 #[inline]
 fn glyph_letter_spacing(letter_spacing_px: f64, glyph_base_px: f64, font_size: f64) -> f64 {
     if font_size <= 0.0 {
         return letter_spacing_px;
     }
-    letter_spacing_px * (glyph_base_px / font_size)
+    let percent = letter_spacing_px / font_size * 100.0;
+    let whole_percent = percent.round();
+    if (percent - whole_percent).abs() > 1e-4 || glyph_base_px < 0.0 {
+        return letter_spacing_px * (glyph_base_px / font_size);
+    }
+    let width_hu = (glyph_base_px * 75.0).round() as i64;
+    let scaled = (width_hu / 4) * whole_percent as i64;
+    let rounded = (scaled + 50 * scaled.signum()) / 100;
+    (4 * rounded) as f64 / 75.0
 }
 
 /// 스타일에서 공통 파라미터 추출 (font_size, ratio, tab_w)
@@ -851,6 +862,7 @@ pub(crate) fn resolved_to_text_style(
             tab_leaders: Vec::new(),
             inline_tabs: Vec::new(),
             extra_word_spacing: 0.0,
+            leading_space_skip: 0,
             extra_char_spacing: 0.0,
             squeeze_unclamped: false,
             extra_dash_advance: 0.0,
@@ -1296,6 +1308,14 @@ fn measure_char_width_embedded_decision_for_font<'a>(
     }
 }
 
+/// [JS-6] 한컴의 공백 정규 폭(px): 글꼴과 무관하게 `4 × ⌊h/8⌋` HU 다(h = 글자 크기 HU, 장평 100).
+/// 반각(h/2)이 아니라 4HU 단위로 내린 값이라 h 가 8의 배수가 아닌 크기(900·1100·1300·1500·1700 …)에서 공백마다
+/// 2HU 작다. 장평은 호출부가 곱한다.
+fn hancom_space_advance_px(font_size_px: f64) -> f64 {
+    let size_hu = (font_size_px * 75.0 + 0.5).floor() as i64;
+    (4 * (size_hu / 8)) as f64 / 75.0
+}
+
 pub(crate) fn char_width_decision<'a>(
     chars: &[char],
     cluster_len: &[u8],
@@ -1443,6 +1463,14 @@ pub(crate) fn char_width_decision<'a>(
     let (base_width_raw, width_source) = supplement
         .map(|entry| (entry.natural_advance_px(), entry.width_source()))
         .unwrap_or((base_width_raw, width_source));
+    // [JS-6] 공백(U+0020·묶음 빈칸)의 정규 폭 — 글꼴 폭이 반각(em/2)으로 잡힌 자리만 한컴 공식으로 바꾼다.
+    let base_width_raw = if (c == ' ' || c == '\u{00A0}')
+        && matches!(width_source, "metricHalfSpace" | "heuristicHalfwidth")
+    {
+        hancom_space_advance_px(font_size)
+    } else {
+        base_width_raw
+    };
     let base_width_px = if dash_leader {
         base_width_raw.min(font_size * 0.3)
     } else {
@@ -1451,7 +1479,9 @@ pub(crate) fn char_width_decision<'a>(
     let mut final_width_px = base_width_px * ratio
         + glyph_letter_spacing(style.letter_spacing, base_width_px * ratio, font_size)
         + style.extra_char_spacing;
-    if c == ' ' {
+    // [JS-2] 줄머리 공백(텍스트 맨 앞 공백 런 중 처음 `leading_space_skip` 개)은 정렬 범위 밖이라 늘이지 않는다.
+    if c == ' ' && !(i < style.leading_space_skip && chars[..i].iter().all(|before| *before == ' '))
+    {
         final_width_px += style.extra_word_spacing;
     }
     if dash_leader {
@@ -2426,6 +2456,59 @@ mod tests {
             (w - 16.0).abs() < 0.01,
             "expected 16.0 (2*8.0 heuristic), got {}",
             w
+        );
+    }
+
+    /// [JS-6] 공백(U+0020)의 폭은 글꼴 폭이 아니라 정규 공식 `4 × ⌊h/8⌋` HU 다(h = 글자 크기 HU).
+    ///
+    /// 맥 한글 PDF: 한글+공백만 있는 늘이지 않는 줄에서 h=1100 공백당 +1.94HU(54공백, 예측 +2.0) · h=1000 +0.18HU(예측 0) ·
+    /// h=1200 0 — 반각(h/2)보다 4HU 단위로 내린 값이다. 직접 증거: h=1500·장평 92 → 688HU(관측 평균 688.0, 9공백)·
+    /// h=1600·장평 96 → 768HU(정확). 글자 크기의 37.9% 가 h%8≠0(900·1100·1300·1500·1700 …).
+    #[test]
+    fn test_space_advance_follows_the_hancom_integer_formula() {
+        let m = EmbeddedTextMeasurer;
+        for family in ["", "함초롬바탕"] {
+            for size_hu in [900, 950, 1000, 1100, 1200, 1300, 1500, 1700] {
+                let style = TextStyle {
+                    font_family: family.to_string(),
+                    font_size: size_hu as f64 / 75.0,
+                    ratio: 1.0,
+                    ..Default::default()
+                };
+                let want_hu = 4 * (size_hu / 8);
+                let got_hu = m.estimate_text_width_exact(" ", &style) * 75.0;
+                assert!(
+                    (got_hu - want_hu as f64).abs() < 0.01,
+                    "{family:?} h={size_hu}: 공백 {got_hu:.2}HU, 한컴은 {want_hu}HU"
+                );
+            }
+        }
+    }
+
+    /// [JS-5] 자간 보정은 글자마다 `4 × MulDiv(⌊w/4⌋, 자간%, 100)` HU 다(w = 그 글자의 전진폭 HU, 절반은 0에서 멀어지게).
+    ///
+    /// 맥 한글 PDF 칠곡 p2 — h=1400·자간 −9% 한글+공백 25자(공백 5) 줄: 첫 글자 원점에서 마지막 글자 원점까지
+    /// **27348.1HU** = 한글 1272×19 + 공백 636×5. 한글 ⌊1400/4⌋×−9/100 = −31.5 → −32 → ×4 = −128 (실수 모형은 −126),
+    /// 공백 700HU(JS-6) ⌊700/4⌋×−9/100 = −15.75 → −16 → ×4 = −64 (실수 −63). 실수 모형 합 27391HU 는 43HU(0.43pt) 어긋난다.
+    /// 같은 식 검산: h=1700·자간 +4% 9공백 줄 정확, h=900·자간 −10% 27자 줄 0.0.
+    #[test]
+    fn test_letter_spacing_follows_the_hancom_integer_formula() {
+        let m = EmbeddedTextMeasurer;
+        // h=1400 → 18.667px, 자간 −9% → −1.68px
+        let style = TextStyle {
+            font_size: 1400.0 / 75.0,
+            letter_spacing: -0.09 * 1400.0 / 75.0,
+            ratio: 1.0,
+            ..Default::default()
+        };
+        // 한글 20 + 공백 5, 마지막 글자는 한글(원점까지의 거리에는 마지막 글자의 전진폭이 들지 않는다).
+        let text = "가나다라 가나다라 가나다라 가나다라 가나다 가";
+        assert_eq!(text.chars().count(), 25);
+        let positions = m.compute_char_positions(text, &style);
+        let origin_to_origin_hu = positions[24] * 75.0;
+        assert!(
+            (origin_to_origin_hu - 27348.0).abs() < 0.5,
+            "첫 글자 원점 → 마지막 글자 원점 {origin_to_origin_hu:.1}HU, 한컴은 27348HU"
         );
     }
 

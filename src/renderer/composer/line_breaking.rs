@@ -239,6 +239,10 @@ pub(crate) fn is_line_end_forbidden(ch: char) -> bool {
     )
 }
 
+/// 고정폭 빈칸 — HWP5 문자 컨트롤 31(0x1f)을 파서가 옮긴 U+2007(FIGURE SPACE).
+/// [LB-G03] 한컴은 이를 공백류(낱말 경계)로 센다.
+const FIXED_WIDTH_BLANK: char = '\u{2007}';
+
 /// 한글 음절/자모 여부 (옛한글 확장 자모 포함)
 fn is_hangul(ch: char) -> bool {
     ('\u{AC00}'..='\u{D7A3}').contains(&ch)       // 한글 음절
@@ -258,6 +262,26 @@ fn is_latin(ch: char) -> bool {
 fn is_cjk_ideograph(ch: char) -> bool {
     let lang = detect_lang_category(ch);
     lang == 2 || lang == 3 // Chinese or Japanese
+}
+
+/// [LB-G02] 글자 단위(bit7=1) 문단에서 `end_idx` 앞 글자가 숫자·기호·라틴이고 바로 다음 글자가 한글·한자이면
+/// 그 사이는 끊을 자리다 — 한컴은 폭이 넘친 비라틴 글자를 낱말 앞으로 되감지 않고 그 글자 앞에서 끊는다
+/// (`제15|조`·`/|기술`·`‧|조회`). 줄 끝 금칙(여는 괄호·통화 기호)과 줄 나눔을 막는 공백류 뒤는 제외한다.
+/// 어절 단위에서는 쓰지 않는다 — 같은 경계를 열면 한컴 저장 줄에서 고치는 1행보다 깨지는 행이 10배다.
+fn breaks_before_following_hangul(text_chars: &[char], end_idx: usize) -> bool {
+    let Some(&last) = end_idx.checked_sub(1).and_then(|i| text_chars.get(i)) else {
+        return false;
+    };
+    !is_hangul(last)
+        && !is_cjk_ideograph(last)
+        && !matches!(
+            last,
+            '\u{00A0}' | FIXED_WIDTH_BLANK | '\u{00AD}' | '\u{FEFF}' | '\u{2011}'
+        )
+        && !is_line_end_forbidden(last)
+        && text_chars
+            .get(end_idx)
+            .is_some_and(|next| is_hangul(*next) || is_cjk_ideograph(*next))
 }
 
 /// 문단 텍스트를 줄 나눔 토큰으로 분할한다.
@@ -364,8 +388,9 @@ fn tokenize_paragraph_with_regenerated_space_metric(
             continue;
         }
 
-        // 공백 (줄 바꿈 지점) — NonBreakingSpace(\u{00A0})는 제외
-        if ch == ' ' {
+        // 공백 (줄 바꿈 지점) — NonBreakingSpace(\u{00A0})는 제외.
+        // [LB-G03] 고정폭 빈칸(U+2007)은 공백류라 낱말 경계·끊을 자리다(폭은 그 글자의 전진폭).
+        if ch == ' ' || ch == FIXED_WIDTH_BLANK {
             let utf16_pos = if i < char_offsets.len() {
                 char_offsets[i]
             } else {
@@ -379,9 +404,14 @@ fn tokenize_paragraph_with_regenerated_space_metric(
                 12.0
             };
             let inline_width = inline_width_px_at(inline_controls, i);
+            let blank_advance = if ch == ' ' {
+                space_metric.space_advance(&ts)
+            } else {
+                estimate_text_width_unrounded(&ch.to_string(), &ts)
+            };
             tokens.push(BreakToken::Space {
                 idx: i,
-                width: space_metric.space_advance(&ts) + inline_width,
+                width: blank_advance + inline_width,
                 max_font_size: font_size,
                 has_inline_control: inline_width > 0.0,
             });
@@ -404,7 +434,7 @@ fn tokenize_paragraph_with_regenerated_space_metric(
 
                 while i < text_len {
                     let c = text_chars[i];
-                    if c == ' ' || c == '\n' || c == '\t' {
+                    if c == ' ' || c == '\n' || c == '\t' || c == FIXED_WIDTH_BLANK {
                         break;
                     }
                     // 한글이 아니고 라틴이면 다른 토큰으로 분리
@@ -589,7 +619,7 @@ fn tokenize_paragraph_with_regenerated_space_metric(
 
                 while i < text_len {
                     let c = text_chars[i];
-                    if c == ' ' || c == '\n' || c == '\t' {
+                    if c == ' ' || c == '\n' || c == '\t' || c == FIXED_WIDTH_BLANK {
                         break;
                     }
                     if !is_latin(c) && !is_lang_neutral(c) {
@@ -1268,6 +1298,12 @@ const LINE_BREAK_TOLERANCE_MAX_HWP: i32 = 50;
 /// 여유 1 HWPUNIT 당 상자 폭 — 38,640 / 50 ≈ 760.
 const LINE_BREAK_TOLERANCE_WIDTH_PER_HWP: i32 = 760;
 
+/// [LB-G06] 첫 줄에 남겨야 하는 최소 폭(HWPUNIT). `줄 상자 − 왼쪽 오프셋`이 이보다 좁으면 한컴은
+/// 오프셋을 0으로 둔다 — 들여쓰기 50000HU가 상자 22104HU에 걸린 문단 6개(`03a1a71f` «기업명 :»·«대표자 :»)가
+/// 한컴 저장 줄에서 한 줄이었다. 문서 옵션이 서 있으면 1mm(283HU)를 쓰는 갈래가 있으나 어느 쪽이 기본인지
+/// 오라클 행(두 문턱 모두 같은 결과)으로는 가르지 못해 1440HU를 쓴다.
+const FIRST_ROW_MIN_REMAINING_HWP: i32 = 1440;
+
 /// 상자 폭에 비례하는 줄바꿈 여유(HWPUNIT).
 #[inline]
 fn line_break_tolerance_hwp(box_width_hwp: i32) -> i32 {
@@ -1535,7 +1571,13 @@ fn fill_one_interval(
     let eff_w = |first: bool| -> i32 {
         if indent_px > 0.0 {
             if first {
-                to_hwp((available_width_px - indent_px).max(1.0))
+                // [LB-G06] 첫 줄에 남는 폭(`줄 상자 − 왼쪽 오프셋`)이 1440HU 미만이면 오프셋을 0으로 둔다.
+                // 종전에는 `max(…, 1px)` 로 줄 폭을 1px까지 줄여 글자마다 줄이 바뀌었다.
+                if to_hwp(available_width_px - indent_px) < FIRST_ROW_MIN_REMAINING_HWP {
+                    to_hwp(available_width_px)
+                } else {
+                    to_hwp((available_width_px - indent_px).max(1.0))
+                }
             } else {
                 to_hwp(available_width_px)
             }
@@ -1681,7 +1723,7 @@ fn fill_one_interval(
                 }
                 let space_hwp = to_hwp(*width);
                 let space_savings = condense_space_savings_hwp(space_hwp, condense_min_space);
-                if let Some(cut) = overflowing_space_cut(
+                if let Some(mut cut) = overflowing_space_cut(
                     cursor.line_start_idx,
                     *idx,
                     cursor.lw + space_hwp,
@@ -1690,6 +1732,25 @@ fn fill_one_interval(
                     *has_inline_control,
                 ) {
                     let absorbed = cut > *idx;
+                    // [LB-G05] 가득 찬 뒤 이어지는 공백은 줄 끝에 **둘까지** 남는다 — 공백 런의 첫 공백이
+                    // 곧바로 넘칠 때 다음 평범한 공백까지 같이 흡수한다(셋째부터 다음 줄 머리).
+                    // 한컴 저장 줄에서 머리 공백이 있는 줄 나눔 11개 중 9개가 줄 끝 공백 정확히 2개였다.
+                    // 런 한가운데서 넘친 둘째 공백은 이미 둘째라 그대로 둔다(총 셋이 되는 «무조건 +1»은
+                    // 오라클 A에서 4행을 고치고 5행을 깨뜨려 기각).
+                    let mut extra_tokens = 0usize;
+                    if absorbed
+                        && !(ti > 0 && matches!(tokens[ti - 1], BreakToken::Space { .. }))
+                        && matches!(
+                            tokens.get(ti + 1),
+                            Some(BreakToken::Space {
+                                has_inline_control: false,
+                                ..
+                            })
+                        )
+                    {
+                        cut += 1;
+                        extra_tokens = 1;
+                    }
                     let line = LineBreakResult {
                         start_idx: cursor.line_start_idx,
                         end_idx: cut,
@@ -1700,13 +1761,28 @@ fn fill_one_interval(
                         },
                         has_line_break: false,
                     };
+                    // [LB-G01] 문단 끝 표지는 새 줄을 만들지 않는다. 넘친 공백(들)을 흡수한 이 줄이 글의 마지막 줄이면
+                    // 남는 것은 표지뿐이라 빈 줄을 만들지 않고 이 줄로 문단을 끝낸다 — 맥 한글 12.30 저장 줄은 글이 상자를 꽉
+                    // 채운 문단의 끝 공백·표지를 마지막 줄에 그대로 둔다(다줄 문단 928개 중 «표지만 있는 마지막 줄»은 앞이 강제
+                    // 줄바꿈인 2건뿐, 오라클 29행 = 표지만 23 · 공백뿐 6). 강제 줄바꿈 뒤의 빈 마지막 줄은 한컴도 내므로
+                    // `LineBreak` 로 끝난 문단은 그대로다. 긴 공백 런은 줄 끝에 둘까지만 남고 셋째부터 다음 줄 머리가 된다.
+                    // 줄을 «다음 줄에 아무것도 없었다»는 None 으로 닫지 않고 ParagraphEnd 로 내야 프레임 경로가 문단을 버리지 않는다.
+                    if absorbed && ti + 1 + extra_tokens >= tokens.len() {
+                        cursor.finished = true;
+                        cursor.token_index = tokens.len();
+                        cursor.emitted_any = true;
+                        return Some(FilledInterval {
+                            line,
+                            termination: FillTermination::ParagraphEnd,
+                        });
+                    }
                     cursor.line_start_idx = cut;
                     cursor.lw = if absorbed { 0 } else { space_hwp };
                     cursor.line_space_savings = if absorbed { 0 } else { space_savings };
                     cursor.line_max_fs = if absorbed { 0.0 } else { *max_font_size };
                     cursor.is_first_line = false;
                     cursor.last_break_token_idx = None;
-                    cursor.token_index += 1;
+                    cursor.token_index += 1 + extra_tokens;
                     cursor.emitted_any = true;
                     return Some(FilledInterval {
                         line,
@@ -1825,7 +1901,7 @@ fn fill_one_interval(
                 let tail_all_line_start_forbidden = text_chars[*start_idx + 1..*end_idx]
                     .iter()
                     .all(|c| is_line_start_forbidden(*c));
-                let glyph_break_after = tail_all_line_start_forbidden && {
+                let glyph_break_after = (tail_all_line_start_forbidden && {
                     let c = text_chars[*start_idx];
                     if is_hangul(c) {
                         // [#2185] bit7=1 = 글자 단위 break 허용 (위 주석 참조)
@@ -1833,7 +1909,8 @@ fn fill_one_interval(
                     } else {
                         is_cjk_ideograph(c)
                     }
-                };
+                }) || (korean_break_unit == 1
+                    && breaks_before_following_hangul(text_chars, *end_idx));
                 if glyph_break_after && token_fits {
                     // 글자 모드의 후행 금칙 흡수분도 같은 "줄 끝 자리"로 본다.
                     //
@@ -1875,7 +1952,10 @@ fn fill_one_interval(
                                 has_line_break: false,
                             };
                             let mut next_start = cursor.last_break_char_idx;
-                            while next_start < text_chars.len() && text_chars[next_start] == ' ' {
+                            while next_start < text_chars.len()
+                                && (text_chars[next_start] == ' '
+                                    || text_chars[next_start] == FIXED_WIDTH_BLANK)
+                            {
                                 next_start += 1;
                             }
                             cursor.line_start_idx = next_start;
@@ -3718,6 +3798,38 @@ fn reflow_line_segs_impl(
     split_stale_cell_reflow: bool,
     object_line_font_basis: bool,
 ) -> bool {
+    let prefix_preserved = reflow_line_segs_unmerged(
+        para,
+        paragraph_box,
+        styles,
+        dpi,
+        preserve_prefix_for_edit,
+        split_stale_cell_reflow,
+        object_line_font_basis,
+    );
+    // [LB-G04] 문단 모양이 «한 줄로 입력»(속성2 bit0-1 = 1)이면 한컴은 폭이 모자라도 줄을 나누지 않고
+    // 강제 줄바꿈 사이마다 한 줄만 저장한다. 자동 줄나눔 줄은 앞 줄에 합친다(칸 속성의 같은 규칙과 한 함수).
+    if styles
+        .para_styles
+        .get(para.para_shape_id as usize)
+        .is_some_and(|style| style.line_wrap_squeeze)
+    {
+        super::merge_squeeze_line_segs(para);
+        // 줄을 합쳤으니 앞 줄을 그대로 둔 결과가 아니다.
+        return false;
+    }
+    prefix_preserved
+}
+
+fn reflow_line_segs_unmerged(
+    para: &mut Paragraph,
+    paragraph_box: ParagraphBox,
+    styles: &ResolvedStyleSet,
+    dpi: f64,
+    preserve_prefix_for_edit: Option<usize>,
+    split_stale_cell_reflow: bool,
+    object_line_font_basis: bool,
+) -> bool {
     // An impossible box publishes nothing, and this must be the first thing
     // that happens — before the memo invalidation below, which is already a
     // mutation.
@@ -4790,6 +4902,176 @@ mod fill_cursor_tests {
             vec![(0, 3), (3, 9), (9, 12)]
         );
     }
+
+    fn word(start_idx: usize, end_idx: usize, width: f64) -> BreakToken {
+        let n = end_idx - start_idx;
+        BreakToken::Text {
+            start_idx,
+            end_idx,
+            base_width: width,
+            width,
+            max_font_size: 12.0,
+            base_char_widths: vec![width / n as f64; n],
+            char_widths: vec![width / n as f64; n],
+        }
+    }
+
+    fn blank(idx: usize, width: f64) -> BreakToken {
+        BreakToken::Space {
+            idx,
+            width,
+            max_font_size: 12.0,
+            has_inline_control: false,
+        }
+    }
+
+    fn rows(lines: &[LineBreakResult]) -> Vec<(usize, usize)> {
+        lines.iter().map(|l| (l.start_idx, l.end_idx)).collect()
+    }
+
+    /// [LB-G01] 문단 끝의 공백은 상자를 넘어도 새 줄을 만들지 않는다.
+    ///
+    /// 맥 한글 12.30 이 저장한 줄 정보(오라클 29행: `c3fb5220 0/1560` 한컴 `[0]` ↔ 우리 `[0,9]`,
+    /// `b7ef0592 0/161` `[0]` ↔ `[0,39]` …)에서 한컴은 글이 상자를 꽉 채운 문단의 끝 공백·문단 끝
+    /// 표지를 마지막 줄에 그대로 두고, 우리는 «표지/공백만 있는» 줄을 한 줄 더 냈다.
+    #[test]
+    fn trailing_blanks_never_open_a_row_of_their_own() {
+        // 글이 상자(100px)를 꽉 채우고 끝 공백 둘(각 5px)이 넘친다 → 한컴은 한 줄.
+        let text_chars = "가나다라  ".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 4, 100.0), blank(4, 5.0), blank(5, 5.0)];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 6)]);
+
+        // 끝 공백이 하나여도 (표지만 남는 줄) 한 줄이다.
+        let text_chars = "가나다라 ".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 4, 100.0), blank(4, 5.0)];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 5)]);
+
+        // 공백만 있는 문단도 한 줄이다.
+        let text_chars = "   ".chars().collect::<Vec<_>>();
+        let tokens = vec![blank(0, 40.0), blank(1, 40.0), blank(2, 40.0)];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 3)]);
+    }
+
+    /// [LB-G01] 정정 — 긴 공백 런은 문단 끝에서도 줄바꿈한다: 가득 찬 뒤 줄 끝에는 공백이 둘까지만 남고 셋째부터는
+    /// 다음 줄 머리다(문단 끝 표지만이 새 줄을 만들지 않는다).
+    ///
+    /// 맥 한글 2020 이 저장한 `trailing-spaces-2020.hwp`: `Left 10` 뒤의 긴 공백 런이 «뒤따르는 낱말이 없어도» 두 줄로
+    /// 저장된다(둘째 줄 = 공백 29개). 꼬리 공백을 전부 마지막 줄에 얹던 첫 구현은 이 줄을 없애 `stored_column_width_
+    /// quantization` 이 빨갛게 됐다.
+    #[test]
+    fn a_long_trailing_space_run_still_wraps_after_two_blanks() {
+        let text_chars = "가나다라     ".chars().collect::<Vec<_>>();
+        let tokens = vec![
+            word(0, 4, 100.0),
+            blank(4, 5.0),
+            blank(5, 5.0),
+            blank(6, 5.0),
+            blank(7, 5.0),
+            blank(8, 5.0),
+        ];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 6), (6, 9)]);
+    }
+
+    /// [LB-G01] 짝 시험 — 낱말 사이 공백과 강제 줄바꿈 뒤의 빈 마지막 줄은 그대로다(한컴도 낸다:
+    /// 다줄 문단 928개 중 «표지만 있는 마지막 줄» 2건은 모두 앞이 LF).
+    #[test]
+    fn blanks_between_words_and_the_row_after_a_forced_break_are_kept() {
+        let text_chars = "가나다라 마".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 4, 100.0), blank(4, 5.0), word(5, 6, 20.0)];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 5), (5, 6)]);
+
+        let text_chars = "가나다라\n".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 4, 100.0), BreakToken::LineBreak { idx: 4 }];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 5), (5, 5)]);
+    }
+
+    /// [LB-G05] 가득 찬 뒤 이어지는 공백은 줄 끝에 둘까지 남고 셋째부터 다음 줄 머리로 간다.
+    ///
+    /// 한컴 저장 줄에서 머리 공백이 있는 줄 나눔 11개 중 9개가 줄 끝 공백 정확히 2개(나머지 2개는 3개 —
+    /// 앞 공백이 상자 안이라 넘침이 늦게 시작한 경우). 우리는 첫 번째 넘친 공백만 흡수해 둘째 공백이
+    /// 다음 줄 머리로 갔다(정제한 규칙: 두 표본 A 4행·B 4행 고침, 틀어짐 0).
+    #[test]
+    fn two_blanks_stay_at_the_row_end_when_the_first_one_overflows() {
+        let text_chars = "가나다라  마바".chars().collect::<Vec<_>>();
+        let tokens = vec![
+            word(0, 4, 100.0),
+            blank(4, 5.0),
+            blank(5, 5.0),
+            word(6, 8, 20.0),
+        ];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 6), (6, 8)]);
+
+        // 셋째 공백부터는 다음 줄 머리다.
+        let text_chars = "가나다라   마바".chars().collect::<Vec<_>>();
+        let tokens = vec![
+            word(0, 4, 100.0),
+            blank(4, 5.0),
+            blank(5, 5.0),
+            blank(6, 5.0),
+            word(7, 9, 20.0),
+        ];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 6), (6, 9)]);
+
+        // 첫 공백이 상자 안에 들면 둘째 공백이 넘친 것을 흡수해 이미 둘이다 — 셋이 되지 않는다.
+        let text_chars = "가나다  마바".chars().collect::<Vec<_>>();
+        let tokens = vec![
+            word(0, 3, 96.0),
+            blank(3, 2.0),
+            blank(4, 5.0),
+            word(5, 7, 20.0),
+        ];
+        let lines =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 0.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&lines), vec![(0, 5), (5, 7)]);
+    }
+
+    /// [LB-G06] 첫 줄에서 `줄 상자 − 왼쪽 오프셋`이 1440HU 미만이면 오프셋을 0으로 둔다.
+    ///
+    /// 맥 한글이 저장한 `03a1a71f`: 들여쓰기 50000HU(666.67px)가 상자 22104HU(294.72px)에 걸린
+    /// «기업명 :»·«대표자 :» 문단 6개가 한컴은 `[0]` 한 줄, 우리는 줄 폭을 1px로 줄여 글자마다 줄을 바꿨다.
+    #[test]
+    fn first_row_offset_is_dropped_when_it_leaves_less_than_1440_hu() {
+        let text_chars = "기업명 :".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 3, 45.0), blank(3, 5.0), word(4, 5, 6.0)];
+        let lines = collect_one_interval_at_a_time(
+            &tokens,
+            &text_chars,
+            22104.0 / 75.0,
+            50000.0 / 75.0,
+            48.0,
+            0,
+            0,
+            0,
+            true,
+        );
+        assert_eq!(rows(&lines), vec![(0, 5)]);
+
+        // 경계: 남는 폭이 20px(1500HU)이면 오프셋을 지키고, 18.4px(1380HU)이면 버린다.
+        let text_chars = "가나".chars().collect::<Vec<_>>();
+        let tokens = vec![word(0, 2, 40.0)];
+        let kept =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 80.0, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&kept), vec![(0, 1), (1, 2)]);
+        let dropped =
+            collect_one_interval_at_a_time(&tokens, &text_chars, 100.0, 81.6, 48.0, 0, 0, 0, true);
+        assert_eq!(rows(&dropped), vec![(0, 2)]);
+    }
 }
 
 #[cfg(test)]
@@ -4953,6 +5235,153 @@ mod frame_reflow_tests {
                 projected
             })
             .collect()
+    }
+
+    /// [LB-G03] 고정폭 빈칸(HWP5 문자 컨트롤 31 → U+2007)은 끊을 자리다.
+    ///
+    /// 도약 골든의 `1. 문제인식<FW>(Problem)` 제목 칸 4행: 한컴이 저장한 줄은 FWSP **뒤**에서 갈린다
+    /// (`[0, 8]` — 둘째 줄이 FWSP 다음 글자 `(`에서 시작). 우리는 FWSP를 «기타 문자»로 앞뒤 낱말에 붙여
+    /// `[0, 3, 10]`처럼 엉뚱한 자리에서 갈랐다(오라클 4행 중 3행, B 4행 고침, 틀어짐 0).
+    #[test]
+    fn fixed_width_blank_is_a_break_opportunity_after_it() {
+        let styles = styles(&[16.0]);
+        let text = "문제인식\u{2007}(Problem)";
+        let chars = text.chars().collect::<Vec<_>>();
+        let para = paragraph(
+            text,
+            vec![CharShapeRef {
+                start_pos: 0,
+                char_shape_id: 0,
+            }],
+        );
+        for korean_break_unit in [0u8, 1u8] {
+            let tokens = tokenize_paragraph(
+                &chars,
+                &para.char_offsets,
+                &para.char_shapes,
+                &styles,
+                0,
+                korean_break_unit,
+            );
+            let fwsp_token = tokens
+                .iter()
+                .position(|t| matches!(t, BreakToken::Space { idx: 4, .. }))
+                .expect("U+2007 is a Space token");
+            let BreakToken::Space {
+                width: fwsp_width,
+                has_inline_control: false,
+                ..
+            } = tokens[fwsp_token]
+            else {
+                unreachable!()
+            };
+            assert!(
+                (fwsp_width - 4.0).abs() < 0.01,
+                "고정폭 빈칸은 0.25em = 4px: {fwsp_width}"
+            );
+            let hangul_width: f64 = tokens[..fwsp_token]
+                .iter()
+                .map(|t| match t {
+                    BreakToken::Text { base_width, .. } => *base_width,
+                    _ => 0.0,
+                })
+                .sum();
+            // 상자는 `문제인식` + FWSP까지만 담는다.
+            let lines = fill_lines(
+                &tokens,
+                &chars,
+                hangul_width + fwsp_width + 1.0,
+                0.0,
+                48.0,
+                korean_break_unit,
+                0,
+                &[],
+                0,
+                true,
+                None,
+            );
+            assert_eq!(lines[0].start_idx, 0);
+            assert!(
+                lines.len() >= 2 && lines[1].start_idx == 5,
+                "kbu={korean_break_unit}: 둘째 줄은 FWSP 다음(5)에서 시작: {:?}",
+                lines
+                    .iter()
+                    .map(|l| (l.start_idx, l.end_idx))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// 토큰 앞 `count` 개의 폭 합(px) — 시험 상자 폭을 «이 토큰까지 + 1px» 로 잡는 데 쓴다.
+    fn token_width_sum(tokens: &[BreakToken], count: usize) -> f64 {
+        tokens[..count]
+            .iter()
+            .map(|token| match token {
+                BreakToken::Text { base_width, .. }
+                | BreakToken::Space {
+                    width: base_width, ..
+                } => *base_width,
+                _ => 0.0,
+            })
+            .sum()
+    }
+
+    fn broken_rows(text: &str, korean_break_unit: u8, fit_tokens: usize) -> Vec<(usize, usize)> {
+        let styles = styles(&[16.0]);
+        let chars = text.chars().collect::<Vec<_>>();
+        let para = paragraph(
+            text,
+            vec![CharShapeRef {
+                start_pos: 0,
+                char_shape_id: 0,
+            }],
+        );
+        let tokens = tokenize_paragraph(
+            &chars,
+            &para.char_offsets,
+            &para.char_shapes,
+            &styles,
+            0,
+            korean_break_unit,
+        );
+        let lines = fill_lines(
+            &tokens,
+            &chars,
+            token_width_sum(&tokens, fit_tokens) + 1.0,
+            0.0,
+            48.0,
+            korean_break_unit,
+            0,
+            &[],
+            0,
+            true,
+            None,
+        );
+        lines.iter().map(|l| (l.start_idx, l.end_idx)).collect()
+    }
+
+    /// [LB-G02] 글자 단위(bit7=1) 문단은 숫자·기호 **뒤 한글 앞**에서도 줄을 끊는다.
+    ///
+    /// 한컴 저장 줄에서 글자 단위 비공백 끊김 421개 중 21개(숫자|한글 7 · 기호|한글 9 · ASCII|한글 5)가
+    /// `제15|조`·`/|기술`·`‧|조회` 꼴이다 — 폭이 넘친 비라틴 글자는 낱말 앞으로 되감지 않고 그 앞에서 끊는다.
+    /// 우리는 끊을 자리가 «한글 글자 뒤»뿐이라 `제|15조` 처럼 낱말째 옮겼다.
+    #[test]
+    fn character_unit_mode_breaks_between_a_digit_or_symbol_and_the_next_hangul() {
+        // `연구 제15조` — 상자가 `연구 제15` 까지만 담는다(토큰 연·구·공백·제·15 다섯).
+        // 한컴은 `제15|조` — 우리는 `제|15조` 로 옮겼다.
+        assert_eq!(broken_rows("연구 제15조", 1, 5), vec![(0, 6), (6, 7)]);
+        // `연구/기술` — 상자가 `연구/` 까지만 담는다(토큰 연·구·/ 셋).
+        assert_eq!(broken_rows("연구/기술", 1, 3), vec![(0, 3), (3, 5)]);
+    }
+
+    /// [LB-G02] 짝 시험 — 어절 단위(bit7=0)는 같은 경계를 끊을 자리로 열지 않는다(한컴 저장 줄에서
+    /// 열면 A표본 1행 고치고 10행 깨뜨린다). 줄 끝 금칙(여는 괄호) 뒤도 끊지 않는다.
+    #[test]
+    fn word_unit_mode_and_line_end_forbidden_keep_the_old_boundaries() {
+        // 어절 모드: `제15조` 한 낱말이 통째로 다음 줄로 간다.
+        assert_eq!(broken_rows("가나 제15조", 0, 4), vec![(0, 2), (3, 7)]);
+        // 글자 모드라도 여는 괄호 뒤(줄 끝 금칙)는 끊는 자리가 아니다.
+        assert_eq!(broken_rows("가나(다라", 1, 3), vec![(0, 2), (2, 5)]);
     }
 
     #[test]

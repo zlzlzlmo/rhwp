@@ -1083,7 +1083,7 @@ pub(crate) fn trailing_space_width_after_last_inline_object(
         if stop_on_underline && ts.underline != crate::renderer::UnderlineType::None {
             break;
         }
-        width += estimate_text_width(&" ".repeat(trailing_spaces), &ts);
+        width += estimate_text_width_exact(&" ".repeat(trailing_spaces), &ts);
         if trailing_spaces != run_char_count {
             break;
         }
@@ -1739,6 +1739,36 @@ fn converge_cell_overflow_char_spacing(
     extra.min(0.0)
 }
 
+/// [JS-1] 줄 정렬 범위의 끝 글자(후행 공백을 뺀 마지막 가시 글자)가 자기 자간 때문에 더(덜) 나아간 폭의 부호 반대값.
+///
+/// = 자간 없는 전진폭 − 자간을 얹은 전진폭 (음수 자간이면 양수, 양수 자간이면 음수, 자간 0이면 0).
+/// 정렬이 쓰는 «범위 폭» = 줄 자연 폭 + 이 값. 맥 한글 PDF 에서 양쪽 비끝줄의 마지막 글자 우변은 판 오른쪽 끝에
+/// 정확히 닿는다(칠곡 p2 538.44~538.56pt) — 끝 글자 자간이 범위 밖이어서다. 탭·개체 자리 끝은 보정하지 않는다.
+fn range_end_glyph_spacing_credit(
+    comp_line: &ComposedLine,
+    styles: &ResolvedStyleSet,
+    tab_width: f64,
+) -> f64 {
+    for run in comp_line.runs.iter().rev() {
+        if let Some(last_visible) = run.text.chars().rev().find(|c| *c != ' ') {
+            if last_visible == '\t' || last_visible == '\u{FFFC}' {
+                return 0.0;
+            }
+            let mut with_spacing = run.text_style(styles);
+            with_spacing.default_tab_width = tab_width;
+            if with_spacing.letter_spacing == 0.0 {
+                return 0.0;
+            }
+            let glyph = last_visible.to_string();
+            let spaced_width = estimate_text_width_exact(&glyph, &with_spacing);
+            with_spacing.letter_spacing = 0.0;
+            let ink_advance = estimate_text_width_exact(&glyph, &with_spacing);
+            return ink_advance - spaced_width;
+        }
+    }
+    0.0
+}
+
 /// [Task #2067] 정렬(양쪽/배분/나눔)·오버플로우·셀 underflow 에 따른 여분 간격 계산.
 /// 반환 = (extra_word_sp, extra_char_sp, extra_dash_sp). Task #352 dash leader 분배 포함.
 #[allow(clippy::too_many_arguments)]
@@ -1761,29 +1791,19 @@ fn compute_line_extra_spacing(
     total_text_width: f64,
     available_width: f64,
     tab_width: f64,
+    // [JS-1] 줄에 글자처럼 취급한 개체(TAC)가 있으면 가시 끝 글자가 정렬 범위의 끝이 아니다 — 끝 글자 자간 몫을 두지 않는다.
+    has_inline_objects: bool,
 ) -> (f64, f64, f64) {
-    // 음수 자간은 마지막 글자의 advance도 줄이지만 실제 glyph 잉크 폭은 줄이지 않는다.
-    // 나눔정렬에서 advance만 셀 끝에 맞추면 정상 폭으로 그린 마지막 glyph가 clip을
-    // 넘어가므로, 마지막 가시 글자의 음수 자간만 시각 점유 폭에 되돌린다.
-    let trailing_glyph_ink_overhang = || -> f64 {
-        for run in comp_line.runs.iter().rev() {
-            if let Some(last_visible) = run.text.chars().rev().find(|c| *c != ' ') {
-                if last_visible == '\t' || last_visible == '\u{FFFC}' {
-                    return 0.0;
-                }
-                let mut with_spacing = run.text_style(styles);
-                with_spacing.default_tab_width = tab_width;
-                if with_spacing.letter_spacing >= 0.0 {
-                    return 0.0;
-                }
-                let glyph = last_visible.to_string();
-                let spaced_width = estimate_text_width(&glyph, &with_spacing);
-                with_spacing.letter_spacing = 0.0;
-                let ink_advance = estimate_text_width(&glyph, &with_spacing);
-                return (ink_advance - spaced_width).max(0.0);
-            }
+    // [JS-1] 정렬 범위의 끝 글자는 자간을 받지 않는다(맥 한글 12.30) — 범위 폭 = 자연 폭 + 끝 글자 자간 몫.
+    // 음수 자간은 마지막 글자의 advance도 줄이지만 글리프 잉크는 줄이지 않으므로, 자간을 뺀 폭을 기준으로 분배해야
+    // 글리프 오른쪽 끝이 줄 끝에 닿는다(나눔은 종전부터 이 보정을 가졌고, 양쪽·배분도 같은 규칙이다).
+    let range_end_spacing_credit = || {
+        // 나눔(Split)은 종전부터 개체가 있어도 이 보정을 가졌다 — 그대로 둔다.
+        if has_inline_objects && alignment != Alignment::Split {
+            0.0
+        } else {
+            range_end_glyph_spacing_credit(comp_line, styles, tab_width)
         }
-        0.0
     };
 
     // Task #352: 라인 내 dash leader (3+ 연속 '-') 글자 수 카운트.
@@ -1860,7 +1880,7 @@ fn compute_line_extra_spacing(
                 if let Some(last_run) = comp_line.runs.last() {
                     let mut ts = last_run.text_style(styles);
                     ts.default_tab_width = tab_width;
-                    estimate_text_width(&" ".repeat(trailing_spaces), &ts)
+                    estimate_text_width_exact(&" ".repeat(trailing_spaces), &ts)
                 } else {
                     0.0
                 }
@@ -1902,30 +1922,39 @@ fn compute_line_extra_spacing(
             .count()
             .min(trailing_space_limit);
         let visible_count = all_chars.len() - trailing_spaces;
-        let interior_spaces = all_chars[..visible_count]
+        // [JS-2] 정렬 범위는 첫 비공백 글자부터다 — 줄머리 공백(공백으로 들여쓴 문단 첫 줄)은 안쪽 공백이 아니다.
+        let leading_spaces = all_chars[..visible_count]
+            .iter()
+            .take_while(|c| **c == ' ')
+            .count();
+        let interior_spaces = all_chars[leading_spaces..visible_count]
             .iter()
             .filter(|c| **c == ' ')
             .count();
         let leader_dashes = count_dash_leaders(&all_chars[..visible_count]);
         if interior_spaces > 0 {
-            // 후행 공백 폭 계산
+            // 후행 공백 폭 계산 — [JS-4] 줄 자연 폭(`total_text_width`)이 반올림하지 않은 폭이므로 같은 잣대로 잰다.
+            // 정수 px 로 올려 재면 공백이 6.667px(10pt)인 줄은 slack 이 0.333px(25HU) 커져 오른쪽 끝이 판 밖으로 나간다.
             let trailing_width = if trailing_spaces > 0 {
                 if let Some(last_run) = comp_line.runs.last() {
                     let mut ts = last_run.text_style(styles);
                     ts.default_tab_width = tab_width;
                     let trailing_str: String = " ".repeat(trailing_spaces);
-                    estimate_text_width(&trailing_str, &ts)
+                    estimate_text_width_exact(&trailing_str, &ts)
                 } else {
                     0.0
                 }
             } else {
                 0.0
             };
-            let split_ink_overhang = if alignment == Alignment::Split {
-                trailing_glyph_ink_overhang()
-            } else {
-                0.0
-            };
+            // [JS-1] 끝 글자 자간 몫. 합성 줄바꿈(말미 공백을 줄 안에 두는 모드)은 가시 끝 글자가 범위 끝이 아니라
+            // 종전대로 나눔만 보정한다.
+            let split_ink_overhang =
+                if alignment == Alignment::Split || !renders_synthetic_wrap_trailing_space {
+                    range_end_spacing_credit()
+                } else {
+                    0.0
+                };
             // A fresh soft-wrap consumes the separator before starting the next
             // row, but LineSeg can encode only the next row's start. Composition
             // therefore leaves that separator at the end of this row. The run
@@ -1955,8 +1984,15 @@ fn compute_line_extra_spacing(
                 (0.0, 0.0, 0.0)
             } else {
                 // 양쪽 정렬: 단어 간격 분배 (또는 음수 슬랙 시 압축)
-                let raw_ews = slack / rendered_space_slots as f64;
-                let space_base_w = estimate_text_width(
+                // [JS-2] 정정: 줄이는 줄(slack < 0)은 줄머리 공백도 줄이는 공백으로 센다 — 늘이는 쪽만 근거가 있고, 줄이는 쪽은
+                // 공백 수에 비례하는 압축 하한(−50%)이 용량이라 줄머리 공백을 빼면 같은 줄이 덜 줄어 상자를 더 넘는다.
+                let space_slots = if slack < 0.0 {
+                    rendered_space_slots + leading_spaces
+                } else {
+                    rendered_space_slots
+                };
+                let raw_ews = slack / space_slots as f64;
+                let space_base_w = estimate_text_width_exact(
                     " ",
                     &resolved_to_text_style(
                         styles,
@@ -1970,7 +2006,7 @@ fn compute_line_extra_spacing(
                 // 실폰트보다 넓으면 공백 -50% 클램프만으로는 잔여 초과가 남아 우측
                 // 테두리에서 클리핑된다. 공백-없는 분기와 동일하게 잔여 음수 슬랙을
                 // 자간으로 흡수한다 (narrow glyph 역진은 #229 per-char 클램프가 방어).
-                let leftover = slack - ews * rendered_space_slots as f64;
+                let leftover = slack - ews * space_slots as f64;
                 let ecs = if in_cell && leftover < 0.0 && total_char_count > 1 && !has_tabs {
                     let avg_char_w = total_text_width / total_char_count as f64;
                     let min_ecs = -avg_char_w * 0.5;
@@ -2013,7 +2049,8 @@ fn compute_line_extra_spacing(
             }
         } else if total_char_count > 1 {
             // 양쪽 정렬이지만 공백 없음 (일본어/숫자 등):
-            let slack = available_width - total_text_width;
+            // [JS-1] 끝 글자 자간은 범위 밖이다.
+            let slack = available_width - (total_text_width + range_end_spacing_credit());
             if justify_spaces_only && slack > 0.0 {
                 // [#4516] 머리말/꼬리말 예외로만 justify 된 마지막 줄은 한컴처럼
                 // **공백만** 벌린다. 공백 없는 줄(영문 문서번호 등)에 양수 slack 을
@@ -2072,7 +2109,7 @@ fn compute_line_extra_spacing(
                 if let Some(last_run) = comp_line.runs.last() {
                     let mut ts = last_run.text_style(styles);
                     ts.default_tab_width = tab_width;
-                    estimate_text_width(&" ".repeat(trailing_spaces), &ts)
+                    estimate_text_width_exact(&" ".repeat(trailing_spaces), &ts)
                 } else {
                     0.0
                 }
@@ -2080,7 +2117,9 @@ fn compute_line_extra_spacing(
                 0.0
             };
             let visible_width = total_text_width - trailing_width;
-            let raw = (available_width - visible_width) / (visible_count - 1) as f64;
+            // [JS-1] 끝 글자 자간은 범위 밖이다 — 글리프 오른쪽 끝이 줄 끝에 닿는다.
+            let raw = (available_width - (visible_width + range_end_spacing_credit()))
+                / (visible_count - 1) as f64;
             if suppress_cell_overflow_spacing && raw < 0.0 {
                 (0.0, 0.0, 0.0)
             } else {
@@ -5708,7 +5747,13 @@ impl LayoutEngine {
             );
             // «한 줄로 입력»(SQUEEZE) 칸 줄은 넘치는 폭을 글자 사이(N-1곳)에 고르게 줄인다 — 한/글은 바닥 없이
             // 줄여 글자가 겹쳐도 한 줄을 지킨다(맥 한글 12.30: c3fb5220 채움 5쪽 매출 비중 칸, 자간 −8.04pt/12pt).
-            let squeeze_line = self.squeeze_cell_line.get()
+            // [LB-G04] 문단 모양이 «한 줄로 입력»(속성2 bit0-1 = 1)인 칸 문단도 같은 규칙이다 — 칸 속성 없이 문단만
+            // 그렇게 저장된 라벨 칸을 한컴이 자간을 줄여 한 줄에 넣는다.
+            let para_line_wrap_squeeze = styles
+                .para_styles
+                .get(composed.para_style_id as usize)
+                .is_some_and(|style| style.line_wrap_squeeze);
+            let squeeze_line = (self.squeeze_cell_line.get() || para_line_wrap_squeeze)
                 && cell_ctx.is_some()
                 && total_char_count > 1
                 && !has_tabs
@@ -5755,6 +5800,7 @@ impl LayoutEngine {
                     total_text_width,
                     available_width,
                     tab_width,
+                    !line_tac_offsets_for_width.is_empty(),
                 )
             };
 
@@ -5854,7 +5900,9 @@ impl LayoutEngine {
             // 좌측 이탈, 한글 PDF x=229.56pt 는 공백 제외 중심). 반례 셋으로
             // 한정한다: ① 셀 내부는 한글이 말미 공백을 포함해 정렬(issue_1285
             // 수험번호 TAC 우단 = 셀 inner 우단 오라클 앵커) — cell_ctx 부재.
-            // ② soft-wrap 지점의 줄끝 공백은 포함 — 문단 마지막 줄 한정.
+            // ② [JS-3] soft-wrap 지점의 줄끝 공백도 뺀다 — 종전엔 «문단 마지막 줄 한정»이라 가운데 비끝줄이
+            // 공백 반폭만큼 왼쪽에 섰다(맥 한글 PDF 62줄: 시작 x 중앙값 −247HU = 10pt 공백 500HU 의 절반).
+            // 한컴은 범위 끝을 뒤에서 걷어 끝줄이든 아니든 줄 끝 공백을 폭에서 제외한다(오른쪽 정렬과 같은 규칙).
             // ③ TAC 컨트롤이 있는 줄은 공백이 시각적 말미가 아니다 —
             // line_tac_offsets_for_width 비어 있을 때 한정. ④ 전부 공백인
             // 줄(밑줄 친 서명란)과 밑줄 스타일 말미 공백은 보이는 콘텐츠라
@@ -5865,7 +5913,6 @@ impl LayoutEngine {
             // 한/글도 칸 안에서 말미 공백을 빼고 정렬한다(3079571 취소신청서 1쪽,
             // '신청하는' + 공백 5칸 — 한/글 대비 -15.02px = 5 × 6.008 ÷ 2).
             let center_excludes_trailing_ws = alignment == Alignment::Center
-                && is_last_line_of_para
                 && line_tac_offsets_for_width.is_empty()
                 && comp_line
                     .runs
@@ -5923,6 +5970,27 @@ impl LayoutEngine {
             } else {
                 0.0
             };
+            // [JS-1] 가운데·오른쪽 정렬의 범위 폭도 끝 글자 자간을 뺀다(맥 한글 PDF: 가운데 끝줄 자간<0 시작 x 일치
+            // 23.3% → 예측 67.7%). 개체·탭·칸 맞춤 줄과, 줄 끝 공백이 범위에서 안 빠진 줄(가시 끝 글자가 범위 끝이
+            // 아니다)은 종전대로 둔다.
+            let range_end_credit = if matches!(alignment, Alignment::Center | Alignment::Right)
+                && !center_packed_cell_label_as_right
+                && line_tac_offsets_for_width.is_empty()
+                && !has_tabs
+                && extra_char_sp == 0.0
+                && !squeeze_line
+                && (trailing_ws_width > 0.0
+                    || comp_line
+                        .runs
+                        .iter()
+                        .rev()
+                        .find_map(|run| run.text.chars().next_back())
+                        != Some(' '))
+            {
+                range_end_glyph_spacing_credit(comp_line, styles, tab_width)
+            } else {
+                0.0
+            };
             let x_start = match alignment {
                 Alignment::Center => {
                     let align_offset = if center_packed_cell_label_as_right {
@@ -5931,7 +5999,8 @@ impl LayoutEngine {
                         0.0
                     } else {
                         (available_width
-                            - (effective_text_width - trailing_ws_width - terminal_tracking_width))
+                            - (effective_text_width - trailing_ws_width - terminal_tracking_width
+                                + range_end_credit))
                             .max(0.0)
                             / 2.0
                     };
@@ -5950,7 +6019,8 @@ impl LayoutEngine {
                         + inline_offset
                         + num_x_offset
                         + (available_width
-                            - (effective_text_width - trailing_ws_width - terminal_tracking_width))
+                            - (effective_text_width - trailing_ws_width - terminal_tracking_width
+                                + range_end_credit))
                             .max(0.0)
                 }
                 _ => x_base + inline_offset + num_x_offset, // Left, Justify, Split, Distribute(분배중)
@@ -6792,6 +6862,8 @@ impl LayoutEngine {
             }
             counts
         };
+        // [JS-2] 줄머리 공백 영역 — 첫 비공백 글자를 가진 run 에서 닫힌다.
+        let mut leading_space_region_open = true;
         for (run_idx, run) in comp_line.runs.iter().enumerate() {
             // 조판부호: 이 run 시작 위치 이전의 도형 마커를 먼저 삽입
             for (smi, (spos, stext)) in shape_markers.iter().enumerate() {
@@ -7004,9 +7076,31 @@ impl LayoutEngine {
             }
             text_style.line_x_offset = x - col_area.x;
             text_style.extra_word_spacing = extra_word_sp;
+            // [JS-2] 양쪽 정렬이 늘이는 공백은 첫 비공백 글자 뒤 것뿐이다 — 줄머리 공백은 자연 폭을 지킨다.
+            let leading_spaces_in_run = if leading_space_region_open {
+                let run_text = effective_text_for_metrics(run);
+                let spaces = run_text.chars().take_while(|c| *c == ' ').count();
+                if spaces < run_text.chars().count() {
+                    leading_space_region_open = false;
+                }
+                spaces
+            } else {
+                0
+            };
+            text_style.leading_space_skip = if extra_word_sp > 0.0 {
+                leading_spaces_in_run
+            } else {
+                0
+            };
             text_style.extra_char_spacing = extra_char_sp;
             // 음수 자간은 «한 줄로 입력» 칸에서 squeeze 분기만 만든다(넘치면 늘 그 분기다).
-            text_style.squeeze_unclamped = self.squeeze_cell_line.get() && extra_char_sp < 0.0;
+            text_style.squeeze_unclamped = (self.squeeze_cell_line.get()
+                || (cell_ctx.is_some()
+                    && styles
+                        .para_styles
+                        .get(composed.para_style_id as usize)
+                        .is_some_and(|style| style.line_wrap_squeeze)))
+                && extra_char_sp < 0.0;
             text_style.extra_dash_advance = extra_dash_sp;
             // [Task #874 #2] composer lang split (예: "F3→Alt+I" → "F3"/"→"/"Alt+I")
             // 으로 auto_tab_right post-tab 콘텐츠가 후속 run 으로 흩어진 경우, 현재
@@ -9841,6 +9935,7 @@ mod issue_2809_split_alignment_tests {
             30.0,
             90.0,
             40.0,
+            false,
         );
 
         assert!((extra_word - 30.0).abs() < 0.001);
@@ -9879,6 +9974,7 @@ mod issue_2809_split_alignment_tests {
             natural_width,
             available_width,
             40.0,
+            false,
         );
         let mut distributed_style = text_style;
         distributed_style.extra_word_spacing = extra_word;
@@ -9920,6 +10016,7 @@ mod issue_2809_split_alignment_tests {
             total_text_width,
             90.0,
             40.0,
+            false,
         );
 
         let mut distributed_style = text_style.clone();
@@ -9971,6 +10068,7 @@ mod issue_2809_split_alignment_tests {
             62.5,
             481.8,
             40.0,
+            false,
         );
         assert_eq!(extra_word, 0.0);
         assert_eq!(extra_char, 0.0);
@@ -9995,8 +10093,477 @@ mod issue_2809_split_alignment_tests {
             62.5,
             481.8,
             40.0,
+            false,
         );
         assert!(extra_char_mid > 0.0);
+    }
+}
+
+/// 양쪽·배분 정렬의 «정렬 범위» 폭 — 맥 한글 12.30 의 줄 정렬 규칙(JS-*)을 한컴이 그린 PDF 에서 잰 숫자로 고정한다.
+#[cfg(test)]
+mod alignment_range_tests {
+    use super::compute_line_extra_spacing;
+    use crate::model::style::Alignment;
+    use crate::renderer::composer::{ComposedLine, ComposedTextRun};
+    use crate::renderer::layout::text_measurement::{
+        estimate_text_width_exact, resolved_to_text_style,
+    };
+    use crate::renderer::style_resolver::{ResolvedCharStyle, ResolvedStyleSet};
+
+    fn styles(font_size: f64, letter_spacing: f64) -> ResolvedStyleSet {
+        ResolvedStyleSet {
+            char_styles: vec![ResolvedCharStyle {
+                font_size,
+                letter_spacing,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn line(text: &str) -> ComposedLine {
+        ComposedLine {
+            runs: vec![ComposedTextRun {
+                text: text.to_string(),
+                ..Default::default()
+            }],
+            line_height: 1120,
+            baseline_distance: 952,
+            segment_width: 6972,
+            column_start: 0,
+            line_spacing: 560,
+            has_line_break: false,
+            char_start: 0,
+        }
+    }
+
+    /// 분배된 여분을 얹어 잰 폭(px, 반올림 없음).
+    fn width_with(styles: &ResolvedStyleSet, text: &str, extra_word: f64, extra_char: f64) -> f64 {
+        let mut style = resolved_to_text_style(styles, 0, 0);
+        style.extra_word_spacing = extra_word;
+        style.extra_char_spacing = extra_char;
+        estimate_text_width_exact(text, &style)
+    }
+
+    /// 양쪽 정렬(안쪽 공백 있음) 한 줄의 (여분 단어, 여분 글자). `avail` 은 줄 상자 폭(px).
+    fn justify(styles: &ResolvedStyleSet, text: &str, avail: f64) -> (f64, f64) {
+        let natural = width_with(styles, text, 0.0, 0.0);
+        let (extra_word, extra_char, _) = compute_line_extra_spacing(
+            &line(text),
+            usize::MAX,
+            styles,
+            Alignment::Justify,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            text.chars().count(),
+            natural,
+            avail,
+            40.0,
+            false,
+        );
+        (extra_word, extra_char)
+    }
+
+    /// [JS-4] 줄 끝 공백 폭은 정수 px 로 반올림하지 않는다.
+    ///
+    /// 맥 한글 PDF(후행 공백이 있는 양쪽 비끝줄, 자간 0·장평 100): 오른쪽 끝이 10pt 에서 +25HU · 11pt 에서 −23HU 어긋난다 —
+    /// 10pt 공백 500HU 는 6.667px 인데 7px 로 올려 재서 slack 이 25HU(0.333px) 커진 만큼 줄이 판 밖으로 나간다.
+    /// 한컴은 공백 폭을 HU 정수로 센다. 줄 자연 폭(`total_text_width`)은 이미 반올림하지 않으므로 같은 잣대여야 한다.
+    #[test]
+    fn trailing_space_is_not_rounded_to_whole_pixels() {
+        let styles = styles(40.0 / 3.0, 0.0); // 10pt = 13.333px, 공백 6.667px
+        let text = "가 나 다 ";
+        let natural = width_with(&styles, text, 0.0, 0.0);
+        let avail = natural + 30.0;
+        let (extra_word, extra_char) = justify(&styles, text, avail);
+
+        // 보이는 글자(후행 공백 제외)가 줄 상자 폭을 정확히 채운다.
+        let rendered = width_with(&styles, "가 나 다", extra_word, extra_char);
+        assert!(
+            (rendered - avail).abs() < 0.001,
+            "오른쪽 끝이 줄 끝에서 {:.3}px 벗어났다 ({rendered} ↔ {avail})",
+            rendered - avail
+        );
+    }
+
+    /// 마지막 글자의 자간을 뺀 «잉크 쪽» 전진폭 차 — 글리프 오른쪽 끝에서 펜이 더 가는(음수 자간이면 덜 가는) 양.
+    fn last_glyph_spacing(styles: &ResolvedStyleSet, glyph: &str) -> f64 {
+        let ink = width_with(&styles_without_spacing(styles), glyph, 0.0, 0.0);
+        width_with(styles, glyph, 0.0, 0.0) - ink
+    }
+
+    fn styles_without_spacing(styles: &ResolvedStyleSet) -> ResolvedStyleSet {
+        let mut plain = styles.clone();
+        for char_style in &mut plain.char_styles {
+            char_style.letter_spacing = 0.0;
+        }
+        plain
+    }
+
+    /// [JS-1] 줄에 글자처럼 취급한 개체(TAC)가 있으면 가시 끝 글자는 정렬 범위의 끝이 아니다 — 끝 글자 자간 몫을 두지 않는다.
+    /// (개체가 줄 끝을 잡은 줄은 종전 폭 그대로 분배한다.)
+    #[test]
+    fn justified_line_with_an_inline_object_keeps_the_last_letter_spacing_in_its_width() {
+        let styles = styles(16.0, -1.6);
+        let text = "가 나 다";
+        let natural = width_with(&styles, text, 0.0, 0.0);
+        let avail = natural + 30.0;
+        let (extra_word, extra_char, _) = compute_line_extra_spacing(
+            &line(text),
+            usize::MAX,
+            &styles,
+            Alignment::Justify,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            text.chars().count(),
+            natural,
+            avail,
+            40.0,
+            true,
+        );
+        let rendered = width_with(&styles, text, extra_word, extra_char);
+        assert!(
+            (rendered - avail).abs() < 0.001,
+            "개체가 있는 줄은 펜 끝이 줄 끝이다: {rendered} ↔ {avail}"
+        );
+    }
+
+    /// [JS-1] 정렬 범위의 끝 글자는 자간을 받지 않는다 — 줄 오른쪽 끝에 자간 없는 글리프가 정확히 닿는다.
+    ///
+    /// 맥 한글 PDF(칠곡 p2, 양쪽 비끝줄 일곱): 마지막 글자 우변이 538.44~538.56pt 로 일정하다(= 판 오른쪽 끝).
+    /// 우리는 끝 글자의 음수 자간까지 폭에 넣어 `|자간|%×글자폭`(자간 −10%·12pt 줄 +121HU) 만큼 판 밖으로 나갔다.
+    /// 양수 자간은 반대로 안쪽에 선다(자간>0 14줄 중앙값 −11HU).
+    #[test]
+    fn justified_line_ends_flush_with_the_last_glyph_ignoring_its_letter_spacing() {
+        for letter_spacing in [-1.6, 0.64] {
+            // 12pt = 16px, 자간 −10% / +4%
+            let styles = styles(16.0, letter_spacing);
+            let text = "가 나 다";
+            let avail = width_with(&styles, text, 0.0, 0.0) + 30.0;
+            let (extra_word, extra_char) = justify(&styles, text, avail);
+            let rendered = width_with(&styles, text, extra_word, extra_char);
+            // 펜이 끝 글자 자간만큼 더(덜) 간 자리를 빼면 글리프 오른쪽 끝이 줄 상자 끝이다.
+            let glyph_right = rendered - last_glyph_spacing(&styles, "다");
+            assert!(
+                (glyph_right - avail).abs() < 0.001,
+                "자간 {letter_spacing}: 끝 글리프 우변이 줄 끝에서 {:.3}px 벗어났다",
+                glyph_right - avail
+            );
+        }
+    }
+
+    /// 한 줄짜리 합성 문단을 본문 단에 깔아 첫 TextRun 의 (bbox.x, bbox.width, 단 왼쪽, 단 폭)을 돌려준다(px).
+    fn laid_out_first_run(
+        alignment: Alignment,
+        letter_spacing: f64,
+        text: &str,
+    ) -> (f64, f64, f64, f64) {
+        laid_out_first_run_in_lines(alignment, letter_spacing, text, &[0])
+    }
+
+    fn laid_out_first_run_in_lines(
+        alignment: Alignment,
+        letter_spacing: f64,
+        text: &str,
+        line_starts: &[u32],
+    ) -> (f64, f64, f64, f64) {
+        let run = laid_out_run(alignment, letter_spacing, text, line_starts);
+        (run.x, run.width, run.col_left, run.col_width)
+    }
+
+    /// 깔아 놓은 첫 TextRun — 위치·폭과 그 줄의 스타일(렌더러가 글자 위치를 다시 재는 데 쓰는 것).
+    struct LaidOutRun {
+        x: f64,
+        width: f64,
+        text: String,
+        style: crate::renderer::TextStyle,
+        col_left: f64,
+        col_width: f64,
+    }
+
+    /// `line_starts` 는 줄마다 시작 UTF-16 위치(저장 LINE_SEG 의 text_start) — 첫 줄의 첫 TextRun 을 돌려준다.
+    fn laid_out_run(
+        alignment: Alignment,
+        letter_spacing: f64,
+        text: &str,
+        line_starts: &[u32],
+    ) -> LaidOutRun {
+        use crate::model::page::{ColumnDef, PageDef};
+        use crate::model::paragraph::{LineSeg, Paragraph};
+        use crate::renderer::composer::compose_paragraph;
+        use crate::renderer::layout::LayoutEngine;
+        use crate::renderer::page_layout::PageLayoutInfo;
+        use crate::renderer::pagination::{ColumnContent, PageContent, PageItem};
+        use crate::renderer::render_tree::{RenderNode, RenderNodeType};
+        use crate::renderer::style_resolver::ResolvedParaStyle;
+
+        fn first_run(node: &RenderNode) -> Option<(f64, f64, String, crate::renderer::TextStyle)> {
+            if let RenderNodeType::TextRun(run) = &node.node_type {
+                return Some((
+                    node.bbox.x,
+                    node.bbox.width,
+                    run.text.clone(),
+                    run.style.clone(),
+                ));
+            }
+            node.children.iter().find_map(first_run)
+        }
+
+        let engine = LayoutEngine::with_default_dpi();
+        let page_def = PageDef {
+            width: 59528,
+            height: 84188,
+            margin_left: 8504,
+            margin_right: 8504,
+            margin_top: 5669,
+            margin_bottom: 4252,
+            margin_header: 4252,
+            margin_footer: 4252,
+            margin_gutter: 0,
+            ..Default::default()
+        };
+        let layout = PageLayoutInfo::from_page_def_default(&page_def, &ColumnDef::default());
+        let paragraphs = vec![Paragraph {
+            char_count: text.chars().count() as u32 + 1,
+            char_offsets: (0..text.chars().count() as u32).collect(),
+            text: text.to_string(),
+            para_shape_id: 0,
+            line_segs: line_starts
+                .iter()
+                .map(|text_start| LineSeg {
+                    text_start: *text_start,
+                    line_height: 1200,
+                    baseline_distance: 960,
+                    segment_width: 42520,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }];
+        let composed: Vec<_> = paragraphs.iter().map(compose_paragraph).collect();
+        let styles = ResolvedStyleSet {
+            char_styles: vec![ResolvedCharStyle {
+                font_size: 16.0,
+                letter_spacing,
+                ..Default::default()
+            }],
+            para_styles: vec![ResolvedParaStyle {
+                alignment,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let page_content = PageContent {
+            page_index: 0,
+            page_number: 0,
+            page_number_restarted: false,
+            section_index: 0,
+            layout,
+            column_contents: vec![ColumnContent {
+                column_index: 0,
+                start_height: 0.0,
+                endnote_flow: false,
+                items: vec![PageItem::FullParagraph { para_index: 0 }],
+                zone_layout: None,
+                zone_y_offset: 0.0,
+                wrap_around_paras: Vec::new(),
+                used_height: 0.0,
+                wrap_anchors: std::collections::HashMap::new(),
+                overlay_continuations: Vec::new(),
+                overlay_cuts: Vec::new(),
+                inline_placements: Default::default(),
+                inline_flow_plans: Default::default(),
+                paragraph_float_placements: Default::default(),
+            }],
+            active_header: None,
+            active_footer: None,
+            page_number_pos: None,
+            page_hide: None,
+            footnotes: Vec::new(),
+            active_master_page: None,
+            extra_master_pages: Vec::new(),
+            ladder_band_tables: Vec::new(),
+        };
+        let tree = engine.build_render_tree(
+            &page_content,
+            &paragraphs,
+            &paragraphs,
+            &paragraphs,
+            &composed,
+            &styles,
+            &Default::default(),
+            &[],
+            None,
+            &[],
+            None,
+            0,
+            &[],
+        );
+        let (x, width, text, style) = first_run(&tree.root).expect("TextRun 하나");
+        let dpi = 96.0;
+        LaidOutRun {
+            x,
+            width,
+            text,
+            style,
+            col_left: 8504.0 * dpi / 7200.0,
+            col_width: 42520.0 * dpi / 7200.0,
+        }
+    }
+
+    /// [JS-1] 가운데·오른쪽 정렬도 같은 범위 폭을 쓴다 — 끝 글자 자간을 뺀 «잉크 블록»이 가운데/오른쪽에 선다.
+    ///
+    /// 맥 한글 PDF: 가운데 끝줄(자간<0·끝 글자 한글, n=133)은 시작 x ±12HU 일치율이 23.3% → 예측 67.7%(|자간|/2 반영),
+    /// 오른쪽 끝줄 자간<0(n=5)은 중앙값 +48HU 어긋난다(자간 0은 +8.5HU).
+    #[test]
+    fn center_and_right_alignment_place_the_ink_block_without_the_last_letter_spacing() {
+        for letter_spacing in [-1.6, 0.64] {
+            let styles = styles(16.0, letter_spacing);
+            let text = "가나다라마";
+            let credit = -last_glyph_spacing(&styles, "마"); // 잉크 − 자간을 얹은 전진폭
+
+            let (x, width, col_left, col_width) =
+                laid_out_first_run(Alignment::Right, letter_spacing, text);
+            assert!(
+                (x + width + credit - (col_left + col_width)).abs() < 0.01,
+                "오른쪽 정렬 자간 {letter_spacing}: 끝 글리프 우변이 단 끝에서 {:.3}px 벗어났다",
+                x + width + credit - (col_left + col_width)
+            );
+
+            let (x, width, col_left, col_width) =
+                laid_out_first_run(Alignment::Center, letter_spacing, text);
+            let block_center = x + (width + credit) / 2.0;
+            assert!(
+                (block_center - (col_left + col_width / 2.0)).abs() < 0.01,
+                "가운데 정렬 자간 {letter_spacing}: 잉크 블록 중심이 단 중심에서 {:.3}px 벗어났다",
+                block_center - (col_left + col_width / 2.0)
+            );
+        }
+    }
+
+    /// [JS-3] 가운데 정렬은 끝줄이 아니어도 줄 끝 공백을 폭에서 뺀다.
+    ///
+    /// 맥 한글 PDF(가운데 비끝줄 71개 중 줄 끝 공백이 있는 62개): 시작 x 가 공백 반폭만큼 왼쪽으로 어긋난다 —
+    /// 중앙값 −247HU(10pt 공백 500HU 의 절반 −250) · 크기별 −198(8pt)·−249(10pt)·−274(11pt)·−324(13pt). 반 공백 예측을
+    /// 더하면 ±12HU 일치율 3.6% → 69.6%(n=56). 한컴은 범위 끝을 뒤에서 걷어 줄 끝 공백을 제외한다(끝줄이든 아니든).
+    #[test]
+    fn centered_soft_wrapped_line_excludes_its_trailing_space() {
+        let styles = styles(16.0, 0.0);
+        // 첫 줄 `가나다 `(저장 줄은 줄바꿈 공백을 앞 줄 끝에 둔다) · 둘째 줄 `라마바`.
+        let (x, _width, col_left, col_width) =
+            laid_out_first_run_in_lines(Alignment::Center, 0.0, "가나다 라마바", &[0, 4]);
+        let visible = width_with(&styles, "가나다", 0.0, 0.0);
+        let expected_x = col_left + (col_width - visible) / 2.0;
+        assert!(
+            (x - expected_x).abs() < 0.01,
+            "줄 끝 공백이 가운데 정렬 폭에 들어갔다: x={x:.3} 기대 {expected_x:.3} (반 공백 {:.3}px 어긋남)",
+            x - expected_x
+        );
+    }
+
+    /// [JS-2] 양쪽 정렬은 줄머리 공백을 늘이지 않는다 — 정렬 범위는 첫 비공백 글자부터다.
+    ///
+    /// 맥 한글 PDF(03a1a71f p9 첫 줄): 공백으로 들여쓴 문단의 앞 공백 진행폭이 자연폭 552HU 인데 같은 줄 낱말 사이
+    /// 공백은 672HU 로 늘어난다. 앞 공백 있는 양쪽 비끝줄 119줄은 전부 문단 첫 줄이고, 우리는 앞 공백도 늘여
+    /// 첫 글자가 앞 공백 1칸당 +50~60HU(2칸 +105 · 3칸 이상 +162HU) 오른쪽에 섰다.
+    #[test]
+    fn justified_line_does_not_stretch_its_leading_spaces() {
+        use crate::renderer::layout::text_measurement::compute_char_positions;
+
+        // 첫 줄 `␠␠가 나 다␠`(앞 공백 2 · 안쪽 공백 2 · 줄바꿈 공백 1) · 둘째 줄 `라마바사`. 16px 글자라 공백 8px.
+        let run = laid_out_run(Alignment::Justify, 0.0, "  가 나 다 라마바사", &[0, 8]);
+        let positions = compute_char_positions(&run.text, &run.style);
+        // 앞 공백 둘은 자연 폭(8px × 2) 그대로다.
+        assert!(
+            (positions[2] - 16.0).abs() < 0.001,
+            "앞 공백이 늘어났다: 첫 글자 x = {:.3}px (자연 16px)",
+            positions[2]
+        );
+        // 늘어난 몫은 안쪽 공백 둘이 나눠 갖고, 끝 글리프 우변이 줄 끝에 닿는다(`다` 다음 = 위치 7).
+        assert!(
+            (run.x + positions[7] - (run.col_left + run.col_width)).abs() < 0.01,
+            "끝 글리프 우변이 줄 끝에서 {:.3}px 벗어났다",
+            run.x + positions[7] - (run.col_left + run.col_width)
+        );
+    }
+
+    /// [JS-2] 정정 — 줄이 상자보다 **넓어 줄여야 할 때**는 줄머리 공백도 줄이는 공백으로 센다.
+    ///
+    /// JS-2 의 근거(맥 한글 PDF)는 늘이는 줄(L ≥ 0)뿐이다. 줄이는 쪽은 우리 압축 하한(공백 −50%)이 공백 수에 비례하는 용량이라,
+    /// 줄머리 공백을 빼면 같은 줄이 덜 줄어 상자를 더 넘는다 — HWP3 변환 샘플(hwp3-sample10-hwpx) 5쪽에서 용지 밖 줄이
+    /// 49 → 54건으로 늘었다(JS-2 를 끄면 모두 사라진다). 한컴의 넘침 압축은 글자 틈까지 줄이는 규칙(JS-11, 근거 없음)이라
+    /// 거기까지는 모르고, 이 갈래에서는 종전 몫을 지킨다.
+    #[test]
+    fn overfull_justified_line_still_compresses_its_leading_spaces() {
+        let styles = styles(16.0, 0.0);
+        let text = "  가 나 다"; // 앞 공백 2 · 안쪽 공백 2 — 자연 폭 80px
+        let avail = width_with(&styles, text, 0.0, 0.0) - 12.0; // 12px 넘친다(공백 −50% 하한은 칸당 −4px)
+        let (extra_word, extra_char) = justify(&styles, text, avail);
+        assert!(extra_word < 0.0);
+        // 그릴 때 줄머리 공백을 건너뛰는 쪽은 여분이 양수일 때뿐이다(`leading_space_skip`).
+        let mut style = resolved_to_text_style(&styles, 0, 0);
+        style.extra_word_spacing = extra_word;
+        style.extra_char_spacing = extra_char;
+        style.leading_space_skip = if extra_word > 0.0 { 2 } else { 0 };
+        let rendered = estimate_text_width_exact(text, &style);
+        assert!(
+            (rendered - avail).abs() < 0.001,
+            "넘치는 줄이 {:.3}px 덜 줄었다 (몫 {extra_word:.3}px, 하한 −4px)",
+            rendered - avail
+        );
+    }
+
+    /// [JS-1] 배분(DISTRIBUTE) 줄도 같다 — 한컴은 글자 틈 N−1 곳에 고르게 나누고 끝 글자 자간은 없다.
+    /// 김천시 p4 자간 −14% 줄: 마지막 글자 +149.9HU 판 밖(예측 140HU).
+    #[test]
+    fn distributed_line_ends_flush_with_the_last_glyph_ignoring_its_letter_spacing() {
+        let styles = styles(16.0, -2.24); // 자간 −14%
+        let text = "가나다라";
+        let natural = width_with(&styles, text, 0.0, 0.0);
+        let avail = natural + 40.0;
+        let (_, extra_char, _) = compute_line_extra_spacing(
+            &line(text),
+            usize::MAX,
+            &styles,
+            Alignment::Distribute,
+            false,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            text.chars().count(),
+            natural,
+            avail,
+            40.0,
+            false,
+        );
+        // 추가 간격은 모든 글자 뒤에 붙는다 — 끝 글자 뒤 몫은 그려지지 않는다.
+        let glyph_right = width_with(&styles, text, 0.0, extra_char)
+            - extra_char
+            - last_glyph_spacing(&styles, "라");
+        assert!(
+            (glyph_right - avail).abs() < 0.001,
+            "끝 글리프 우변이 줄 끝에서 {:.3}px 벗어났다",
+            glyph_right - avail
+        );
     }
 }
 
@@ -10005,7 +10572,9 @@ mod issue_4657_distribute_alignment_tests {
     use super::compute_line_extra_spacing;
     use crate::model::style::Alignment;
     use crate::renderer::composer::{ComposedLine, ComposedTextRun};
-    use crate::renderer::layout::text_measurement::{estimate_text_width, resolved_to_text_style};
+    use crate::renderer::layout::text_measurement::{
+        estimate_text_width, estimate_text_width_exact, resolved_to_text_style,
+    };
     use crate::renderer::style_resolver::ResolvedStyleSet;
 
     fn line(text: &str) -> ComposedLine {
@@ -10043,6 +10612,7 @@ mod issue_4657_distribute_alignment_tests {
             text_width,
             avail,
             40.0,
+            false,
         );
         assert_eq!(extra_word, 0.0);
         assert_eq!(extra_dash, 0.0);
@@ -10070,7 +10640,8 @@ mod issue_4657_distribute_alignment_tests {
         let styles = ResolvedStyleSet::default();
         let mut ts = resolved_to_text_style(&styles, 0, 0);
         ts.default_tab_width = 40.0;
-        let space_w = estimate_text_width(" ", &ts);
+        // 줄 자연 폭(`total_text_width`)과 같은 잣대 — 반올림하지 않은 공백 폭이다(JS-4·JS-6).
+        let space_w = estimate_text_width_exact(" ", &ts);
         let avail = 368.0;
         let visible_w = 52.5;
         let extra = distribute_extra("기관명 : ", 6, visible_w + space_w, avail);

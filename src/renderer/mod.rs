@@ -249,6 +249,10 @@ pub struct TextStyle {
     pub inline_tabs: Vec<[u16; 7]>,
     /// 양쪽 정렬용: 공백 문자당 추가 간격 (px)
     pub extra_word_spacing: f64,
+    /// [JS-2] 양쪽 정렬 범위는 첫 비공백 글자부터다 — 이 텍스트 **맨 앞의 공백 런** 중 처음 이 개수만큼은
+    /// `extra_word_spacing` 을 받지 않고 자연 폭을 그대로 가진다(줄머리 들여쓰기 공백). 0 이면 모든 공백이 받는다.
+    #[serde(skip)]
+    pub leading_space_skip: usize,
     /// 배분/나눔 정렬용: 글자당 추가 간격 (px)
     pub extra_char_spacing: f64,
     /// «한 줄로 입력»(`lineWrap=SQUEEZE`) 칸 줄 — 음수 자간을 글자 폭 절반에서 멈추지 않는다. 한/글은 글자가 겹쳐도
@@ -448,6 +452,7 @@ impl Default for TextStyle {
             tab_leaders: Vec::new(),
             inline_tabs: Vec::new(),
             extra_word_spacing: 0.0,
+            leading_space_skip: 0,
             extra_char_spacing: 0.0,
             squeeze_unclamped: false,
             extra_dash_advance: 0.0,
