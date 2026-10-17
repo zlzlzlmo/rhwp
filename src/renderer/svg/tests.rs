@@ -316,8 +316,9 @@ fn test_svg_draw_text_superscript_adjusts_baseline_and_size() {
         },
     );
     let output = renderer.output();
-    assert!(output.contains("font-size=\"14\""));
-    assert!(output.contains("y=\"94\""));
+    // 맥 한글 12.30: 크기 20×0.64=12.8, 기준선 20×0.44=8.8 위(100−8.8=91.2).
+    assert!(output.contains("font-size=\"12.8\""));
+    assert!(output.contains("y=\"91.2\""));
 }
 
 /// 주어진 글리프를 담은 `<text>` 줄에서 `textLength` 값을 뽑아낸다.
@@ -359,10 +360,10 @@ fn text_x_of(output: &str, glyph: &str) -> f64 {
 
 #[test]
 fn test_svg_draw_text_script_scales_text_length_by_glyph_size() {
-    // [#2771] 첨자 글리프는 본문의 0.7 배 크기로 그려진다. 그런데 폭 맞춤에 쓰는
-    // textLength 가 본문(base) advance 그대로면 lengthAdjust="spacingAndGlyphs"
-    // 가 0.7 배 글리프를 본문 폭까지 되늘려 1/0.7 ≈ 1.43 배 가로 확대가 난다.
-    // → textLength 도 0.7 배여야 한다.
+    // [#2771] 첨자 글리프는 본문의 0.64 배 크기로 그려진다(맥 한글 12.30). 그런데 폭 맞춤에
+    // 쓰는 textLength 가 배치 advance(0.7 배, #5756) 그대로면 lengthAdjust="spacingAndGlyphs"
+    // 가 0.64 배 글리프를 0.7 배 폭까지 되늘려 9% 가로 확대가 난다.
+    // → textLength 는 글리프 자연 폭(본문의 0.64 배)이어야 한다.
     let base_style = TextStyle {
         font_size: 20.0,
         font_family: "돋움".to_string(),
@@ -388,12 +389,12 @@ fn test_svg_draw_text_script_scales_text_length_by_glyph_size() {
         renderer.begin_page(800.0, 600.0);
         renderer.draw_text("1", 10.0, 100.0, &style);
         let script_length = text_length_of(renderer.output(), "1");
-        // [#5756] 이후 첨자 advance 는 측정 단계에서 0.7 배 글꼴로 계산된다 —
-        // 글자 폭이 픽셀 반올림을 거치므로 정확 0.7 배 대신 반올림 오차(≤0.05px)를
-        // 허용한다.
+        // [#5756] 이후 첨자 advance 는 측정 단계에서 0.7 배 글꼴로 계산되고, 글리프는 0.64 배
+        // 로 그려지므로 fit 목표 폭은 0.7×(0.64/0.7) = 본문의 0.64 배다 — 글자 폭이 픽셀
+        // 반올림을 거치므로 정확 0.64 배 대신 반올림 오차(≤0.05px)를 허용한다.
         assert!(
-            (script_length - base_length * 0.7).abs() < 0.05,
-            "첨자 textLength 는 본문의 0.7 배여야 함: base={base_length}, script={script_length}"
+            (script_length - base_length * 0.64).abs() < 0.05,
+            "첨자 textLength 는 본문의 0.64 배여야 함: base={base_length}, script={script_length}"
         );
     }
 }

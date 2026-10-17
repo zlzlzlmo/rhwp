@@ -56,14 +56,16 @@ fn canvas_font_setup_preserves_positioned_painter_contract() {
     };
     let font = CanvasTextFont::for_positioned_text(&s, 100.0);
     let family = rhwp::renderer::canvas_font_family_chain("HCR Batang");
-    assert_eq!(font.descriptor(), format!("italic bold 12.600px {family}"));
+    // 첨자 그리기 크기는 맥 한글 12.30 기준 0.64 배(20 × 0.64 × √0.81 = 11.52),
+    // 기준선은 위 0.44em(100 − 8.8) · 아래 0.12em(100 + 2.4).
+    assert_eq!(font.descriptor(), format!("italic bold 11.520px {family}"));
     assert_eq!(
         font.old_hangul_descriptor(),
-        format!("italic bold 12.600px 'Source Han Serif K Old Hangul', {family}")
+        format!("italic bold 11.520px 'Source Han Serif K Old Hangul', {family}")
     );
-    near(font.draw_size(), 12.6);
+    near(font.draw_size(), 11.52);
     near(font.horizontal_scale(), 0.9);
-    near(font.baseline(), 94.0);
+    near(font.baseline(), 91.2);
     let sub = CanvasTextFont::for_positioned_text(
         &TextStyle {
             superscript: false,
@@ -72,7 +74,7 @@ fn canvas_font_setup_preserves_positioned_painter_contract() {
         },
         100.0,
     );
-    near(sub.baseline(), 103.0);
+    near(sub.baseline(), 102.4);
     assert_eq!(sub.descriptor(), font.descriptor());
 }
 

@@ -2154,12 +2154,14 @@ export class CanvasKitLayerRenderer {
     const effectPaints: SkPaint[] = [];
     let fontSize = baseFontSize;
     let baselineShift = 0;
+    // 첨자: 맥 한글 12.30 기준 글자 크기 × 0.64, 기준선 위 0.44em / 아래 0.12em
+    // (Rust `SCRIPT_DRAW_SCALE`·`SUPERSCRIPT_RISE_EM`·`SUBSCRIPT_DROP_EM` 과 같은 값).
     if (style.superscript) {
-      fontSize = baseFontSize * 0.7;
-      baselineShift -= baseFontSize * 0.3;
+      fontSize = baseFontSize * 0.64;
+      baselineShift -= baseFontSize * 0.44;
     } else if (style.subscript) {
-      fontSize = baseFontSize * 0.7;
-      baselineShift += baseFontSize * 0.15;
+      fontSize = baseFontSize * 0.64;
+      baselineShift += baseFontSize * 0.12;
     }
     const placementMatrix = this.affineToCanvasKitMatrix(op.placement?.runToPage);
     const originX = placementMatrix ? 0 : op.bbox.x;

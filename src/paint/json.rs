@@ -3660,12 +3660,13 @@ mod tests {
 
         let value: Value = serde_json::from_str(&tree.to_json()).expect("valid layer JSON");
         let ops = value["root"]["ops"].as_array().expect("leaf ops");
-        assert_eq!(ops[1]["fontSize"], 14.0);
-        assert_eq!(ops[1]["baseline"], 14.0);
+        // 맥 한글 12.30 첨자: 크기 20×0.64=12.8, 기준선 20 − 20×0.44 = 11.2.
+        assert_eq!(ops[1]["fontSize"], 12.8);
+        assert_eq!(ops[1]["baseline"], 11.2);
         assert_eq!(ops[1]["leadersComplete"], true);
         let decoration = &ops[2]["decoration"];
-        assert_eq!(decoration["fontSize"], 14.0);
-        assert_eq!(decoration["baseline"], 14.0);
+        assert_eq!(decoration["fontSize"], 12.8);
+        assert_eq!(decoration["baseline"], 11.2);
         assert_eq!(decoration["positions"], ops[0]["displayPositions"]);
         assert_eq!(decoration["positionsComplete"], true);
         // 밑줄 굵기: 맥 한글 규칙 round(39 × 크기HU ÷ 1000) HU — 첨자로 줄이기 전 20px(=1500HU)
