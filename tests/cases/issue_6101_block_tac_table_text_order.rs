@@ -27,12 +27,13 @@ fn load(sample: &str) -> DocumentCore {
 #[test]
 fn issue_6101_table_after_control_text_renders_and_table_stays_left() {
     let core = load(FIREFIGHTER);
-    // 한글 2020 은 11쪽. rhwp 는 본 수정 전후 모두 12쪽(+1 은 별도 흐름 축) —
-    // 회귀 감지용 핀.
+    // 한글 2020 은 11쪽. rhwp 는 본 수정 전후 12쪽(+1 은 별도 흐름 축)이었으나, 맥 한글 정합 3차
+    // (줄 나눔·정렬 B1: 끝 공백·정렬 분배 / 줄 높이 B2)로 한 줄이 줄어 한글과 같은 11쪽이 됐다 —
+    // 개선 방향의 핀(회귀 감지용).
     assert_eq!(
         core.page_count(),
-        12,
-        "쪽수 핀(한글 11, 잔여 +1 은 별도 축)"
+        11,
+        "쪽수 핀(한글 11 = 일치)"
     );
 
     let svg = core.render_page_svg_native(6).expect("page 7 svg");
