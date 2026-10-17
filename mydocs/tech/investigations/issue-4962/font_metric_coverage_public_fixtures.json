@@ -28,14 +28,13 @@
         "metric-surrogate": 0
       },
       "widthSources": {
-        "embeddedMetric": 7328,
+        "embeddedMetric": 7348,
         "figureSpace": 6,
-        "heuristicFullwidth": 327,
-        "heuristicHalfwidth": 20,
-        "metricHalfSpace": 3193,
+        "heuristicFullwidth": 307,
+        "metricHalfSpace": 3213,
         "tabAdvance": 220
       },
-      "aggregateHash": "2e9c54e33ce1cefdbfd7cf065eed6a6b760f486f61be1e2d9276c9b40c0e489e",
+      "aggregateHash": "245e37d1548a8506df8858d8c9cb17a62787423a137f5248da468cd83b7d8080",
       "legacyProjectionHash": "97afa99ba9b0385dd4c32471da4ec9d3a142d1d236794bd8a2dcb42e2ce36b61"
     },
     {
@@ -63,14 +62,13 @@
         "metric-surrogate": 0
       },
       "widthSources": {
-        "embeddedMetric": 7328,
+        "embeddedMetric": 7348,
         "figureSpace": 6,
-        "heuristicFullwidth": 327,
-        "heuristicHalfwidth": 20,
-        "metricHalfSpace": 3193,
+        "heuristicFullwidth": 307,
+        "metricHalfSpace": 3213,
         "tabAdvance": 220
       },
-      "aggregateHash": "09340a179d1e47ef7e940b15a01ad5897bc724ff434e5c80c8bee749dee83443",
+      "aggregateHash": "b5a7d464e7b213f21b37e8a7c6c0c21573841c91dd0f69f7fc19e75e4108e2ab",
       "legacyProjectionHash": "5c19f49c9e78ff9ed0f4a38b059b5d9fe42f3c92014de6c1f217e1aac07e0612"
     },
     {

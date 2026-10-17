@@ -435,6 +435,10 @@ fn classify_decision(
     relation_evidence_status: Option<&str>,
 ) -> Result<CoverageClassification, HwpError> {
     let metric_entry = decision.metric.map(|metric| metric.entry_index);
+    // 폭 표에 없는 글꼴을 한컴 기본 글꼴(함초롬돋움) 폭으로 잰 글자(FS-03)도 계측은 «글꼴 없음»이다.
+    if decision.metric.is_some_and(|metric| metric.face_fallback) {
+        return Ok(CoverageClassification::Category("face-miss"));
+    }
     match decision.width_source {
         "metricMiss" | "metricCharacterMiss" => Err(coverage_error(format!(
             "internal-only widthSource reached aggregate: {}",

@@ -112,6 +112,9 @@ pub(crate) struct MetricLookupDecision<'a> {
     pub(crate) bold_fallback: bool,
     pub(crate) match_kind: MetricMatchKind,
     pub(crate) entry_index: usize,
+    /// 요청한 글꼴이 표에 없어 한컴 기본 글꼴(함초롬돋움)의 폭으로 대신 쟀다(맥 한글 12.30 · FS-03).
+    /// 폭은 표를 따르지만 계측은 «글꼴 없음(face-miss)»으로 남긴다 — 분류기가 이 표시를 먼저 본다.
+    pub(crate) face_fallback: bool,
 }
 
 /// Canonical font rule projection에서 metric alias와 W2 ruleId를 함께 해소한다.
@@ -229,6 +232,7 @@ pub(crate) fn find_metric_decision<'a>(
         bold_fallback: selected.bold_fallback,
         match_kind: selected.match_kind,
         entry_index: selected.entry_index,
+        face_fallback: false,
     })
 }
 

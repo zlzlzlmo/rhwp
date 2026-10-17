@@ -1237,6 +1237,10 @@ fn measure_char_width_embedded_decision_for_font<'a>(
         (!is_generic_css_family(primary_name))
             .then(|| font_metrics_data::find_metric_decision(HANCOM_DEFAULT_FONT, bold, italic))
             .flatten()
+            .map(|decision| font_metrics_data::MetricLookupDecision {
+                face_fallback: true,
+                ..decision
+            })
     });
     let Some(mm) = found else {
         return EmbeddedWidthDecision {

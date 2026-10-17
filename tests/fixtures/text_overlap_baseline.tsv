@@ -144,7 +144,9 @@ task1725/text_footnote_tail_overpagination.hwp	30
 task1725/text_footnote_tail_overpagination.hwpx	26
 task1768/distribution_doc.hwpx	1
 task2070/1130000-201900011_D0150004-1-002_2017년기준 시장구조조사.hwp	48
-task2097/21217935_simsa_jipyo.hwp	48
+task2093/1192000_hydrogen_policy_research.hwp	1
+# task2097/21217935 48 -> 49: 맑은 고딕 굵게의 advance 가 보통과 같아져(맥 한글 12.30 · FM-4) 굵은 숫자·괄호가 좁아진 칸에서 이웃 글 한 쌍이 1px 겹친다. 폭은 맥 PDF 쪽으로 간 것이다.
+task2097/21217935_simsa_jipyo.hwp	49
 task2097/75544_pii_bunseok.hwpx	2
 task2279/36404953_gyeoljae.hwpx	1
 # #7226: 걸침 전용 행의 이중 소유를 없애 이 문서의 겹침이 68 → 39 로 줄었고(devel 236a601da),

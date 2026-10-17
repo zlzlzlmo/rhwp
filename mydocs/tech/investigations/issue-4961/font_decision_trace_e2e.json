@@ -73,7 +73,7 @@
         "recordsEmitted": 41,
         "recordsOmitted": 0
       },
-      "expectedLayoutHash": "be1f0f138c05fcf76835301f39416bc59a703b4334c7c567cfdd292a100692b3"
+      "expectedLayoutHash": "1c0f5c96fd49dd022276170d93192253d4eebdf8054d878d3fdaf62fda35663d"
     },
     {
       "id": "document-substitute-hwpx",
@@ -87,7 +87,7 @@
         "recordsEmitted": 41,
         "recordsOmitted": 0
       },
-      "expectedLayoutHash": "afad2c488912750ed12134620357e79df349cd5f3d21cbeac945c75ce0f2a6c8"
+      "expectedLayoutHash": "dd10a90493f72945065bbf2369dbf2fb213e4e3672c490ed664c818c4f344c9a"
     }
   ],
   "profiles": [
@@ -134,9 +134,9 @@
         "substFont": "HCR Batang",
         "normalizedFace": "KoPubWorld돋움체 Light",
         "layoutStepKind": "documentSubstFont",
-        "metricMatchKind": "none",
-        "metricCharacterMatch": "notApplicable",
-        "widthSource": "heuristicHalfwidth"
+        "metricMatchKind": "exact",
+        "metricCharacterMatch": "hit",
+        "widthSource": "embeddedMetric"
       }
     }
   ],

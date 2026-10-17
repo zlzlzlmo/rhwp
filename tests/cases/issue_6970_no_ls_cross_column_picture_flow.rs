@@ -103,7 +103,9 @@ fn issue_6970_empty_wrap_lane_does_not_justify_final_heading() {
     }
     let mut found = Vec::new();
     collect(&tree.root, &mut found);
-    for (index, width) in [(88, 64.0), (93, 32.0), (99, 48.0)] {
+    // 맥 한글 12.30(FS-03): 표에 없는 글꼴은 함초롬돋움 폭(한글 .970em)이다 — 종전 전각 64/32/48 의 0.97배.
+    // 제목이 벌어지지 않고 자연 폭 그대로라는 계약은 같다.
+    for (index, width) in [(88, 62.08), (93, 31.04), (99, 46.56)] {
         assert!(
             found
                 .iter()

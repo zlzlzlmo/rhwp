@@ -368,7 +368,8 @@ fn public_blank_derived_documents_reach_every_current_positive_category() {
         ("KoPub돋움체 Light", "가", "measured-overlay", "kopubTable"),
         ("본한글", "가", "metric-surrogate", "embeddedMetric"),
         ("함초롬바탕", "😀", "char-miss", "heuristicHalfwidth"),
-        ("W3 Missing Face", "A", "face-miss", "heuristicHalfwidth"),
+        // 맥 한글 12.30(FS-03): 표에 없는 글꼴은 함초롬돋움 폭으로 잰다 — 계측은 여전히 face-miss 이고 폭 출처만 표(embeddedMetric)다.
+        ("W3 Missing Face", "A", "face-miss", "embeddedMetric"),
         ("W3 Missing Face", "ㆍ", "heuristic", "areaDotFallback"),
     ];
     for (font, text, category, width_source) in cases {
