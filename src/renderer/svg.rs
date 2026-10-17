@@ -2752,7 +2752,18 @@ impl SvgRenderer {
     /// 선 모양(shape)에 따라 SVG line/group을 출력한다.
     /// shape: 0=실선, 1=긴점선, 2=점선, 3=일점쇄선, 4=이점쇄선, 5=긴파선,
     ///        6=원형점, 7=이중선, 8=가는+굵은, 9=굵은+가는, 10=삼중선
-    fn draw_line_shape(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, color: &str, shape: u8) {
+    ///
+    /// `width` 는 단선·파선(0~6)의 굵기(px)다. 다중선·물결은 자기 굵기 표를 쓴다.
+    fn draw_line_shape(
+        &mut self,
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        color: &str,
+        shape: u8,
+        width: f64,
+    ) {
         match shape {
             7 => {
                 // 이중선
@@ -2859,8 +2870,8 @@ impl SvgRenderer {
                     _ => "", // 0=실선
                 };
                 self.output.push_str(&format!(
-                    "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"1\"{}/>\n",
-                    x1, y1, x2, y2, color, dasharray));
+                    "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"{}\"{}/>\n",
+                    x1, y1, x2, y2, color, (width * 1000.0).round() / 1000.0, dasharray));
             }
         }
     }
@@ -3639,6 +3650,7 @@ impl Renderer for SvgRenderer {
                     UnderlineType::Top => y - font_size + 1.0,
                     _ => y + font_size * crate::renderer::text_decoration::UNDERLINE_BASELINE_RATIO,
                 };
+                // 굵기는 글자 크기에 비례하는 정수 HU(맥 한글) — 첨자·장평 보정 전 크기.
                 self.draw_line_shape(
                     x,
                     ul_y,
@@ -3646,6 +3658,10 @@ impl Renderer for SvgRenderer {
                     ul_y,
                     &ul_color,
                     style.underline_shape,
+                    crate::renderer::text_decoration::underline_thickness_px(
+                        base_font_size,
+                        style.underline_shape,
+                    ),
                 );
             }
         }
@@ -3666,6 +3682,7 @@ impl Renderer for SvgRenderer {
                 strike_y,
                 &st_color,
                 style.strike_shape,
+                1.0,
             );
         }
 

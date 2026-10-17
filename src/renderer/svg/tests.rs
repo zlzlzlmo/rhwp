@@ -316,8 +316,44 @@ fn test_svg_draw_text_superscript_adjusts_baseline_and_size() {
         },
     );
     let output = renderer.output();
-    assert!(output.contains("font-size=\"14\""));
-    assert!(output.contains("y=\"94\""));
+    // 맥 한글 12.30: 크기 20×0.64=12.8, 기준선 20×0.44=8.8 위(100−8.8=91.2).
+    assert!(output.contains("font-size=\"12.8\""));
+    assert!(output.contains("y=\"91.2\""));
+}
+
+/// 상대 크기(relSz) 95 글자는 base 20px 가 아니라 19px 로 그려지고, 글자 폭(textLength)도
+/// 같은 비율로 줄며, 밑줄 굵기는 줄 글자 크기(base)를 따른다 — 맥 한글 PDF 칠곡 9pt relSz 95
+/// 글자가 8.52pt 로 그려진 것과 같은 규칙이다.
+#[test]
+fn td06_svg_draws_glyph_at_relative_size_but_underlines_at_base_size() {
+    let draw = |size_scale: f64| {
+        let mut renderer = SvgRenderer::new();
+        renderer.begin_page(800.0, 600.0);
+        renderer.draw_text(
+            "1",
+            10.0,
+            100.0,
+            &TextStyle {
+                font_size: 20.0,
+                font_family: "돋움".to_string(),
+                size_scale,
+                underline: UnderlineType::Bottom,
+                ..Default::default()
+            },
+        );
+        renderer.output().to_string()
+    };
+    let plain = draw(1.0);
+    let scaled = draw(0.95);
+    assert!(plain.contains("font-size=\"20\""), "{plain}");
+    assert!(scaled.contains("font-size=\"19\""), "{scaled}");
+    let ratio = text_length_of(&scaled, "1") / text_length_of(&plain, "1");
+    assert!((ratio - 0.95).abs() < 0.03, "폭 비 {ratio}");
+    assert_eq!(
+        underline_stroke_width(&scaled),
+        underline_stroke_width(&plain),
+        "밑줄 굵기는 줄 글자 크기(base) 기준"
+    );
 }
 
 /// 주어진 글리프를 담은 `<text>` 줄에서 `textLength` 값을 뽑아낸다.
@@ -359,10 +395,10 @@ fn text_x_of(output: &str, glyph: &str) -> f64 {
 
 #[test]
 fn test_svg_draw_text_script_scales_text_length_by_glyph_size() {
-    // [#2771] 첨자 글리프는 본문의 0.7 배 크기로 그려진다. 그런데 폭 맞춤에 쓰는
-    // textLength 가 본문(base) advance 그대로면 lengthAdjust="spacingAndGlyphs"
-    // 가 0.7 배 글리프를 본문 폭까지 되늘려 1/0.7 ≈ 1.43 배 가로 확대가 난다.
-    // → textLength 도 0.7 배여야 한다.
+    // [#2771] 첨자 글리프는 본문의 0.64 배 크기로 그려진다(맥 한글 12.30). 그런데 폭 맞춤에
+    // 쓰는 textLength 가 배치 advance(0.7 배, #5756) 그대로면 lengthAdjust="spacingAndGlyphs"
+    // 가 0.64 배 글리프를 0.7 배 폭까지 되늘려 9% 가로 확대가 난다.
+    // → textLength 는 글리프 자연 폭(본문의 0.64 배)이어야 한다.
     let base_style = TextStyle {
         font_size: 20.0,
         font_family: "돋움".to_string(),
@@ -388,12 +424,12 @@ fn test_svg_draw_text_script_scales_text_length_by_glyph_size() {
         renderer.begin_page(800.0, 600.0);
         renderer.draw_text("1", 10.0, 100.0, &style);
         let script_length = text_length_of(renderer.output(), "1");
-        // [#5756] 이후 첨자 advance 는 측정 단계에서 0.7 배 글꼴로 계산된다 —
-        // 글자 폭이 픽셀 반올림을 거치므로 정확 0.7 배 대신 반올림 오차(≤0.05px)를
-        // 허용한다.
+        // [#5756] 이후 첨자 advance 는 측정 단계에서 0.7 배 글꼴로 계산되고, 글리프는 0.64 배
+        // 로 그려지므로 fit 목표 폭은 0.7×(0.64/0.7) = 본문의 0.64 배다 — 글자 폭이 픽셀
+        // 반올림을 거치므로 정확 0.64 배 대신 반올림 오차(≤0.05px)를 허용한다.
         assert!(
-            (script_length - base_length * 0.7).abs() < 0.05,
-            "첨자 textLength 는 본문의 0.7 배여야 함: base={base_length}, script={script_length}"
+            (script_length - base_length * 0.64).abs() < 0.05,
+            "첨자 textLength 는 본문의 0.64 배여야 함: base={base_length}, script={script_length}"
         );
     }
 }
@@ -599,6 +635,93 @@ fn test_svg_draw_path() {
     assert!(output.contains("Z"));
 }
 
+/// 밑줄색은 저장값 그대로다 — COLORREF 0 은 «글자색 따라가기»가 아니라 검정이다.
+/// 맥 한글 PDF 단일 밑줄 43개 중 «밑줄색 0 + 파랑(0x00ff0000) 글자» 9개·«밑줄색 0 + 빨강
+/// 글자» 2개가 전부 검정 선이었다. Canvas(web_canvas.rs)도 같은 계약이라 이 시험이
+/// 백엔드 공통 기준을 못박는다(Canvas 는 wasm32 전용이라 native 시험이 닿지 않는다).
+#[test]
+fn td03_underline_color_zero_is_black_even_with_colored_text() {
+    for text_color in [0x00FF_0000u32, 0x0000_00FF] {
+        let mut renderer = SvgRenderer::new();
+        renderer.begin_page(800.0, 600.0);
+        renderer.draw_text(
+            "밑줄",
+            10.0,
+            20.0,
+            &TextStyle {
+                font_size: 16.0,
+                color: text_color,
+                underline: UnderlineType::Bottom,
+                underline_color: 0,
+                ..Default::default()
+            },
+        );
+        let output = renderer.output();
+        let line = output
+            .lines()
+            .find(|l| l.starts_with("<line "))
+            .expect("밑줄 <line> 이 있어야 함");
+        assert!(
+            line.contains("stroke=\"#000000\""),
+            "밑줄색 0 은 검정이어야 함(글자색 {text_color:#x}): {line}"
+        );
+    }
+}
+
+fn underline_stroke_width(output: &str) -> String {
+    let line = output
+        .lines()
+        .find(|l| l.starts_with("<line "))
+        .expect("밑줄 <line> 이 있어야 함");
+    let start = line.find("stroke-width=\"").expect("stroke-width") + "stroke-width=\"".len();
+    let rest = &line[start..];
+    rest[..rest.find('"').unwrap()].to_string()
+}
+
+/// 밑줄 굵기는 글자 크기에 비례하는 정수 HU 다(맥 한글: T = round(39 × 크기HU ÷ 1000)).
+/// 종전에는 1px 고정이라 16px(12pt) 본문 밑줄이 맥(0.47pt)의 1.6배였다.
+#[test]
+fn td01_svg_single_underline_stroke_width_follows_font_size() {
+    for (size_px, want) in [(16.0, "0.627"), (32.0, "1.253")] {
+        let mut renderer = SvgRenderer::new();
+        renderer.begin_page(800.0, 600.0);
+        renderer.draw_text(
+            "밑줄",
+            10.0,
+            40.0,
+            &TextStyle {
+                font_size: size_px,
+                underline: UnderlineType::Bottom,
+                ..Default::default()
+            },
+        );
+        assert_eq!(underline_stroke_width(renderer.output()), want, "{size_px}px");
+    }
+}
+
+/// 위첨자 run 의 밑줄 굵기는 줄의 글자 크기(첨자 축소 전)를 따른다 — 0.7배로 줄어든
+/// 그리기 크기로 재면 본문 밑줄보다 얇아진다.
+#[test]
+fn td01_svg_script_underline_thickness_uses_unscaled_font_size() {
+    let thickness = |superscript: bool| {
+        let mut renderer = SvgRenderer::new();
+        renderer.begin_page(800.0, 600.0);
+        renderer.draw_text(
+            "1",
+            10.0,
+            40.0,
+            &TextStyle {
+                font_size: 20.0,
+                underline: UnderlineType::Bottom,
+                superscript,
+                ..Default::default()
+            },
+        );
+        underline_stroke_width(renderer.output())
+    };
+    assert_eq!(thickness(true), thickness(false));
+}
+
 #[test]
 fn test_svg_text_decoration() {
     let mut renderer = SvgRenderer::new();
@@ -629,11 +752,16 @@ fn test_svg_text_decoration() {
     // (부동소수 표기 꼬리가 붙을 수 있어 닫는 따옴표 없이 접두 일치로 확인한다.)
     let underline_count = output.matches("y1=\"22.72").count();
     assert!(underline_count > 0, "밑줄 <line> 요소가 있어야 함");
+    // 밑줄 굵기는 글자 크기에 비례(16px → 47HU = 0.627px), 취소선은 1px 고정(정답 쌍 없음).
+    let underline_width = output
+        .matches("stroke=\"#000000\" stroke-width=\"0.627\"")
+        .count();
+    assert_eq!(underline_width, 1, "밑줄 <line> 은 굵기 0.627px");
     // 취소선: <line> 요소로 출력
     let strike_count = output
         .matches("stroke=\"#000000\" stroke-width=\"1\"")
         .count();
-    assert!(strike_count >= 2, "취소선과 밑줄 <line> 요소가 있어야 함");
+    assert_eq!(strike_count, 1, "취소선 <line> 요소가 있어야 함");
 }
 
 #[test]

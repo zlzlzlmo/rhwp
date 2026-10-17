@@ -85,10 +85,12 @@ fn style_params(style: &TextStyle) -> (f64, f64, f64) {
     // 54.9px 에 찍힌다 — 0.7배로 재면 327.4px 로 저장 줄바꿈(textpos)과 정확히
     // 맞는다. 자간/장평은 크기 비례라 함께 줄어든다. 탭 폭 기본값은 본문 크기
     // 기준을 유지한다.
+    // 상대 크기(relSz)는 첨자 배율보다 먼저 곱한다(한컴: 크기 × relSz ÷ 100, 첨자면 다시 ×16/25).
+    let sized_font_size = base_font_size * style.size_scale_factor();
     let font_size = if style.superscript || style.subscript {
-        base_font_size * crate::renderer::SCRIPT_FONT_SCALE
+        sized_font_size * crate::renderer::SCRIPT_FONT_SCALE
     } else {
-        base_font_size
+        sized_font_size
     };
     let ratio = if style.ratio > 0.0 { style.ratio } else { 1.0 };
     let tab_w = if style.default_tab_width > 0.0 {
@@ -841,6 +843,8 @@ pub(crate) fn resolved_to_text_style(
             font_metric_trusted: cs.font_metric_trusted_for_lang(lang_index),
             hft_hangul_face: styles.hwp3_variant && cs.hft_hangul_face_for_lang(lang_index),
             font_size: cs.font_size,
+            // 상대 크기(relSz)는 재고 그리는 크기에만 곱한다 — 줄 높이는 font_size(base) 그대로.
+            size_scale: cs.size_scale_for_lang(lang_index),
             color: cs.text_color,
             bold: cs.bold,
             italic: cs.italic,
@@ -2329,6 +2333,50 @@ mod tests {
                 < f64::EPSILON,
             "#4138 split stale-cell 12pt space must be half-em"
         );
+    }
+
+    /// 상대 크기(relSz)는 글자 폭도 같은 비율로 바꾼다 — 칠곡 hwpx relSz 95 글자의 맥 PDF
+    /// 글자당 전진이 우리(relSz 무시)보다 4.4% 좁다(8.680 vs 9.077pt).
+    #[test]
+    fn td06_measured_width_follows_size_scale() {
+        for text in ["가나다라마바사아", "ABCDEFGH", "가A나B다C라D"] {
+            let plain = TextStyle {
+                font_family: "함초롬바탕".to_string(),
+                font_size: 12.0,
+                ..Default::default()
+            };
+            let scaled = TextStyle {
+                size_scale: 0.95,
+                ..plain.clone()
+            };
+            let w_plain = *compute_char_positions(text, &plain).last().unwrap();
+            let w_scaled = *compute_char_positions(text, &scaled).last().unwrap();
+            assert!(
+                (w_scaled / w_plain - 0.95).abs() < 0.015,
+                "{text}: 폭 {w_plain:.3} → {w_scaled:.3} (배율 {:.4})",
+                w_scaled / w_plain
+            );
+        }
+    }
+
+    /// 변환은 글자 크기를 base 로 두고 배율만 싣는다 — 줄 높이를 정하는 `font_size` 가
+    /// relSz 로 바뀌면 한컴 저장 줄 높이(relSz 와 무관)와 어긋난다.
+    #[test]
+    fn td06_resolved_text_style_keeps_base_size_and_carries_the_scale() {
+        let styles = ResolvedStyleSet {
+            char_styles: vec![crate::renderer::style_resolver::ResolvedCharStyle {
+                font_size: 12.0,
+                size_scales: vec![0.95, 1.06, 1.0, 1.0, 1.0, 1.0, 1.0],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let korean = resolved_to_text_style(&styles, 0, 0);
+        assert_eq!(korean.font_size, 12.0);
+        assert_eq!(korean.size_scale, 0.95);
+        let latin = resolved_to_text_style(&styles, 0, 1);
+        assert_eq!(latin.font_size, 12.0);
+        assert_eq!(latin.size_scale, 1.06);
     }
 
     // ── MockTextMeasurer 테스트 ──

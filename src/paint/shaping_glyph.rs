@@ -425,8 +425,8 @@ fn validate_measurement(
     }
 
     let horizontal_scale =
-        run.style.font_size * run.style.ratio / f64::from(measurement.units_per_em);
-    let vertical_scale = run.style.font_size / f64::from(measurement.units_per_em);
+        run.style.sized_font_size() * run.style.ratio / f64::from(measurement.units_per_em);
+    let vertical_scale = run.style.sized_font_size() / f64::from(measurement.units_per_em);
     let mut pen_x = 0.0;
     for (pixel, design) in measurement
         .glyphs_px
@@ -840,7 +840,7 @@ fn project_replay_geometry(
     }
 
     let (draw_font_size_px, draw_x_scale) =
-        crate::renderer::condensed_ratio_draw_params(run.style.font_size, run.style.ratio);
+        crate::renderer::condensed_ratio_draw_params(run.style.sized_font_size(), run.style.ratio);
     if !draw_font_size_px.is_finite()
         || draw_font_size_px <= 0.0
         || !draw_x_scale.is_finite()

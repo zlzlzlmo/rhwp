@@ -930,10 +930,12 @@ fn prepare_paragraph_projection(
         } else {
             12.0
         };
+        // 측정 크기 = base × 상대 크기(relSz) × (첨자면 배치 배율) — style_params 와 같은 식.
+        let sized_font_size = base_font_size * text_style.size_scale_factor();
         let effective_font_size_px = if text_style.superscript || text_style.subscript {
-            base_font_size * crate::renderer::SCRIPT_FONT_SCALE
+            sized_font_size * crate::renderer::SCRIPT_FONT_SCALE
         } else {
-            base_font_size
+            sized_font_size
         };
         let width_ratio = if text_style.ratio > 0.0 {
             text_style.ratio

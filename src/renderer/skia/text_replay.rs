@@ -356,8 +356,9 @@ impl SkiaTextReplay<'_> {
                     }
                     canvas.draw_line((x1, y), (x2, y), &line_paint);
                 };
+                // `width` 는 단선·파선(0~6)의 굵기(px) — 다중선(7~10)은 자기 굵기를 쓴다.
                 let draw_line_shape =
-                    |x1: f32, y: f32, x2: f32, color: Color, shape: u8| match shape {
+                    |x1: f32, y: f32, x2: f32, color: Color, shape: u8, width: f32| match shape {
                         7 => {
                             draw_styled_line(x1, y - 1.0, x2, color, 0.7, &[], false);
                             draw_styled_line(x1, y + 1.0, x2, color, 0.7, &[], false);
@@ -375,21 +376,23 @@ impl SkiaTextReplay<'_> {
                             draw_styled_line(x1, y, x2, color, 0.5, &[], false);
                             draw_styled_line(x1, y + 1.5, x2, color, 0.5, &[], false);
                         }
-                        1 => draw_styled_line(x1, y, x2, color, 1.0, &[3.0, 3.0], false),
-                        2 => draw_styled_line(x1, y, x2, color, 1.0, &[1.0, 2.0], false),
-                        3 => draw_styled_line(x1, y, x2, color, 1.0, &[6.0, 2.0, 1.0, 2.0], false),
+                        1 => draw_styled_line(x1, y, x2, color, width, &[3.0, 3.0], false),
+                        2 => draw_styled_line(x1, y, x2, color, width, &[1.0, 2.0], false),
+                        3 => {
+                            draw_styled_line(x1, y, x2, color, width, &[6.0, 2.0, 1.0, 2.0], false)
+                        }
                         4 => draw_styled_line(
                             x1,
                             y,
                             x2,
                             color,
-                            1.0,
+                            width,
                             &[6.0, 2.0, 1.0, 2.0, 1.0, 2.0],
                             false,
                         ),
-                        5 => draw_styled_line(x1, y, x2, color, 1.0, &[8.0, 4.0], false),
-                        6 => draw_styled_line(x1, y, x2, color, 1.0, &[0.1, 2.5], true),
-                        _ => draw_styled_line(x1, y, x2, color, 1.0, &[], false),
+                        5 => draw_styled_line(x1, y, x2, color, width, &[8.0, 4.0], false),
+                        6 => draw_styled_line(x1, y, x2, color, width, &[0.1, 2.5], true),
+                        _ => draw_styled_line(x1, y, x2, color, width, &[], false),
                     };
 
                 // [#5804] 3+ 연속 '-' 를 단일 가로선으로 대체하던 처리(Task #352)를 걷어냈다.
@@ -590,12 +593,17 @@ impl SkiaTextReplay<'_> {
                                         * crate::renderer::text_decoration::UNDERLINE_BASELINE_RATIO
                                             as f32,
                             };
+                        // 굵기는 글자 크기에 비례하는 정수 HU(맥 한글) — 첨자 축소 전 크기.
                         draw_line_shape(
                             bbox.x as f32,
                             line_y,
                             bbox.x as f32 + text_width,
                             color,
                             style.underline_shape,
+                            crate::renderer::text_decoration::underline_thickness_px(
+                                base_font_size,
+                                style.underline_shape,
+                            ) as f32,
                         );
                     }
                 }
@@ -611,6 +619,7 @@ impl SkiaTextReplay<'_> {
                         bbox.x as f32 + text_width,
                         color,
                         style.strike_shape,
+                        1.0,
                     );
                 }
                 if style.emphasis_dot > 0 {

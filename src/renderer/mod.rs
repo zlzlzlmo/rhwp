@@ -188,6 +188,10 @@ pub(crate) fn replay_positions_or_compute<'a>(
         })
 }
 
+fn is_unit_size_scale(scale: &f64) -> bool {
+    *scale == 1.0
+}
+
 /// 텍스트 렌더링 스타일
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextStyle {
@@ -197,8 +201,12 @@ pub struct TextStyle {
         Option<std::sync::Arc<supplemental_metrics::SupplementalMetricSnapshot>>,
     /// 글꼴 이름
     pub font_family: String,
-    /// 글꼴 크기 (px)
+    /// 글꼴 크기 (px) — base. 줄 높이·기준선의 입력이다.
     pub font_size: f64,
+    /// 상대 크기(relSz) 배율 — 글자를 **재고 그리는** 크기는 `font_size × size_scale` 이다
+    /// (한컴은 상대 크기를 줄 높이에 곱하지 않는다). 1.0 이 기본이며 1.0 이면 직렬화에서 뺀다.
+    #[serde(skip_serializing_if = "is_unit_size_scale")]
+    pub size_scale: f64,
     /// 글자 색상
     pub color: ColorRef,
     /// 진하게
@@ -309,46 +317,74 @@ pub struct TextStyle {
     pub hft_hangul_face: bool,
 }
 
-/// 위첨자/아래첨자 글리프를 그릴 때 적용하는 본문 대비 글꼴 크기 배율.
+/// 위첨자/아래첨자 run 의 **배치(전진폭)** 를 잴 때 쓰는 본문 대비 글꼴 크기 배율.
+///
+/// 한글 저장 줄(156732409 3쪽, #5756)이 0.7 로 재야 맞아서 줄 나눔·쪽 수는 이 값을 따른다.
+/// 글리프를 **그리는** 크기는 [`SCRIPT_DRAW_SCALE`] 이다.
 pub const SCRIPT_FONT_SCALE: f64 = 0.7;
-/// 위첨자 baseline 상향 이동량 (본문 글꼴 크기 대비 em).
-pub const SUPERSCRIPT_RISE_EM: f64 = 0.3;
-/// 아래첨자 baseline 하향 이동량 (본문 글꼴 크기 대비 em).
-pub const SUBSCRIPT_DROP_EM: f64 = 0.15;
+/// 위첨자/아래첨자 글리프를 **그릴 때** 적용하는 본문 대비 글꼴 크기 배율 — 맥 한글 12.30
+/// 은 글자 크기 × 16/25 = 0.64 로 그린다(맥 PDF 위첨자 9구간 0.636~0.645).
+pub const SCRIPT_DRAW_SCALE: f64 = 0.64;
+/// 위첨자 baseline 상향 이동량 (본문 글꼴 크기 대비 em). 맥 PDF 9구간 0.435~0.450.
+pub const SUPERSCRIPT_RISE_EM: f64 = 0.44;
+/// 아래첨자 baseline 하향 이동량 (본문 글꼴 크기 대비 em). 맥 12.30 기준선 정렬·가로쓰기 +12%.
+pub const SUBSCRIPT_DROP_EM: f64 = 0.12;
 
 impl TextStyle {
     /// 위첨자/아래첨자 run 의 **그리기** 글꼴 크기와 baseline 을 계산한다.
     ///
     /// SVG·Canvas·HTML·Skia·paint JSON 이 각자 하드코딩하던 동일 상수를 한곳으로
-    /// 모은 것이다 (#2771). 레이아웃 advance 는 본문 run 기준을 유지하고 실제
-    /// 글리프 크기와 baseline 만 조정한다는 계약은 종전과 같다.
+    /// 모은 것이다 (#2771). 레이아웃 advance 는 본문 run 기준(`SCRIPT_FONT_SCALE`)을
+    /// 유지하고 실제 글리프 크기(`SCRIPT_DRAW_SCALE`)와 baseline 만 조정한다.
     ///
     /// 비첨자 run 은 인자를 그대로 돌려주므로 기존 출력이 비트 단위로 보존된다.
     pub fn script_draw_metrics(&self, base_font_size: f64, baseline_y: f64) -> (f64, f64) {
+        // 상대 크기(relSz)를 먼저 곱한다 — 첨자 축소·기준선 이동량은 줄 글자 크기(곱하기 전) 기준.
+        let sized = base_font_size * self.size_scale_factor();
         if self.superscript {
             (
-                base_font_size * SCRIPT_FONT_SCALE,
+                sized * SCRIPT_DRAW_SCALE,
                 baseline_y - base_font_size * SUPERSCRIPT_RISE_EM,
             )
         } else if self.subscript {
             (
-                base_font_size * SCRIPT_FONT_SCALE,
+                sized * SCRIPT_DRAW_SCALE,
                 baseline_y + base_font_size * SUBSCRIPT_DROP_EM,
             )
         } else {
-            (base_font_size, baseline_y)
+            (sized, baseline_y)
         }
+    }
+
+    /// 상대 크기(relSz) 배율 — 잘못된 값(0 이하·NaN·무한)은 1.0 으로 본다. 1.0 은 `x * 1.0`
+    /// 이라 비트 단위로 종전과 같다.
+    pub fn size_scale_factor(&self) -> f64 {
+        if self.size_scale.is_finite() && self.size_scale > 0.0 {
+            self.size_scale
+        } else {
+            1.0
+        }
+    }
+
+    /// 글자를 재고 그리는 크기(px) = base × 상대 크기 배율. 첨자 축소는 포함하지 않는다.
+    /// 줄 높이·기준선에는 쓰지 않는다(그쪽은 `font_size`).
+    pub fn sized_font_size(&self) -> f64 {
+        self.font_size * self.size_scale_factor()
     }
 
     /// 글자폭 맞춤(fit) 대상 advance 에 적용할 배율 (#2771, #5756).
     ///
     /// SVG `textLength` 와 Canvas `fit_scale` 은 "레이아웃 advance 에 글리프 폭을
-    /// 맞춘다". [#5756] 이후 첨자 run 의 **레이아웃 advance 자체**가 그리기
-    /// 배율(0.7)로 측정되므로(`text_measurement::style_params`), 대상 advance 는
-    /// 이미 축소 글리프의 자연 폭과 일치한다 — 여기서 또 줄이면 이중 축소로
-    /// 글리프가 0.49 배까지 눌린다. 항상 1.0(항등)을 돌려준다.
+    /// 맞춘다". 첨자 run 의 **레이아웃 advance** 는 배치 배율(`SCRIPT_FONT_SCALE`
+    /// 0.7, #5756)로 재지만 글리프는 그리기 배율(`SCRIPT_DRAW_SCALE` 0.64)로 그리므로,
+    /// 대상 advance 를 `0.64 / 0.7` 로 줄여야 글리프가 자연 폭 그대로 그려진다 — 안 줄이면
+    /// 글리프가 가로로 9% 늘어난다. 비첨자는 정확히 1.0(항등)이라 기존 출력이 불변이다.
     pub fn script_advance_scale(&self) -> f64 {
-        1.0
+        if self.superscript || self.subscript {
+            SCRIPT_DRAW_SCALE / SCRIPT_FONT_SCALE
+        } else {
+            1.0
+        }
     }
 
     /// 브라우저 렌더러가 실제 glyph 폭을 맞출 때 사용할 advance 를 반환한다.
@@ -434,6 +470,7 @@ impl Default for TextStyle {
             supplemental_metrics: None,
             font_family: String::new(),
             font_size: 0.0,
+            size_scale: 1.0,
             color: 0,
             bold: false,
             italic: false,
@@ -2683,10 +2720,119 @@ mod tests {
         assert!((px - 96.0).abs() < 0.01);
     }
 
+    /// 맥 한글 12.30 PDF 위첨자 9구간(4양식)의 (그려진 크기 ÷ 글자 모양 크기,
+    /// (앞 본문 글자 기준선 − 첨자 기준선) ÷ 글자 모양 크기) — 정답 쌍이다.
+    /// 성남 11pt `*` · 웰컴투팁스 9pt `*` · b7ef0592 10pt `1)`~`6)` · e13e7b4a 8pt `1」` `2」`.
+    const MAC_SUPERSCRIPT_PAIRS: &[(f64, f64)] = &[
+        (0.644, 0.447),
+        (0.640, 0.440),
+        (0.636, 0.444),
+        (0.636, 0.444),
+        (0.636, 0.444),
+        (0.636, 0.444),
+        (0.636, 0.444),
+        (0.645, 0.450),
+        (0.645, 0.435),
+    ];
+
+    #[test]
+    fn td04_superscript_draw_metrics_match_mac_pdf() {
+        let sup = TextStyle {
+            font_size: 20.0,
+            superscript: true,
+            ..Default::default()
+        };
+        let (size, y) = sup.script_draw_metrics(20.0, 100.0);
+        let (ours_size_em, ours_rise_em) = (size / 20.0, (100.0 - y) / 20.0);
+        // 맥 PDF 장치 눈금이 0.12pt 라 8~11pt 글자에서 em 값에 ±0.015 가 낀다.
+        for &(mac_size_em, mac_rise_em) in MAC_SUPERSCRIPT_PAIRS {
+            assert!(
+                (ours_size_em - mac_size_em).abs() <= 0.015,
+                "위첨자 크기 {ours_size_em:.3}em, 맥 {mac_size_em:.3}em"
+            );
+            assert!(
+                (ours_rise_em - mac_rise_em).abs() <= 0.015,
+                "위첨자 기준선 이동 {ours_rise_em:.3}em, 맥 {mac_rise_em:.3}em"
+            );
+        }
+    }
+
+    /// 아래첨자는 맥 한글 명세의 실측(크기 0.636em · 기준선 아래 +0.120em, n=4)을 따른다.
+    #[test]
+    fn td04_subscript_draw_metrics_match_mac_spec() {
+        let sub = TextStyle {
+            font_size: 10.0,
+            subscript: true,
+            ..Default::default()
+        };
+        let (size, y) = sub.script_draw_metrics(10.0, 50.0);
+        assert!((size / 10.0 - 0.636).abs() <= 0.01, "{size}");
+        assert!(((y - 50.0) / 10.0 - 0.120).abs() <= 0.01, "{y}");
+    }
+
+    /// 상대 크기(relSz): 맥 한글은 글자를 `round(크기 × relSz ÷ 100)` 높이로 그린다.
+    /// 맥 PDF 정답 — 칠곡 hwpx 9pt relSz 95 글자 8.52pt, exam_eng 영문 11.5pt relSz 106 글자
+    /// 12.12~12.24pt(23,290자 전부 이 두 값).
+    #[test]
+    fn td06_draw_size_follows_relative_size_like_mac_pdf() {
+        // 9pt = 12px · 900HU × 95% = 855HU
+        let chilgok = TextStyle {
+            font_size: 12.0,
+            size_scale: 855.0 / 900.0,
+            ..Default::default()
+        };
+        let (size, y) = chilgok.script_draw_metrics(12.0, 50.0);
+        let pt = size * 0.75;
+        assert!((pt - 8.52).abs() <= 0.05, "9pt relSz 95: {pt}pt, 맥 8.52pt");
+        assert_eq!(y, 50.0, "비첨자 baseline 은 불변");
+
+        // 11.5pt = 1150HU · ×106% = 1219HU
+        let english = TextStyle {
+            font_size: 1150.0 * 96.0 / 7200.0,
+            size_scale: 1219.0 / 1150.0,
+            ..Default::default()
+        };
+        let (size, _) = english.script_draw_metrics(english.font_size, 0.0);
+        let pt = size * 0.75;
+        assert!(
+            (12.12 - 0.02..=12.24 + 0.02).contains(&pt),
+            "11.5pt relSz 106: {pt}pt, 맥 12.12~12.24pt"
+        );
+    }
+
+    /// relSz 100(또는 미지정 0·잘못된 값)은 비트 단위로 종전과 같다.
+    #[test]
+    fn td06_unit_or_invalid_size_scale_is_bit_identical() {
+        for scale in [1.0, 0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let style = TextStyle {
+                font_size: 13.0,
+                size_scale: scale,
+                ..Default::default()
+            };
+            assert_eq!(style.script_draw_metrics(13.0, 50.0), (13.0, 50.0), "{scale}");
+        }
+        assert_eq!(TextStyle::default().size_scale, 1.0);
+    }
+
+    /// 첨자 run 은 상대 크기를 먼저 곱하고 그 위에 0.64 를 곱한다. 기준선 이동은 줄 글자
+    /// 크기(상대 크기 전) 기준이라 상대 크기와 무관하다.
+    #[test]
+    fn td06_size_scale_applies_before_the_script_scale() {
+        let sup = TextStyle {
+            font_size: 20.0,
+            size_scale: 0.95,
+            superscript: true,
+            ..Default::default()
+        };
+        let (size, y) = sup.script_draw_metrics(20.0, 100.0);
+        assert!((size - 20.0 * 0.95 * 0.64).abs() < 1e-9, "{size}");
+        assert!((y - (100.0 - 20.0 * 0.44)).abs() < 1e-9, "{y}");
+    }
+
     #[test]
     fn test_script_draw_metrics_matches_shared_contract() {
-        // [#2771] SVG/Canvas/HTML/Skia/paint JSON 이 공유하는 첨자 계약:
-        // 글꼴 0.7 배 + baseline 위 0.3em / 아래 0.15em.
+        // SVG/Canvas/HTML/Skia/paint JSON 이 공유하는 첨자 계약(맥 한글 12.30):
+        // 글꼴 0.64 배 + baseline 위 0.44em / 아래 0.12em.
         let base = TextStyle {
             font_size: 20.0,
             ..Default::default()
@@ -2698,12 +2844,12 @@ mod tests {
         };
         let (sup_size, sup_y) = sup.script_draw_metrics(20.0, 100.0);
         assert!(
-            (sup_size - 14.0).abs() < 1e-9,
-            "위첨자 글꼴은 0.7 배여야 함: {sup_size}"
+            (sup_size - 12.8).abs() < 1e-9,
+            "위첨자 글꼴은 0.64 배여야 함: {sup_size}"
         );
         assert!(
-            (sup_y - 94.0).abs() < 1e-9,
-            "위첨자 baseline 은 0.3em 위여야 함: {sup_y}"
+            (sup_y - 91.2).abs() < 1e-9,
+            "위첨자 baseline 은 0.44em 위여야 함: {sup_y}"
         );
 
         let sub = TextStyle {
@@ -2712,12 +2858,12 @@ mod tests {
         };
         let (sub_size, sub_y) = sub.script_draw_metrics(20.0, 100.0);
         assert!(
-            (sub_size - 14.0).abs() < 1e-9,
-            "아래첨자 글꼴은 0.7 배여야 함: {sub_size}"
+            (sub_size - 12.8).abs() < 1e-9,
+            "아래첨자 글꼴은 0.64 배여야 함: {sub_size}"
         );
         assert!(
-            (sub_y - 103.0).abs() < 1e-9,
-            "아래첨자 baseline 은 0.15em 아래여야 함: {sub_y}"
+            (sub_y - 102.4).abs() < 1e-9,
+            "아래첨자 baseline 은 0.12em 아래여야 함: {sub_y}"
         );
 
         // 비첨자는 인자를 그대로 돌려준다.
@@ -2806,8 +2952,9 @@ mod tests {
             );
         }
 
-        // [#5756] 첨자 run 의 레이아웃 advance 가 그리기 배율(0.7)로 측정되므로
-        // fit 배율은 첨자에서도 항등(1.0)이다 — 0.7 을 또 곱하면 이중 축소.
+        // [#5756] 첨자 run 의 레이아웃 advance 는 배치 배율(0.7)로 재고 글리프는 그리기
+        // 배율(0.64)로 그린다 — fit 배율은 0.64/0.7 이라야 글리프가 자연 폭 그대로다
+        // (1.0 이면 글리프가 가로로 9% 늘고, 0.7 을 또 곱하면 이중 축소).
         let sup = TextStyle {
             superscript: true,
             ..base.clone()
@@ -2817,9 +2964,10 @@ mod tests {
             ..base.clone()
         };
         for style in [&sup, &sub] {
-            assert_eq!(style.script_advance_scale(), 1.0);
-            // 그리기 글꼴은 여전히 0.7 배 축소다.
-            assert_eq!(style.script_draw_metrics(20.0, 0.0).0, 20.0 * 0.7);
+            assert_eq!(style.script_advance_scale(), 0.64 / 0.7);
+            assert_eq!(style.script_draw_metrics(20.0, 0.0).0, 20.0 * 0.64);
+            // 배치 advance(20×0.7=14 기준) × fit 배율 = 그려진 글리프 크기(12.8) 기준 폭.
+            assert!((14.0 * style.script_advance_scale() - 12.8).abs() < 1e-9);
         }
     }
 

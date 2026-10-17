@@ -2449,11 +2449,10 @@ impl Renderer for WebCanvasRenderer {
         // 밑줄 처리
         if !matches!(style.underline, UnderlineType::None) {
             let text_width = decoration_width;
-            let ul_color = if style.underline_color != 0 {
-                color_to_css(style.underline_color)
-            } else {
-                color_to_css(style.color)
-            };
+            // 밑줄 색은 저장값 그대로다. COLORREF 0 은 «글자색 따라가기»가 아니라 검정 —
+            // 맥 한글 PDF 단일 밑줄 43개 중 «밑줄색 0 + 유색 글자» 11개가 전부 검정 선이었다
+            // (svg.rs·skia·paint JSON 과 같은 계약).
+            let ul_color = color_to_css(style.underline_color);
             // [#5730] 아래 밑줄은 기준선 + 0.17em (한글 2022 프로브 실측, 고정
             // 2.0px 은 큰 글꼴에서 디센더 관통). 선 모양 내부 기하는 캔버스 경로
             // 현행 유지 — 오프셋만 SVG/Skia 와 같은 계약을 쓴다.
@@ -2461,6 +2460,18 @@ impl Renderer for WebCanvasRenderer {
                 UnderlineType::Top => y - font_size + 1.0,
                 _ => y + font_size * crate::renderer::text_decoration::UNDERLINE_BASELINE_RATIO,
             };
+            // 굵기는 글자 크기에 비례하는 정수 HU(맥 한글) — 첨자·장평 보정 전 크기. 화면
+            // 배율이 낮으면 0.5px 선이 흐려지므로 장치 1px(= 1/배율) 밑으로는 내려가지 않는다.
+            let ul_base_size = if style.font_size > 0.0 {
+                style.font_size
+            } else {
+                12.0
+            };
+            let ul_width = crate::renderer::text_decoration::underline_thickness_px(
+                ul_base_size,
+                style.underline_shape,
+            )
+            .max(1.0 / self.scale.max(f64::EPSILON));
             self.draw_line_shape_canvas(
                 x,
                 ul_y,
@@ -2468,6 +2479,7 @@ impl Renderer for WebCanvasRenderer {
                 ul_y,
                 &ul_color,
                 style.underline_shape,
+                ul_width,
             );
         }
 
@@ -2487,6 +2499,7 @@ impl Renderer for WebCanvasRenderer {
                 strike_y,
                 &st_color,
                 style.strike_shape,
+                1.0,
             );
         }
 
@@ -3352,7 +3365,17 @@ impl WebCanvasRenderer {
     }
 
     /// 선 모양(shape)에 따라 Canvas 라인을 그린다.
-    fn draw_line_shape_canvas(&self, x1: f64, y1: f64, x2: f64, y2: f64, color: &str, shape: u8) {
+    /// `width` 는 단선·파선(0~6)의 굵기(px) — 다중선·물결은 자기 굵기를 쓴다.
+    fn draw_line_shape_canvas(
+        &self,
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        color: &str,
+        shape: u8,
+        width: f64,
+    ) {
         match shape {
             7 => {
                 // 이중선
@@ -3398,7 +3421,7 @@ impl WebCanvasRenderer {
                 if shape == 6 {
                     self.ctx.set_line_cap("round");
                 }
-                self.draw_single_canvas_line(x1, y1, x2, y2, color, 1.0, dash);
+                self.draw_single_canvas_line(x1, y1, x2, y2, color, width, dash);
                 if shape == 6 {
                     self.ctx.set_line_cap("butt");
                 }
