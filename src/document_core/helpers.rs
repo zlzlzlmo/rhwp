@@ -549,20 +549,23 @@ pub(crate) fn parse_para_shape_mods(json: &str) -> crate::model::style::ParaShap
             _ => LineSpacingType::Percent,
         });
     }
+    // 🔴 여백·들여쓰기·간격의 원값은 **짝수**로 쓴다 — 홀수는 한컴이 글자 단위(CHAR)로 읽어 −2625 가 −65.65pt(5배)가 된다
+    // (맥 한글 12.30 · N1). 최하위 비트를 지운다. CHAR 의도 입력은 이 키들이 아니다.
+    let even = |v: i32| v & !1;
     if let Some(v) = json_i32(json, "indent") {
-        mods.indent = Some(v);
+        mods.indent = Some(even(v));
     }
     if let Some(v) = json_i32(json, "marginLeft") {
-        mods.margin_left = Some(v);
+        mods.margin_left = Some(even(v));
     }
     if let Some(v) = json_i32(json, "marginRight") {
-        mods.margin_right = Some(v);
+        mods.margin_right = Some(even(v));
     }
     if let Some(v) = json_i32(json, "spacingBefore") {
-        mods.spacing_before = Some(v);
+        mods.spacing_before = Some(even(v));
     }
     if let Some(v) = json_i32(json, "spacingAfter") {
-        mods.spacing_after = Some(v);
+        mods.spacing_after = Some(even(v));
     }
     // 확장 탭 속성
     if let Some(v) = json_str(json, "headType") {
@@ -1688,5 +1691,33 @@ mod tests {
         assert_eq!(find_logical_control_positions(&para), vec![0, 0, 0, 0]);
         assert_eq!(logical_paragraph_length(&para), 1);
         assert_eq!(navigable_text_len(&para), 1);
+    }
+}
+
+#[cfg(test)]
+mod para_shape_mods_even_tests {
+    use super::parse_para_shape_mods;
+
+    /// 맥 한글 12.30(N1): 문단 모양의 여백·들여쓰기·간격 원값이 **홀수**이면 한컴이 글자 단위(CHAR)로 읽는다 —
+    /// `(v>>1) × 기본 글자 크기/2 ÷ 100`. 내어쓰기 −2625(13.1pt 의도)가 −65.65pt(5배)가 된다. 편집 입력은 쓰기 전에 짝수여야 한다
+    /// (최하위 비트를 지운다 · CHAR 의도 입력은 이 키들이 아니다).
+    #[test]
+    fn odd_raw_values_are_written_even() {
+        let mods = parse_para_shape_mods(
+            r#"{"indent":-2625,"marginLeft":1001,"marginRight":-3,"spacingBefore":7,"spacingAfter":8}"#,
+        );
+        assert_eq!(mods.indent, Some(-2626));
+        assert_eq!(mods.margin_left, Some(1000));
+        assert_eq!(mods.margin_right, Some(-4));
+        assert_eq!(mods.spacing_before, Some(6));
+        // 짝수는 그대로.
+        assert_eq!(mods.spacing_after, Some(8));
+    }
+
+    /// 줄 간격(퍼센트·고정값 등)은 CHAR 환산 대상이 아니라 그대로 둔다.
+    #[test]
+    fn line_spacing_is_not_rounded() {
+        let mods = parse_para_shape_mods(r#"{"lineSpacing":165}"#);
+        assert_eq!(mods.line_spacing, Some(165));
     }
 }
