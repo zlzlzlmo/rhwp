@@ -4588,8 +4588,18 @@ fn compute_line_spacing_hwp(
                 // 165%×1400 → 910 이 아니라 912, 145%×600 → 272, 145%×500 → 224.
                 // 코퍼스 101,321줄(개체 없는 문단): 현재식 75.2% ↔ 4배수 스냅 98.9% 일치.
                 // 160·140·130·100·200% 는 원래 4 배수라 무변화 — 바뀌는 것은 145·165·105·110·115% 계열뿐.
-                let raw = line_height_hwp as f64 * (ls_value - 100.0) / 100.0;
-                ((raw.abs() / 4.0 + 0.5).floor() * 4.0 * raw.signum()) as i32
+                //
+                // 식은 «크기를 먼저 4로 나눈 몫»에 비율을 곱한다: 간격 = 4 × round_half_away((크기>>2)·(비율−100)/100).
+                // 크기가 4의 배수면 위와 같고, 10.5pt(1050)·9.5pt·8.5pt 계열만 4HU 갈린다
+                // (1050·160% → 628, 850·120% → 168, 950·80% → −188: 한컴 저장 줄, lhb-04).
+                if ls_value.fract() == 0.0 {
+                    let num = (line_height_hwp >> 2) as i64 * (ls_value as i64 - 100);
+                    let q = (num.abs() + 50) / 100;
+                    (q * 4 * num.signum()) as i32
+                } else {
+                    let raw = line_height_hwp as f64 * (ls_value - 100.0) / 100.0;
+                    ((raw.abs() / 4.0 + 0.5).floor() * 4.0 * raw.signum()) as i32
+                }
             } else {
                 0
             }
@@ -6285,5 +6295,34 @@ mod utf16_offset_tests {
         };
 
         assert_eq!(char_index_to_utf16_offset(&para, 2), 3);
+    }
+}
+
+#[cfg(test)]
+mod percent_spacing_quantization_tests {
+    use super::*;
+
+    /// 한컴이 저장한 줄 간격(HWP5 코퍼스 정답)과 같아야 한다 — lhb-04.
+    /// 규칙: 간격 = 4 × round_half_away((크기 >> 2) × (비율 − 100) / 100).
+    /// 크기가 4의 배수가 아닌 10.5pt·9.5pt·8.5pt 계열에서만 종전 «전체를 곱한 뒤 4로 반올림»과 갈린다.
+    #[test]
+    fn percent_spacing_divides_size_by_four_first() {
+        // (줄 높이 HU, 비율 %, 한컴이 저장한 줄 간격 HU)
+        let hancom = [
+            (1050, 160.0, 628),
+            (850, 120.0, 168),
+            (950, 80.0, -188),
+            // 크기가 4의 배수인 줄은 종전과 같아야 한다(회귀 0).
+            (1400, 165.0, 912),
+            (600, 145.0, 272),
+            (500, 145.0, 224),
+            (1100, 160.0, 660),
+            (1000, 130.0, 300),
+            (1100, 90.0, -112),
+        ];
+        for (lh, pct, want) in hancom {
+            let got = compute_line_spacing_hwp(LineSpacingType::Percent, pct, lh, 96.0);
+            assert_eq!(got, want, "크기 {lh} · 비율 {pct}%");
+        }
     }
 }
