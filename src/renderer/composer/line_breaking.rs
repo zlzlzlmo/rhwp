@@ -2834,7 +2834,10 @@ fn font_fit_char_metrics(face: &str, size_hwp: i32) -> Option<(i32, i32)> {
     let size = size_hwp as i64;
     let up = int_mul_div(size, ascent, 1024);
     let height = up + int_mul_div(size, descent, 1024);
-    Some((size.max(height) as i32, int_mul_div(size, 85, 100).max(up) as i32))
+    Some((
+        size.max(height) as i32,
+        int_mul_div(size, 85, 100).max(up) as i32,
+    ))
 }
 
 /// 줄 안 «일반 글자»(공백·탭·문단 끝이 아닌 글자)가 글꼴 세로 지표로 정하는 (줄 높이, 기준선)의 최댓값.
@@ -2891,8 +2894,12 @@ fn apply_font_fit_to_frame_metrics(
         metrics.text_height = height;
     }
     metrics.baseline_distance = metrics.baseline_distance.max(baseline);
-    metrics.line_spacing =
-        compute_line_spacing_hwp(line_spacing_type, line_spacing_value, metrics.line_height, dpi);
+    metrics.line_spacing = compute_line_spacing_hwp(
+        line_spacing_type,
+        line_spacing_value,
+        metrics.line_height,
+        dpi,
+    );
 }
 
 fn apply_inline_control_line_height(seg: &mut LineSeg, height_hwp: i32) {
@@ -6465,7 +6472,12 @@ mod font_fit_line_height_tests {
     }
 
     /// 한 줄짜리 «가나다라» 문단을 다시 조판해 첫 줄의 (줄 높이, 글자 높이, 기준선, 줄 간격)을 돌려준다.
-    fn first_line(font: &str, size_hwp: i32, percent: f64, font_line_height: bool) -> (i32, i32, i32, i32) {
+    fn first_line(
+        font: &str,
+        size_hwp: i32,
+        percent: f64,
+        font_line_height: bool,
+    ) -> (i32, i32, i32, i32) {
         let styles = ResolvedStyleSet {
             char_styles: vec![ResolvedCharStyle {
                 font_size: px(size_hwp),
@@ -6486,20 +6498,39 @@ mod font_fit_line_height_tests {
             text: text.to_string(),
             char_offsets: (0..text.chars().count() as u32).collect(),
             char_count: text.chars().count() as u32 + 1,
-            char_shapes: vec![CharShapeRef { start_pos: 0, char_shape_id: 0 }],
+            char_shapes: vec![CharShapeRef {
+                start_pos: 0,
+                char_shape_id: 0,
+            }],
             ..Default::default()
         };
-        reflow_line_segs(&mut para, ParagraphBox::content_width_px(500.0, DPI), &styles, DPI);
+        reflow_line_segs(
+            &mut para,
+            ParagraphBox::content_width_px(500.0, DPI),
+            &styles,
+            DPI,
+        );
         let seg = &para.line_segs[0];
-        (seg.line_height, seg.text_height, seg.baseline_distance, seg.line_spacing)
+        (
+            seg.line_height,
+            seg.text_height,
+            seg.baseline_distance,
+            seg.line_spacing,
+        )
     }
 
     /// 한컴 저장 줄(lhb-01): 글꼴 세로 지표 (ascent, descent)/1024em 으로 잰 줄 높이·기준선·간격.
     /// 맑은 고딕 11pt·160% → 1464 / 기준선 1198 / 간격 880, 10pt·160% → 1331 / 1089 / 796.
     #[test]
     fn malgun_gothic_line_follows_font_vertical_metrics() {
-        assert_eq!(first_line("맑은 고딕", 1100, 160.0, true), (1464, 1464, 1198, 880));
-        assert_eq!(first_line("맑은 고딕", 1000, 160.0, true), (1331, 1331, 1089, 796));
+        assert_eq!(
+            first_line("맑은 고딕", 1100, 160.0, true),
+            (1464, 1464, 1198, 880)
+        );
+        assert_eq!(
+            first_line("맑은 고딕", 1000, 160.0, true),
+            (1331, 1331, 1089, 796)
+        );
         // 13pt·130%
         assert_eq!(first_line("맑은 고딕", 1300, 130.0, true).0, 1731);
     }
@@ -6517,7 +6548,13 @@ mod font_fit_line_height_tests {
     /// 문단 모양에서 켜지 않았거나 표에 없는 글꼴이면 종전 그대로(크기 = 줄 높이, 기준선 0.85).
     #[test]
     fn flag_off_or_unknown_font_keeps_size_based_line() {
-        assert_eq!(first_line("맑은 고딕", 1100, 160.0, false), (1100, 1100, 935, 660));
-        assert_eq!(first_line("어떤 글꼴", 1100, 160.0, true), (1100, 1100, 935, 660));
+        assert_eq!(
+            first_line("맑은 고딕", 1100, 160.0, false),
+            (1100, 1100, 935, 660)
+        );
+        assert_eq!(
+            first_line("어떤 글꼴", 1100, 160.0, true),
+            (1100, 1100, 935, 660)
+        );
     }
 }
