@@ -668,7 +668,8 @@ impl FontGlyphLowerer<'_, '_> {
                 self.report.rejected_glyph_runs += 1;
                 return None;
             }
-            let nominal_advance = f64::from(font_advance) * run.style.font_size / units_per_em;
+            let nominal_advance =
+                f64::from(font_advance) * run.style.sized_font_size() / units_per_em;
             max_advance_delta_px =
                 max_advance_delta_px.max((producer_advance - nominal_advance).abs());
             glyph_ids.push(u32::from(glyph_id.0));
@@ -798,7 +799,7 @@ impl FontGlyphLowerer<'_, '_> {
             shape_key: ShapeKey {
                 font_instance: FontInstanceKey {
                     face_key,
-                    size_px: run.style.font_size,
+                    size_px: run.style.sized_font_size(),
                     variations: Vec::new(),
                     synthetic_bold: false,
                     synthetic_italic: false,
@@ -886,7 +887,10 @@ impl FontGlyphLowerer<'_, '_> {
         let source_range = TextSourceRange::new(0, run.text.len() as u32);
         let glyph_range = GlyphRange::new(0, 1);
         let mut bitmap_options = FontBitmapGlyphDecodeOptions::new(
-            run.style.font_size.round().clamp(1.0, f64::from(u16::MAX)) as u16,
+            run.style
+                .sized_font_size()
+                .round()
+                .clamp(1.0, f64::from(u16::MAX)) as u16,
             source_range,
             glyph_range,
             bbox,

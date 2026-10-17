@@ -188,6 +188,10 @@ pub(crate) fn replay_positions_or_compute<'a>(
         })
 }
 
+fn is_unit_size_scale(scale: &f64) -> bool {
+    *scale == 1.0
+}
+
 /// 텍스트 렌더링 스타일
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextStyle {
@@ -197,8 +201,12 @@ pub struct TextStyle {
         Option<std::sync::Arc<supplemental_metrics::SupplementalMetricSnapshot>>,
     /// 글꼴 이름
     pub font_family: String,
-    /// 글꼴 크기 (px)
+    /// 글꼴 크기 (px) — base. 줄 높이·기준선의 입력이다.
     pub font_size: f64,
+    /// 상대 크기(relSz) 배율 — 글자를 **재고 그리는** 크기는 `font_size × size_scale` 이다
+    /// (한컴은 상대 크기를 줄 높이에 곱하지 않는다). 1.0 이 기본이며 1.0 이면 직렬화에서 뺀다.
+    #[serde(skip_serializing_if = "is_unit_size_scale")]
+    pub size_scale: f64,
     /// 글자 색상
     pub color: ColorRef,
     /// 진하게
@@ -327,19 +335,37 @@ impl TextStyle {
     ///
     /// 비첨자 run 은 인자를 그대로 돌려주므로 기존 출력이 비트 단위로 보존된다.
     pub fn script_draw_metrics(&self, base_font_size: f64, baseline_y: f64) -> (f64, f64) {
+        // 상대 크기(relSz)를 먼저 곱한다 — 첨자 축소·기준선 이동량은 줄 글자 크기(곱하기 전) 기준.
+        let sized = base_font_size * self.size_scale_factor();
         if self.superscript {
             (
-                base_font_size * SCRIPT_DRAW_SCALE,
+                sized * SCRIPT_DRAW_SCALE,
                 baseline_y - base_font_size * SUPERSCRIPT_RISE_EM,
             )
         } else if self.subscript {
             (
-                base_font_size * SCRIPT_DRAW_SCALE,
+                sized * SCRIPT_DRAW_SCALE,
                 baseline_y + base_font_size * SUBSCRIPT_DROP_EM,
             )
         } else {
-            (base_font_size, baseline_y)
+            (sized, baseline_y)
         }
+    }
+
+    /// 상대 크기(relSz) 배율 — 잘못된 값(0 이하·NaN·무한)은 1.0 으로 본다. 1.0 은 `x * 1.0`
+    /// 이라 비트 단위로 종전과 같다.
+    pub fn size_scale_factor(&self) -> f64 {
+        if self.size_scale.is_finite() && self.size_scale > 0.0 {
+            self.size_scale
+        } else {
+            1.0
+        }
+    }
+
+    /// 글자를 재고 그리는 크기(px) = base × 상대 크기 배율. 첨자 축소는 포함하지 않는다.
+    /// 줄 높이·기준선에는 쓰지 않는다(그쪽은 `font_size`).
+    pub fn sized_font_size(&self) -> f64 {
+        self.font_size * self.size_scale_factor()
     }
 
     /// 글자폭 맞춤(fit) 대상 advance 에 적용할 배율 (#2771, #5756).
@@ -440,6 +466,7 @@ impl Default for TextStyle {
             supplemental_metrics: None,
             font_family: String::new(),
             font_size: 0.0,
+            size_scale: 1.0,
             color: 0,
             bold: false,
             italic: false,
@@ -2736,6 +2763,65 @@ mod tests {
         let (size, y) = sub.script_draw_metrics(10.0, 50.0);
         assert!((size / 10.0 - 0.636).abs() <= 0.01, "{size}");
         assert!(((y - 50.0) / 10.0 - 0.120).abs() <= 0.01, "{y}");
+    }
+
+    /// 상대 크기(relSz): 맥 한글은 글자를 `round(크기 × relSz ÷ 100)` 높이로 그린다.
+    /// 맥 PDF 정답 — 칠곡 hwpx 9pt relSz 95 글자 8.52pt, exam_eng 영문 11.5pt relSz 106 글자
+    /// 12.12~12.24pt(23,290자 전부 이 두 값).
+    #[test]
+    fn td06_draw_size_follows_relative_size_like_mac_pdf() {
+        // 9pt = 12px · 900HU × 95% = 855HU
+        let chilgok = TextStyle {
+            font_size: 12.0,
+            size_scale: 855.0 / 900.0,
+            ..Default::default()
+        };
+        let (size, y) = chilgok.script_draw_metrics(12.0, 50.0);
+        let pt = size * 0.75;
+        assert!((pt - 8.52).abs() <= 0.05, "9pt relSz 95: {pt}pt, 맥 8.52pt");
+        assert_eq!(y, 50.0, "비첨자 baseline 은 불변");
+
+        // 11.5pt = 1150HU · ×106% = 1219HU
+        let english = TextStyle {
+            font_size: 1150.0 * 96.0 / 7200.0,
+            size_scale: 1219.0 / 1150.0,
+            ..Default::default()
+        };
+        let (size, _) = english.script_draw_metrics(english.font_size, 0.0);
+        let pt = size * 0.75;
+        assert!(
+            (12.12 - 0.02..=12.24 + 0.02).contains(&pt),
+            "11.5pt relSz 106: {pt}pt, 맥 12.12~12.24pt"
+        );
+    }
+
+    /// relSz 100(또는 미지정 0·잘못된 값)은 비트 단위로 종전과 같다.
+    #[test]
+    fn td06_unit_or_invalid_size_scale_is_bit_identical() {
+        for scale in [1.0, 0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let style = TextStyle {
+                font_size: 13.0,
+                size_scale: scale,
+                ..Default::default()
+            };
+            assert_eq!(style.script_draw_metrics(13.0, 50.0), (13.0, 50.0), "{scale}");
+        }
+        assert_eq!(TextStyle::default().size_scale, 1.0);
+    }
+
+    /// 첨자 run 은 상대 크기를 먼저 곱하고 그 위에 0.64 를 곱한다. 기준선 이동은 줄 글자
+    /// 크기(상대 크기 전) 기준이라 상대 크기와 무관하다.
+    #[test]
+    fn td06_size_scale_applies_before_the_script_scale() {
+        let sup = TextStyle {
+            font_size: 20.0,
+            size_scale: 0.95,
+            superscript: true,
+            ..Default::default()
+        };
+        let (size, y) = sup.script_draw_metrics(20.0, 100.0);
+        assert!((size - 20.0 * 0.95 * 0.64).abs() < 1e-9, "{size}");
+        assert!((y - (100.0 - 20.0 * 0.44)).abs() < 1e-9, "{y}");
     }
 
     #[test]

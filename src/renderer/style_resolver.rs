@@ -35,8 +35,12 @@ pub struct ResolvedCharStyle {
     /// [#7051] 언어 슬롯별로 선언 글꼴이 **HFT 한글 전용 face** 여서 치환됐는지.
     /// 그런 글꼴의 ASCII 는 한컴이 반각으로 전진시킨다(측정 전용).
     pub font_families_hft_hangul: Vec<bool>,
-    /// 글꼴 크기 (px)
+    /// 글꼴 크기 (px) — base. 줄 높이·기준선의 입력이다(한컴은 상대 크기를 줄 높이에 곱하지 않는다).
     pub font_size: f64,
+    /// 7개 언어 카테고리별 상대 크기(relSz) 배율 — 글자를 재고 그리는 크기만 `font_size ×` 이
+    /// 값이다. `round(크기HU × relSz ÷ 100) ÷ 크기HU` 라 정수 HU 로 반올림한 높이와 같고,
+    /// relSz 100(또는 미지정 0)이면 정확히 1.0 이다. 비어 있으면 전 칸 1.0.
+    pub size_scales: Vec<f64>,
     /// 진하게
     pub bold: bool,
     /// 기울임
@@ -99,6 +103,7 @@ impl Default for ResolvedCharStyle {
             font_families_metric_trusted: Vec::new(),
             font_families_hft_hangul: Vec::new(),
             font_size: 12.0,
+            size_scales: Vec::new(),
             bold: false,
             italic: false,
             text_color: 0,
@@ -172,6 +177,11 @@ impl ResolvedCharStyle {
             .get(slot)
             .copied()
             .unwrap_or(false)
+    }
+
+    /// 지정 언어 카테고리의 상대 크기(relSz) 배율을 반환한다. 범위 밖이면 1.0.
+    pub fn size_scale_for_lang(&self, lang_index: usize) -> f64 {
+        self.size_scales.get(lang_index).copied().unwrap_or(1.0)
     }
 
     /// 지정 언어 카테고리의 자간(px)을 반환한다.
@@ -451,6 +461,17 @@ fn resolve_char_styles(doc_info: &DocInfo, dpi: f64) -> Vec<ResolvedCharStyle> {
         .collect()
 }
 
+/// 상대 크기(relSz %)를 글자 크기 배율로 바꾼다 — 맥 한글은 글자를 `round(크기HU × relSz ÷ 100)`
+/// HU 높이로 그린다(칠곡 9pt relSz 95 → 855HU = 8.55pt, 맥 PDF 8.52pt).
+/// 100 이거나 스펙 밖 미지정 0(rhwp 가 만든 HWP3 변환본 전건)이면 정확히 1.0 이라 기존 출력이 불변이다.
+fn relative_size_scale(base_size_hu: i32, rel_percent: u8) -> f64 {
+    if rel_percent == 0 || rel_percent == 100 || base_size_hu <= 0 {
+        return 1.0;
+    }
+    let base = base_size_hu as f64;
+    (base * f64::from(rel_percent) / 100.0).round() / base
+}
+
 /// 개별 CharShape 해소
 fn resolve_single_char_style(cs: &CharShape, doc_info: &DocInfo, dpi: f64) -> ResolvedCharStyle {
     // base_size는 HWPUNIT 단위
@@ -462,6 +483,7 @@ fn resolve_single_char_style(cs: &CharShape, doc_info: &DocInfo, dpi: f64) -> Re
     let mut font_families_hft_hangul = Vec::with_capacity(LANG_COUNT);
     let mut letter_spacings = Vec::with_capacity(LANG_COUNT);
     let mut ratios = Vec::with_capacity(LANG_COUNT);
+    let mut size_scales = Vec::with_capacity(LANG_COUNT);
 
     for lang in 0..LANG_COUNT {
         let font_id = cs.font_ids[lang];
@@ -484,6 +506,7 @@ fn resolve_single_char_style(cs: &CharShape, doc_info: &DocInfo, dpi: f64) -> Re
         letter_spacings.push(font_size * spacing_percent / 100.0);
 
         ratios.push(cs.ratios[lang] as f64 / 100.0);
+        size_scales.push(relative_size_scale(cs.base_size, cs.relative_sizes[lang]));
     }
 
     // 한국어(0번) 값을 기본값으로 사용
@@ -497,6 +520,7 @@ fn resolve_single_char_style(cs: &CharShape, doc_info: &DocInfo, dpi: f64) -> Re
         font_families_metric_trusted,
         font_families_hft_hangul,
         font_size,
+        size_scales,
         bold: cs.bold,
         italic: cs.italic,
         text_color: cs.text_color,
@@ -1235,6 +1259,43 @@ mod tests {
         // 1000 HWPUNIT * 96 / 7200 ≈ 13.33 px
         let expected_10pt = 1000.0 * DEFAULT_DPI / 7200.0;
         assert!((styles.char_styles[1].font_size - expected_10pt).abs() < 0.01);
+    }
+
+    /// 상대 크기(relSz)는 언어 칸마다 따로 크기 배율이 된다 — 맥 한글은
+    /// `round(크기HU × relSz ÷ 100)` 높이로 그린다. 줄 높이 입력인 `font_size` 는 base 그대로다.
+    #[test]
+    fn td06_relative_size_becomes_per_language_scale() {
+        let mut doc_info = make_doc_info_with_font();
+        // 9pt · 한글 95% · 영어 106% · 한자 100% · 일어 0(스펙 밖 미지정 → 100%) ·
+        // 기타 10%(스펙 하한) · 기호 250%(상한)
+        doc_info.char_shapes[0].base_size = 900;
+        doc_info.char_shapes[0].relative_sizes = [95, 106, 100, 0, 10, 250, 100];
+        let styles = resolve_styles(&doc_info, DEFAULT_DPI);
+        let cs = &styles.char_styles[0];
+
+        // 900HU × 95% = 855HU (칠곡 9pt relSz 95 → 맥 PDF 8.52pt)
+        assert!((cs.size_scale_for_lang(0) - 855.0 / 900.0).abs() < 1e-12);
+        assert!((cs.size_scale_for_lang(1) - 954.0 / 900.0).abs() < 1e-12);
+        assert_eq!(cs.size_scale_for_lang(2), 1.0);
+        assert_eq!(cs.size_scale_for_lang(3), 1.0);
+        assert!((cs.size_scale_for_lang(4) - 90.0 / 900.0).abs() < 1e-12);
+        assert!((cs.size_scale_for_lang(5) - 2250.0 / 900.0).abs() < 1e-12);
+        // 범위 밖 언어 칸은 1.0
+        assert_eq!(cs.size_scale_for_lang(99), 1.0);
+        // 줄 높이·기준선 입력 크기는 base 그대로
+        assert!((cs.font_size - 900.0 * DEFAULT_DPI / 7200.0).abs() < 1e-9);
+    }
+
+    /// 기본값(relSz 100)은 배율 1.0 이라 기존 출력이 비트 단위로 같다.
+    #[test]
+    fn td06_default_relative_size_leaves_scale_exactly_one() {
+        let doc_info = make_doc_info_with_font();
+        let styles = resolve_styles(&doc_info, DEFAULT_DPI);
+        for cs in &styles.char_styles {
+            for lang in 0..7 {
+                assert_eq!(cs.size_scale_for_lang(lang), 1.0);
+            }
+        }
     }
 
     #[test]

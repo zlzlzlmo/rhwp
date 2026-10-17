@@ -321,6 +321,41 @@ fn test_svg_draw_text_superscript_adjusts_baseline_and_size() {
     assert!(output.contains("y=\"91.2\""));
 }
 
+/// 상대 크기(relSz) 95 글자는 base 20px 가 아니라 19px 로 그려지고, 글자 폭(textLength)도
+/// 같은 비율로 줄며, 밑줄 굵기는 줄 글자 크기(base)를 따른다 — 맥 한글 PDF 칠곡 9pt relSz 95
+/// 글자가 8.52pt 로 그려진 것과 같은 규칙이다.
+#[test]
+fn td06_svg_draws_glyph_at_relative_size_but_underlines_at_base_size() {
+    let draw = |size_scale: f64| {
+        let mut renderer = SvgRenderer::new();
+        renderer.begin_page(800.0, 600.0);
+        renderer.draw_text(
+            "1",
+            10.0,
+            100.0,
+            &TextStyle {
+                font_size: 20.0,
+                font_family: "돋움".to_string(),
+                size_scale,
+                underline: UnderlineType::Bottom,
+                ..Default::default()
+            },
+        );
+        renderer.output().to_string()
+    };
+    let plain = draw(1.0);
+    let scaled = draw(0.95);
+    assert!(plain.contains("font-size=\"20\""), "{plain}");
+    assert!(scaled.contains("font-size=\"19\""), "{scaled}");
+    let ratio = text_length_of(&scaled, "1") / text_length_of(&plain, "1");
+    assert!((ratio - 0.95).abs() < 0.03, "폭 비 {ratio}");
+    assert_eq!(
+        underline_stroke_width(&scaled),
+        underline_stroke_width(&plain),
+        "밑줄 굵기는 줄 글자 크기(base) 기준"
+    );
+}
+
 /// 주어진 글리프를 담은 `<text>` 줄에서 `textLength` 값을 뽑아낸다.
 fn text_length_of(output: &str, glyph: &str) -> f64 {
     let needle = format!(">{glyph}</text>");

@@ -1677,7 +1677,8 @@ impl From<&TextStyle> for PaintTextStyle {
     fn from(style: &TextStyle) -> Self {
         Self {
             font_family: style.font_family.clone(),
-            font_size: style.font_size,
+            // 그리는 크기(상대 크기 relSz 반영) — 배율이 1.0 이면 style.font_size 와 비트 단위로 같다.
+            font_size: style.sized_font_size(),
             color: style.color,
             bold: style.bold,
             italic: style.italic,

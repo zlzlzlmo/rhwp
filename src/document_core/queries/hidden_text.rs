@@ -228,32 +228,34 @@ use crate::model::color::{char_shade, opaque_rgb};
 
 // ── 판정 코어 (합성 입력으로 단위 테스트 가능) ─────────────────────────────
 
-/// 실효 글자 크기(pt) = `base_size` / 100. **`relative_sizes` 를 곱하지 않는다.**
+/// 실효 글자 크기(pt) = `base_size × (가장 큰 relative_sizes 칸) / 100` (HU 반올림).
 ///
-/// # 왜 스펙대로 곱하지 않는가
-///
-/// HWP 스펙상 실효 크기는 `base_size × relative_sizes[언어] / 100` 이 맞다. 그런데
-/// **이 엔진은 그 곱을 하지 않는다** — `renderer::style_resolver` 의 글자 모양 해소는
-/// `hwpunit_to_px(cs.base_size, dpi)` 로 크기를 정하고, 같은 함수가 장평(`ratios`)과
-/// 자간(`spacings`)은 반영하면서 `relative_sizes` 는 쓰지 않는다. 실제로 `src/` 전체에서
-/// `relative_sizes` 를 읽는 곳은 파서·모델·직렬화·편집뿐이고 렌더 경로는 0건이다.
+/// # 왜 렌더러와 같은 식인가
 ///
 /// 판정기가 렌더러보다 글자를 **작게** 계산하면, 화면에는 멀쩡히 보이는 글자를 은닉으로
 /// 보고하게 된다. 은닉 판정의 기준은 "이 도구가 그려 내는 결과"여야 하므로 렌더러와
-/// 같은 식을 쓴다.
+/// 같은 식을 쓴다. 렌더러(`renderer::style_resolver::relative_size_scale`)는 글자를
+/// `round(base_size × relative_sizes[언어] ÷ 100)` HU 높이로 그린다(맥 한글 12.30 과 같다).
 ///
-/// 현실 문서에서 차이는 없다 — HWPX 60개 문서 4,298개 `charPr` 실측에서 `relSz != 100`
-/// 은 0건이었다.
+/// 판정은 글자 모양 단위라 어느 언어 칸의 글자가 올지 모르므로 **가장 큰 칸**의 값을 쓴다 —
+/// 어떤 글자도 여기서 계산한 것보다 작게 그려지지 않아 보이는 글자를 은닉으로 보고하지 않는다.
+/// 스펙 밖 미지정 0 은 렌더러와 같이 100% 로 본다(#4141 이전 rhwp 가 만든 HWP3 변환본은
+/// 전건이 0 이라, 0% 로 곱했다면 문서 전체가 0pt 로 보고됐을 것이다).
 ///
-/// # 이력 (#4141)
+/// # 이력
 ///
-/// 종전 이 주석은 "`CharShape::default()` 의 `relative_sizes = [0; 7]` 을 0% 로 오독해
-/// 모든 글자를 0pt 로 보고하는 사고도 구조적으로 불가능해진다"를 부수 논거로 들었다.
-/// 그 전제는 사라졌다 — `CharShape::default()` 는 이제 스펙 기본값 `[100; 7]` 이다
-/// (`model/style.rs`). **결론은 그대로다**: 렌더러가 안 곱하므로 판정기도 안 곱한다.
-/// 사라진 것은 근거 하나뿐이고, 아래 회귀 테스트가 0 입력에 대한 안전성을 직접 고정한다.
+/// 종전에는 렌더 경로가 `relative_sizes` 를 읽지 않아(참조 0건) 판정기도 곱하지 않았다.
+/// 렌더러가 곱하기 시작하면서(위비즈 맥 정합 A3 TD-06) 같이 바꿨다. 현실 문서에서 차이는
+/// 거의 없다 — HWPX 60개 문서 4,298개 `charPr` 실측에서 `relSz != 100` 은 0건이었다.
 pub fn effective_pt(shape: &CharShape) -> f64 {
-    shape.base_size.max(0) as f64 / 100.0
+    let base_hu = shape.base_size.max(0) as f64;
+    let rel_percent = shape
+        .relative_sizes
+        .iter()
+        .map(|&percent| if percent == 0 { 100 } else { percent })
+        .max()
+        .unwrap_or(100);
+    (base_hu * f64::from(rel_percent) / 100.0).round() / 100.0
 }
 
 /// 문자 한 개를 판정한다. 보이면 `None`.
@@ -1033,15 +1035,32 @@ mod tests {
     }
 
     #[test]
-    fn effective_size_ignores_relative_sizes_like_the_renderer_does() {
-        // 스펙상 실효 크기는 base_size × relSz/100 이지만, 이 엔진의
-        // `renderer::style_resolver` 는 base_size 만 픽셀로 환산하고 relSz 는 쓰지 않는다
-        // (렌더 경로 참조 0건). 판정기가 렌더러보다 작게 계산하면 화면에 보이는 글자를
-        // 은닉으로 보고하게 되므로 렌더러와 같은 식을 쓴다.
+    fn effective_size_follows_relative_sizes_like_the_renderer_does() {
+        // 렌더러는 글자를 round(base_size × relSz ÷ 100) HU 높이로 그린다(맥 한글 12.30 정합,
+        // 위비즈 맥 정합 A3 TD-06). 판정기가 렌더러보다 크게 계산하면 상대 크기로 줄인 숨김을
+        // 놓치고, 작게 계산하면 보이는 글자를 은닉으로 보고하므로 같은 식을 쓴다.
         let mut cs = shape(1000, 0x0000_0000, NO_SHADE);
-        cs.relative_sizes = [10; 7]; // 스펙대로면 1pt, 렌더러 기준으로는 10pt
-        assert!((effective_pt(&cs) - 10.0).abs() < 1e-9);
+        cs.relative_sizes = [10; 7]; // 10pt × 10% = 1pt
+        assert!((effective_pt(&cs) - 1.0).abs() < 1e-9);
+        // 1pt 는 임계(1pt) 미만이 아니고, 임계를 2pt 로 올리면 은닉이다.
         assert_eq!(classify_char(&cs, PAGE_WHITE, DEFAULT_THRESHOLD_PT), None);
+        assert!(matches!(
+            classify_char(&cs, PAGE_WHITE, 2.0),
+            Some(Verdict::NearInvisible { .. })
+        ));
+        // 정수 HU 반올림: 9pt × 95% = 855HU = 8.55pt (칠곡 relSz 95 → 맥 PDF 8.52pt).
+        let mut chilgok = shape(900, 0x0000_0000, NO_SHADE);
+        chilgok.relative_sizes = [95; 7];
+        assert!((effective_pt(&chilgok) - 8.55).abs() < 1e-9);
+    }
+
+    #[test]
+    fn effective_size_uses_the_largest_language_slot() {
+        // 글자 모양 단위 판정이라 어느 언어 칸 글자가 올지 모른다 — 가장 큰 칸을 쓰면 어떤
+        // 글자도 계산값보다 작게 그려지지 않아 보이는 글자를 은닉으로 보고하지 않는다.
+        let mut cs = shape(1000, 0x0000_0000, NO_SHADE);
+        cs.relative_sizes = [10, 10, 10, 10, 10, 10, 100];
+        assert!((effective_pt(&cs) - 10.0).abs() < 1e-9);
         assert_eq!(classify_char(&cs, PAGE_WHITE, 2.0), None);
     }
 
@@ -1049,8 +1068,8 @@ mod tests {
     fn default_relative_sizes_can_never_cause_a_zero_size_misjudgment() {
         // relSz=0 은 OWPML 유효범위 10~250 밖이지만 외부 파일에는 실제로 들어온다 —
         // #4141 이전 rhwp 가 만든 HWP3 변환본이 전부 그렇다(CHAR_SHAPE 68,744개 전건).
-        // 그 값을 0% 로 곱했다면 문서 전체가 0pt 로 보고됐을 것이다. relSz 를 아예
-        // 보지 않으므로 그 사고가 구조적으로 불가능하다.
+        // 그 값을 0% 로 곱했다면 문서 전체가 0pt 로 보고됐을 것이다. 0 은 렌더러와 같이
+        // 100% 로 보므로 그 사고가 구조적으로 불가능하다.
         //
         // (#4141 이후 `CharShape::default()` 자체는 [100; 7] 이다. 그래서 여기서 0 을
         //  명시 대입한다 — 이 테스트가 지키는 것은 기본값이 아니라 *입력 내성*이다.)

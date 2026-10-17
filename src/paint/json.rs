@@ -1560,7 +1560,8 @@ fn write_text_style(buf: &mut String, style: &TextStyle) {
         buf,
         "\"fontFamily\":{},\"fontSize\":{:.3},\"color\":{},\"bold\":{},\"italic\":{},\"ratio\":{:.6},\"underline\":{},\"underlineShape\":{},\"strikethrough\":{},\"strikeShape\":{},\"outlineType\":{},\"shadowType\":{},\"shadowColor\":{},\"shadowOffsetX\":{:.3},\"shadowOffsetY\":{:.3},\"emboss\":{},\"engrave\":{},\"superscript\":{},\"subscript\":{},\"underlineColor\":{},\"strikeColor\":{},\"shadeColor\":{},\"emphasisDot\":{}",
         json_escape(&style.font_family),
-        style.font_size,
+        // 그리는 크기(상대 크기 relSz 반영) — 소비자(CanvasKit)는 이 위에 첨자 배율을 곱한다.
+        style.sized_font_size(),
         json_escape(&color_ref_to_css(style.color)),
         style.bold,
         style.italic,
