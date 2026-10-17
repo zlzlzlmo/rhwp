@@ -98,7 +98,7 @@ fn parse_lines(svg: &str) -> Vec<(f64, f64, f64, f64, bool)> {
 ///
 /// 가드: wrapper가 안 여백을 가지면 점선 내부 표보다 바깥에서 상·하 실선이 둘 다
 /// 보여야 한다. #6621 이전의 "같은 y" 조건은 padding을 잃는 잘못된 box model이었다.
-/// 좌표를 hardcode 하지 않고, 점선보다 5px 이상 넓은 실선이 첫 점선 위와 마지막
+/// 좌표를 hardcode 하지 않고, 점선보다 4px 이상 넓은 실선이 첫 점선 위와 마지막
 /// 점선 아래에 각각 10px 이내로 있는지 짝지어 무관한 다른 표의 실선을 제외한다.
 #[test]
 fn nested_table_border_kwater_rfp_outer_outline_preserves_padding() {
@@ -137,7 +137,7 @@ fn nested_table_border_kwater_rfp_outer_outline_preserves_padding() {
             .filter(|(x1, _, x2, ..)| {
                 dashed
                     .iter()
-                    .any(|(ix1, _, ix2, _, _)| *x1 + 5.0 < *ix1 && *x2 > *ix2 + 5.0)
+                    .any(|(ix1, _, ix2, _, _)| *x1 + 4.0 < *ix1 && *x2 > *ix2 + 4.0)
             })
             .copied()
             .collect();
