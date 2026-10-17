@@ -239,6 +239,10 @@ pub(crate) fn is_line_end_forbidden(ch: char) -> bool {
     )
 }
 
+/// 고정폭 빈칸 — HWP5 문자 컨트롤 31(0x1f)을 파서가 옮긴 U+2007(FIGURE SPACE).
+/// [LB-G03] 한컴은 이를 공백류(낱말 경계)로 센다.
+const FIXED_WIDTH_BLANK: char = '\u{2007}';
+
 /// 한글 음절/자모 여부 (옛한글 확장 자모 포함)
 fn is_hangul(ch: char) -> bool {
     ('\u{AC00}'..='\u{D7A3}').contains(&ch)       // 한글 음절
@@ -364,8 +368,9 @@ fn tokenize_paragraph_with_regenerated_space_metric(
             continue;
         }
 
-        // 공백 (줄 바꿈 지점) — NonBreakingSpace(\u{00A0})는 제외
-        if ch == ' ' {
+        // 공백 (줄 바꿈 지점) — NonBreakingSpace(\u{00A0})는 제외.
+        // [LB-G03] 고정폭 빈칸(U+2007)은 공백류라 낱말 경계·끊을 자리다(폭은 그 글자의 전진폭).
+        if ch == ' ' || ch == FIXED_WIDTH_BLANK {
             let utf16_pos = if i < char_offsets.len() {
                 char_offsets[i]
             } else {
@@ -379,9 +384,14 @@ fn tokenize_paragraph_with_regenerated_space_metric(
                 12.0
             };
             let inline_width = inline_width_px_at(inline_controls, i);
+            let blank_advance = if ch == ' ' {
+                space_metric.space_advance(&ts)
+            } else {
+                estimate_text_width_unrounded(&ch.to_string(), &ts)
+            };
             tokens.push(BreakToken::Space {
                 idx: i,
-                width: space_metric.space_advance(&ts) + inline_width,
+                width: blank_advance + inline_width,
                 max_font_size: font_size,
                 has_inline_control: inline_width > 0.0,
             });
@@ -404,7 +414,7 @@ fn tokenize_paragraph_with_regenerated_space_metric(
 
                 while i < text_len {
                     let c = text_chars[i];
-                    if c == ' ' || c == '\n' || c == '\t' {
+                    if c == ' ' || c == '\n' || c == '\t' || c == FIXED_WIDTH_BLANK {
                         break;
                     }
                     // 한글이 아니고 라틴이면 다른 토큰으로 분리
@@ -589,7 +599,7 @@ fn tokenize_paragraph_with_regenerated_space_metric(
 
                 while i < text_len {
                     let c = text_chars[i];
-                    if c == ' ' || c == '\n' || c == '\t' {
+                    if c == ' ' || c == '\n' || c == '\t' || c == FIXED_WIDTH_BLANK {
                         break;
                     }
                     if !is_latin(c) && !is_lang_neutral(c) {
@@ -1904,7 +1914,10 @@ fn fill_one_interval(
                                 has_line_break: false,
                             };
                             let mut next_start = cursor.last_break_char_idx;
-                            while next_start < text_chars.len() && text_chars[next_start] == ' ' {
+                            while next_start < text_chars.len()
+                                && (text_chars[next_start] == ' '
+                                    || text_chars[next_start] == FIXED_WIDTH_BLANK)
+                            {
                                 next_start += 1;
                             }
                             cursor.line_start_idx = next_start;
@@ -5054,6 +5067,81 @@ mod frame_reflow_tests {
                 projected
             })
             .collect()
+    }
+
+    /// [LB-G03] 고정폭 빈칸(HWP5 문자 컨트롤 31 → U+2007)은 끊을 자리다.
+    ///
+    /// 도약 골든의 `1. 문제인식<FW>(Problem)` 제목 칸 4행: 한컴이 저장한 줄은 FWSP **뒤**에서 갈린다
+    /// (`[0, 8]` — 둘째 줄이 FWSP 다음 글자 `(`에서 시작). 우리는 FWSP를 «기타 문자»로 앞뒤 낱말에 붙여
+    /// `[0, 3, 10]`처럼 엉뚱한 자리에서 갈랐다(오라클 4행 중 3행, B 4행 고침, 틀어짐 0).
+    #[test]
+    fn fixed_width_blank_is_a_break_opportunity_after_it() {
+        let styles = styles(&[16.0]);
+        let text = "문제인식\u{2007}(Problem)";
+        let chars = text.chars().collect::<Vec<_>>();
+        let para = paragraph(
+            text,
+            vec![CharShapeRef {
+                start_pos: 0,
+                char_shape_id: 0,
+            }],
+        );
+        for korean_break_unit in [0u8, 1u8] {
+            let tokens = tokenize_paragraph(
+                &chars,
+                &para.char_offsets,
+                &para.char_shapes,
+                &styles,
+                0,
+                korean_break_unit,
+            );
+            let fwsp_token = tokens
+                .iter()
+                .position(|t| matches!(t, BreakToken::Space { idx: 4, .. }))
+                .expect("U+2007 is a Space token");
+            let BreakToken::Space {
+                width: fwsp_width,
+                has_inline_control: false,
+                ..
+            } = tokens[fwsp_token]
+            else {
+                unreachable!()
+            };
+            assert!(
+                (fwsp_width - 4.0).abs() < 0.01,
+                "고정폭 빈칸은 0.25em = 4px: {fwsp_width}"
+            );
+            let hangul_width: f64 = tokens[..fwsp_token]
+                .iter()
+                .map(|t| match t {
+                    BreakToken::Text { base_width, .. } => *base_width,
+                    _ => 0.0,
+                })
+                .sum();
+            // 상자는 `문제인식` + FWSP까지만 담는다.
+            let lines = fill_lines(
+                &tokens,
+                &chars,
+                hangul_width + fwsp_width + 1.0,
+                0.0,
+                48.0,
+                korean_break_unit,
+                0,
+                &[],
+                0,
+                true,
+                None,
+            );
+            assert_eq!(lines[0].start_idx, 0);
+            assert!(
+                lines.len() >= 2 && lines[1].start_idx == 5,
+                "kbu={korean_break_unit}: 둘째 줄은 FWSP 다음(5)에서 시작: {:?}",
+                lines
+                    .iter()
+                    .map(|l| (l.start_idx, l.end_idx))
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
