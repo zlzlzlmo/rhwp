@@ -1495,6 +1495,41 @@ fn test_reflow_korean_eojeol_wrap() {
     assert_eq!(para.line_segs[1].text_start, 6);
 }
 
+/// [LB-G01] 문단 끝 표지는 새 줄을 만들지 않는다 — 글이 상자를 꽉 채우고 끝 공백이 넘쳐도 줄은 하나다.
+///
+/// 한컴 저장 줄 오라클 29행(f5a3062b 0/269 `…불가합니다. ␠` 한컴 `[0]` ↔ 우리 `[0,58]`, c15e24a6 0/84, 2d7f56d3 0/70 …):
+/// 우리는 넘친 끝 공백을 앞 줄이 흡수한 뒤 표지만 남는 빈 줄을 하나 더 냈다. 문단 줄 구동 전체(프레임 경로 포함)를 지난 뒤의
+/// 줄 수로 묻는다.
+#[test]
+fn test_reflow_trailing_space_does_not_open_a_row_for_the_end_mark() {
+    let styles = make_styles_with_font_size(16.0);
+    let paragraph = |text: &str| Paragraph {
+        text: text.to_string(),
+        char_offsets: (0..text.chars().count() as u32).collect(),
+        char_count: text.chars().count() as u32 + 1,
+        char_shapes: vec![CharShapeRef {
+            start_pos: 0,
+            char_shape_id: 0,
+        }],
+        line_segs: vec![LineSeg {
+            text_start: 0,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    // 한글 다섯(80px)이 상자(80px)를 꽉 채운다.
+    for text in ["가나다라마 ", "가나다라마  "] {
+        let mut para = paragraph(text);
+        reflow_line_segs(
+            &mut para,
+            ParagraphBox::content_width_px(80.0, 96.0),
+            &styles,
+            96.0,
+        );
+        assert_eq!(para.line_segs.len(), 1, "{text:?}: 끝 공백만 담은 줄이 생겼다");
+    }
+}
+
 /// [LB-G04] 문단 모양 속성2 bit0-1 = 1(«한 줄로 입력») 문단은 폭이 모자라도 자동으로 줄을 나누지 않는다.
 ///
 /// 맥 한글이 저장한 줄에서 이 속성을 가진 «거주지 주소»·«휴대폰 번호» 같은 라벨 칸(a9284b26 0/64·0/73,
