@@ -1139,6 +1139,29 @@ pub(crate) struct CharWidthDecision<'a> {
 /// literal 로 흩어 두지 않는다.
 const HALFWIDTH_PUNCTUATION_WIDTH_SOURCE: &str = "metricHalfwidthPunctuationOverlay";
 
+/// 한컴이 글꼴을 못 찾았을 때 그리는 글꼴 — 맥 한글 12.30 은 설치 안 된 글꼴을 함초롬돋움으로 그린다.
+const HANCOM_DEFAULT_FONT: &str = "함초롬돋움";
+
+/// CSS 일반 계열 이름·빈 이름 — 문서가 고른 글꼴이 아니라 «폰트 없음»이라 한컴 기본 글꼴 규칙의 대상이 아니다.
+fn is_generic_css_family(name: &str) -> bool {
+    let key = name.trim().to_lowercase();
+    key.is_empty()
+        || matches!(
+            key.as_str(),
+            "serif"
+                | "sans-serif"
+                | "monospace"
+                | "cursive"
+                | "fantasy"
+                | "system-ui"
+                | "ui-serif"
+                | "ui-sans-serif"
+                | "ui-monospace"
+                | "inherit"
+                | "initial"
+        )
+}
+
 /// 굵게 요청이어도 advance 가 보통과 같은 글꼴 — 굵은 글꼴 파일이 없어 한컴이 합성 굵기(채움 + 선)로 그리는 글꼴.
 /// 맑은 고딕(+Semilight)으로 시작한다: 맥 PDF 굵은 비한글 1,013자가 평균 +41.9HU/자 넓었고(표 내용 오차의 22%), 저장 줄 88줄에서
 /// 재현 89.8% → 94.3% · 과대 추정 5줄 → 0줄로 두 정답이 같은 쪽이다. 라틴 글꼴(Arial·Times)의 굵은 항목은 맥 PDF 표본이 없어 그대로 둔다.
@@ -1208,7 +1231,14 @@ fn measure_char_width_embedded_decision_for_font<'a>(
     }
     // 굵은 글꼴 파일이 없는 글꼴은 한컴이 같은 글꼴을 채움 + 선으로 다시 그린다 — advance 는 보통과 같다(맥 한글 12.30 · FM-4).
     let bold = bold && !synthetic_bold_keeps_regular_advance(primary_name);
-    let Some(mm) = font_metrics_data::find_metric_decision(primary_name, bold, italic) else {
+    // 폭 표에 없는 글꼴 이름은 한컴이 함초롬돋움으로 그리고 **그 폭으로 줄을 나눈다**(맥 한글 12.30 · FS-03 · FM-7 · 소유자 결정 10-18).
+    // 이름 치환 규칙(HCI Poppy 등)은 위 별칭 해석이 먼저 맞추므로 여기는 진짜 «처음 보는 글꼴»뿐이다. CSS 일반 계열 이름은 제외한다.
+    let found = font_metrics_data::find_metric_decision(primary_name, bold, italic).or_else(|| {
+        (!is_generic_css_family(primary_name))
+            .then(|| font_metrics_data::find_metric_decision(HANCOM_DEFAULT_FONT, bold, italic))
+            .flatten()
+    });
+    let Some(mm) = found else {
         return EmbeddedWidthDecision {
             width_px: None,
             width_source: "metricMiss",
@@ -1992,6 +2022,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 맥 한글 12.30(FS-03 · FM-7): 폭 표에 없는 글꼴 이름은 한컴이 함초롬돋움으로 그리고 **그 폭으로 줄을 나눈다**(한글 0.970em).
+    /// 포천 공고문의 경기천년바탕·제목이 이 경우다 — 종전엔 한글을 전각 1.0em 으로 쟀다. 소유자 결정(10-18): 맥 한글처럼.
+    #[test]
+    fn unknown_font_name_is_measured_with_hcr_dotum() {
+        // 포천 공고문의 실제 글꼴 이름은 굵기 이름이 붙어 있다(«경기천년바탕 Regular» · «경기천년제목 Bold» · «경기천년제목V Bold»).
+        for unknown in [
+            "경기천년바탕",
+            "경기천년제목",
+            "경기천년바탕 Regular",
+            "경기천년제목 Bold",
+            "경기천년제목 Light",
+            "경기천년제목V Bold",
+            "어떤 처음 보는 글꼴",
+        ] {
+            for c in ['가', '힣', '0', 'A', '.', '(', ' '] {
+                assert_eq!(
+                    embedded_width(unknown, false, c),
+                    embedded_width("함초롬돋움", false, c),
+                    "{unknown} {c:?} 폭은 함초롬돋움과 같아야 한다"
+                );
+            }
+        }
+        // 굵게도 함초롬돋움의 굵은 면(진짜 굵은 글꼴이 있는 계열).
+        assert_eq!(
+            embedded_width("경기천년제목", true, '가'),
+            embedded_width("함초롬돋움", true, '가')
+        );
+        // 표에 있는 글꼴은 그대로(맑은 고딕 한글 1.000em ↔ 함초롬돋움 0.970em).
+        assert!(
+            embedded_width("맑은 고딕", false, '가') > embedded_width("함초롬돋움", false, '가')
+        );
     }
 
     /// 굵은 글꼴 파일이 실제로 있는 글꼴(라틴 Arial)은 종전대로 굵은 면의 폭을 쓴다 — 범위를 맑은 고딕으로 가둔 대조.
@@ -2882,11 +2945,17 @@ mod tests {
             ratio: 1.0,
             ..Default::default()
         };
+        // (소유자 결정 10-18: 폭 표에 없는 글꼴은 함초롬돋움 폭 — '(' .313em. 종전 0.5em 폴백 아님.)
+        let hcr = TextStyle {
+            font_family: "함초롬돋움".to_string(),
+            ..style.clone()
+        };
         let positions = m.compute_char_positions("A(B", &style);
+        let positions_hcr = m.compute_char_positions("A(B", &hcr);
         let advance = positions[2] - positions[1];
         assert!(
-            (advance - style.font_size * 0.5).abs() < 0.5,
-            "미실측 폰트 '(' 는 0.5em 폴백이어야 함, got {:.2}",
+            (advance - (positions_hcr[2] - positions_hcr[1])).abs() < 0.01,
+            "미실측 폰트 '(' 는 함초롬돋움 폭이어야 함, got {:.2}",
             advance
         );
         // 한양중고딕(사다리 실측 '(' <= 0.29em): narrow 0.3em.
@@ -2962,24 +3031,26 @@ mod tests {
             ratio: 1.0,
             ..Default::default()
         };
-        // 'A' = Latin 반각 = font_size * 0.5 ≈ 6.67 유지
+        // 맥 한글 12.30(FS-03 · 소유자 결정 10-18): 폭 표에 없는 글꼴은 함초롬돋움으로 그려지고 그 폭으로 줄을 나눈다 —
+        // 'A' .654em · '가' .970em(종전 0.5em · 1.0em 휴리스틱 아님). 함초롬돋움을 직접 고른 것과 같아야 한다.
+        let hcr = TextStyle {
+            font_family: "함초롬돋움".to_string(),
+            ..style.clone()
+        };
         let pos_a = m.compute_char_positions("AA", &style);
-        let a_advance = pos_a[1] - pos_a[0];
+        let pos_a_hcr = m.compute_char_positions("AA", &hcr);
         assert!(
-            (a_advance - style.font_size * 0.5).abs() < 0.1,
-            "Latin 'A' advance should remain font_size * 0.5 ({:.2}), got {:.2}",
-            style.font_size * 0.5,
-            a_advance
+            ((pos_a[1] - pos_a[0]) - (pos_a_hcr[1] - pos_a_hcr[0])).abs() < 0.01,
+            "미등록 글꼴 'A' 는 함초롬돋움 폭이어야 한다"
         );
-        // '가' = CJK 전각 = font_size 유지
         let pos_k = m.compute_char_positions("가가", &style);
-        let k_advance = pos_k[1] - pos_k[0];
+        let pos_k_hcr = m.compute_char_positions("가가", &hcr);
         assert!(
-            (k_advance - style.font_size).abs() < 0.1,
-            "CJK '가' advance should remain font_size ({:.2}), got {:.2}",
-            style.font_size,
-            k_advance
+            ((pos_k[1] - pos_k[0]) - (pos_k_hcr[1] - pos_k_hcr[0])).abs() < 0.01,
+            "미등록 글꼴 '가' 는 함초롬돋움 폭이어야 한다"
         );
+        // 그리고 전각 1.0em 이 아니다(한글 .970em).
+        assert!((pos_k[1] - pos_k[0]) < style.font_size);
     }
 
     /// Issue #630: 등록된 한글 폰트(돋움체)에서 `·`(U+00B7) 가 전각으로 측정되어야
