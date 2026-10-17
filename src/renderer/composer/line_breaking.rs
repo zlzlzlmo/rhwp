@@ -2832,7 +2832,10 @@ fn font_fit_char_metrics(face: &str, size_hwp: i32) -> Option<(i32, i32)> {
     let size = size_hwp as i64;
     let up = int_mul_div(size, ascent, 1024);
     let height = up + int_mul_div(size, descent, 1024);
-    Some((size.max(height) as i32, int_mul_div(size, 85, 100).max(up) as i32))
+    Some((
+        size.max(height) as i32,
+        int_mul_div(size, 85, 100).max(up) as i32,
+    ))
 }
 
 /// 줄 안 «일반 글자»(공백·탭·문단 끝이 아닌 글자)가 글꼴 세로 지표로 정하는 (줄 높이, 기준선)의 최댓값.
@@ -2873,6 +2876,62 @@ fn font_fit_line_metrics(
     found
 }
 
+/// 개체가 아닌 **확장 컨트롤**(구역정의·단정의·머리말·필드·각주 앵커 …)이 서 있는 UTF-16 위치의 글자 모양 크기(px) 가운데 `range` 안의 최댓값.
+/// 한컴은 이런 컨트롤 글자(8유닛 폭)의 글자 모양 크기도 줄 높이에 넣는다(구역정의 문단: 컨트롤 1500 · 본문 1200 → 줄 높이 1500, 한컴 저장 줄 284/284).
+/// 인라인 개체(표·그림·도형·수식)는 개체 높이 경로가 따로 맡는다. 컨트롤의 위치는 `char_offsets`의 빈틈(8유닛씩)에서 순서대로 읽는다.
+fn extension_control_font_size_px(
+    para: &Paragraph,
+    styles: &ResolvedStyleSet,
+    range: std::ops::Range<u32>,
+) -> Option<f64> {
+    let slots: Vec<&Control> = para
+        .controls
+        .iter()
+        .filter(|ctrl| ctrl.occupies_ctrl_char_slot())
+        .collect();
+    if slots.is_empty() {
+        return None;
+    }
+    let mut positions: Vec<u32> = Vec::with_capacity(slots.len());
+    let mut expected = 0u32;
+    for (idx, ch) in para.text.chars().enumerate() {
+        let Some(&offset) = para.char_offsets.get(idx) else {
+            break;
+        };
+        while positions.len() < slots.len() && expected + CTRL_CHAR_CODE_UNITS <= offset {
+            positions.push(expected);
+            expected += CTRL_CHAR_CODE_UNITS;
+        }
+        expected = offset + ch.len_utf16() as u32;
+    }
+    while positions.len() < slots.len() {
+        positions.push(expected);
+        expected += CTRL_CHAR_CODE_UNITS;
+    }
+    let mut found: Option<f64> = None;
+    for (ctrl, position) in slots.into_iter().zip(positions) {
+        if matches!(
+            ctrl,
+            Control::Table(_) | Control::Shape(_) | Control::Picture(_) | Control::Equation(_)
+        ) || !range.contains(&position)
+        {
+            continue;
+        }
+        let size = para
+            .char_shapes
+            .iter()
+            .filter(|shape| shape.start_pos <= position)
+            .max_by_key(|shape| shape.start_pos)
+            .and_then(|shape| styles.char_styles.get(shape.char_shape_id as usize))
+            .map(|style| style.font_size)
+            .filter(|size| *size > 0.0);
+        if let Some(size) = size {
+            found = Some(found.map_or(size, |current| current.max(size)));
+        }
+    }
+    found
+}
+
 /// 글꼴 세로 지표로 잰 (줄 높이, 기준선)을 행 치수에 반영한다. 줄 간격의 기준(비율 줄 간격의 S)도 그 줄 높이다.
 fn apply_font_fit_to_frame_metrics(
     metrics: &mut FrameRowMetrics,
@@ -2889,8 +2948,12 @@ fn apply_font_fit_to_frame_metrics(
         metrics.text_height = height;
     }
     metrics.baseline_distance = metrics.baseline_distance.max(baseline);
-    metrics.line_spacing =
-        compute_line_spacing_hwp(line_spacing_type, line_spacing_value, metrics.line_height, dpi);
+    metrics.line_spacing = compute_line_spacing_hwp(
+        line_spacing_type,
+        line_spacing_value,
+        metrics.line_height,
+        dpi,
+    );
 }
 
 fn apply_inline_control_line_height(seg: &mut LineSeg, height_hwp: i32) {
@@ -3233,6 +3296,23 @@ fn layout_paragraph_in_frame_impl(
                     }
                 }
 
+                // 개체가 아닌 확장 컨트롤 글자(구역정의 등)의 글자 모양 크기도 줄 높이에 든다.
+                for &(start, end) in &row_char_ranges {
+                    let from = if start == 0 {
+                        0
+                    } else {
+                        char_index_to_utf16_offset(para, start)
+                    };
+                    let to = if end >= text_chars.len() {
+                        u32::MAX
+                    } else {
+                        char_index_to_utf16_offset(para, end)
+                    };
+                    if let Some(control_fs) = extension_control_font_size_px(para, styles, from..to)
+                    {
+                        maximum_font_size = maximum_font_size.max(control_fs);
+                    }
+                }
                 let mut metrics = frame_metrics_for_line(
                     maximum_font_size,
                     fallback_font_size,
@@ -4336,6 +4416,15 @@ fn reflow_line_segs_unmerged(
             Some(mark) if line_idx + 1 == line_breaks.len() => fs.max(mark),
             _ => fs,
         };
+        // 개체가 아닌 확장 컨트롤 글자(구역정의 등)의 글자 모양 크기도 줄 높이에 든다 — 첫 줄은 0부터, 마지막 줄은 문단 끝까지 잰다.
+        let line_utf16_start = if line_idx == 0 { 0 } else { utf16_start };
+        let line_utf16_end = if line_idx + 1 == line_breaks.len() {
+            u32::MAX
+        } else {
+            char_index_to_utf16_offset(para, lb.end_idx)
+        };
+        let fs = extension_control_font_size_px(para, styles, line_utf16_start..line_utf16_end)
+            .map_or(fs, |control_fs| fs.max(control_fs));
         let mut text_seg = make_line_seg(utf16_start, fs);
         // «글꼴에 어울리는 줄 높이»(attr1 bit22): 글꼴 세로 지표가 크기보다 큰 줄 높이·기준선을 정한다.
         // 간격의 기준(비율 줄 간격의 S)도 그 줄 높이다.
@@ -6463,7 +6552,12 @@ mod font_fit_line_height_tests {
     }
 
     /// 한 줄짜리 «가나다라» 문단을 다시 조판해 첫 줄의 (줄 높이, 글자 높이, 기준선, 줄 간격)을 돌려준다.
-    fn first_line(font: &str, size_hwp: i32, percent: f64, font_line_height: bool) -> (i32, i32, i32, i32) {
+    fn first_line(
+        font: &str,
+        size_hwp: i32,
+        percent: f64,
+        font_line_height: bool,
+    ) -> (i32, i32, i32, i32) {
         let styles = ResolvedStyleSet {
             char_styles: vec![ResolvedCharStyle {
                 font_size: px(size_hwp),
@@ -6484,20 +6578,39 @@ mod font_fit_line_height_tests {
             text: text.to_string(),
             char_offsets: (0..text.chars().count() as u32).collect(),
             char_count: text.chars().count() as u32 + 1,
-            char_shapes: vec![CharShapeRef { start_pos: 0, char_shape_id: 0 }],
+            char_shapes: vec![CharShapeRef {
+                start_pos: 0,
+                char_shape_id: 0,
+            }],
             ..Default::default()
         };
-        reflow_line_segs(&mut para, ParagraphBox::content_width_px(500.0, DPI), &styles, DPI);
+        reflow_line_segs(
+            &mut para,
+            ParagraphBox::content_width_px(500.0, DPI),
+            &styles,
+            DPI,
+        );
         let seg = &para.line_segs[0];
-        (seg.line_height, seg.text_height, seg.baseline_distance, seg.line_spacing)
+        (
+            seg.line_height,
+            seg.text_height,
+            seg.baseline_distance,
+            seg.line_spacing,
+        )
     }
 
     /// 한컴 저장 줄(lhb-01): 글꼴 세로 지표 (ascent, descent)/1024em 으로 잰 줄 높이·기준선·간격.
     /// 맑은 고딕 11pt·160% → 1464 / 기준선 1198 / 간격 880, 10pt·160% → 1331 / 1089 / 796.
     #[test]
     fn malgun_gothic_line_follows_font_vertical_metrics() {
-        assert_eq!(first_line("맑은 고딕", 1100, 160.0, true), (1464, 1464, 1198, 880));
-        assert_eq!(first_line("맑은 고딕", 1000, 160.0, true), (1331, 1331, 1089, 796));
+        assert_eq!(
+            first_line("맑은 고딕", 1100, 160.0, true),
+            (1464, 1464, 1198, 880)
+        );
+        assert_eq!(
+            first_line("맑은 고딕", 1000, 160.0, true),
+            (1331, 1331, 1089, 796)
+        );
         // 13pt·130%
         assert_eq!(first_line("맑은 고딕", 1300, 130.0, true).0, 1731);
     }
@@ -6515,7 +6628,100 @@ mod font_fit_line_height_tests {
     /// 문단 모양에서 켜지 않았거나 표에 없는 글꼴이면 종전 그대로(크기 = 줄 높이, 기준선 0.85).
     #[test]
     fn flag_off_or_unknown_font_keeps_size_based_line() {
-        assert_eq!(first_line("맑은 고딕", 1100, 160.0, false), (1100, 1100, 935, 660));
-        assert_eq!(first_line("어떤 글꼴", 1100, 160.0, true), (1100, 1100, 935, 660));
+        assert_eq!(
+            first_line("맑은 고딕", 1100, 160.0, false),
+            (1100, 1100, 935, 660)
+        );
+        assert_eq!(
+            first_line("어떤 글꼴", 1100, 160.0, true),
+            (1100, 1100, 935, 660)
+        );
+    }
+}
+
+#[cfg(test)]
+mod extension_control_line_height_tests {
+    use super::*;
+    use crate::model::control::Control;
+    use crate::renderer::style_resolver::{ResolvedCharStyle, ResolvedParaStyle};
+
+    const DPI: f64 = 96.0;
+
+    fn px(hwp: i32) -> f64 {
+        hwp as f64 * DPI / 7200.0
+    }
+
+    fn style(size_hwp: i32) -> ResolvedCharStyle {
+        ResolvedCharStyle {
+            font_size: px(size_hwp),
+            ratio: 1.0,
+            ..Default::default()
+        }
+    }
+
+    /// 구역정의 컨트롤(확장 제어문자 8유닛)이 앞에 서고 본문 «가나»가 그 뒤에 오는 문단의 첫 줄 (줄 높이, 기준선, 간격).
+    /// 컨트롤 자리의 글자 모양은 `control_size`, 본문의 글자 모양은 `text_size` 다.
+    fn first_line(control_size: i32, text_size: i32, with_control: bool) -> (i32, i32, i32) {
+        let styles = ResolvedStyleSet {
+            char_styles: vec![style(control_size), style(text_size)],
+            para_styles: vec![ResolvedParaStyle::default()],
+            ..Default::default()
+        };
+        let (controls, offsets, shapes) = if with_control {
+            (
+                vec![Control::SectionDef(Box::default())],
+                vec![8u32, 9],
+                vec![
+                    CharShapeRef {
+                        start_pos: 0,
+                        char_shape_id: 0,
+                    },
+                    CharShapeRef {
+                        start_pos: 8,
+                        char_shape_id: 1,
+                    },
+                ],
+            )
+        } else {
+            (
+                Vec::new(),
+                vec![0u32, 1],
+                vec![CharShapeRef {
+                    start_pos: 0,
+                    char_shape_id: 1,
+                }],
+            )
+        };
+        let mut para = Paragraph {
+            text: "가나".to_string(),
+            char_offsets: offsets,
+            char_count: if with_control { 11 } else { 3 },
+            char_shapes: shapes,
+            controls,
+            ..Default::default()
+        };
+        reflow_line_segs(
+            &mut para,
+            ParagraphBox::content_width_px(500.0, DPI),
+            &styles,
+            DPI,
+        );
+        let seg = &para.line_segs[0];
+        (seg.line_height, seg.baseline_distance, seg.line_spacing)
+    }
+
+    /// 한컴 저장 줄(lhb-02): 개체가 아닌 확장 컨트롤 글자의 글자 모양 크기도 줄 높이에 든다 —
+    /// 구역정의 문단에서 컨트롤 1500 · 본문 1200 → 줄 높이 1500 (종전 1200).
+    #[test]
+    fn section_def_char_shape_size_counts_in_first_line() {
+        // 1500·160% → 간격 900, 기준선 round(1500·0.85) = 1275
+        assert_eq!(first_line(1500, 1200, true), (1500, 1275, 900));
+    }
+
+    /// 컨트롤이 본문보다 작으면 본문이 정한다(최댓값), 컨트롤이 없으면 종전 그대로.
+    #[test]
+    fn smaller_control_or_no_control_keeps_text_line() {
+        assert_eq!(first_line(1000, 1200, true), (1200, 1020, 720));
+        assert_eq!(first_line(1500, 1200, false), (1200, 1020, 720));
     }
 }
