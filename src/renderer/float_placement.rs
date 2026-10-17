@@ -1012,6 +1012,23 @@ pub(crate) fn is_para_topbottom_float(common: &CommonObjAttr) -> bool {
         && matches!(common.vert_rel_to, VertRelTo::Para)
 }
 
+/// 공백만 든 host 에 앵커된, 세로 오프셋이 양수인 문단 기준 자리차지 표(맥 한글 12.30 G1).
+///
+/// 한컴은 표 윗변을 «앵커 줄 위 + 세로 오프셋»으로 두고 앵커 줄에 무슨 글이 있는지는 보지 않는다 — 공백 host 도 빈 host 와
+/// 같다. 맥 PDF 28개 표(규제영향분석서 계열 80168 10/10 …)가 전부 호스트 줄 높이(15pt × 160% = 24pt)만큼 위에 있다.
+/// 오프셋 0 인 공백 host 는 어긋나지 않아(−0.1pt) 대상이 아니다.
+pub(crate) fn is_whitespace_host_of_offset_float(para: &Paragraph) -> bool {
+    let has_glyph = |c: char| c > '\u{001F}' && c != '\u{FFFC}';
+    para.text.chars().any(has_glyph)
+        && !para.text.chars().any(|c| has_glyph(c) && !c.is_whitespace())
+        // 표 하나만 앵커한 호스트로 한정한다 — 표가 여럿이면 저장 앵커 줄이 스택 아래에 서는 형상(#2813 당직근무일지)이
+        // 있어 호스트 줄을 표 뒤 흐름에 남겨야 한다.
+        && matches!(para.controls.as_slice(),
+            [Control::Table(t)]
+                if is_para_topbottom_float(&t.common)
+                    && signed_hwpunit(t.common.vertical_offset) > 0)
+}
+
 /// A positive-offset empty host float whose next, generated body paragraph has
 /// no stored line-segment anchor. Hancom consumes the empty host's physical row,
 /// lays that body paragraph in the remaining gap above the float, then resumes
