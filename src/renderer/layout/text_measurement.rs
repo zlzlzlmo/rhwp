@@ -851,6 +851,7 @@ pub(crate) fn resolved_to_text_style(
             tab_leaders: Vec::new(),
             inline_tabs: Vec::new(),
             extra_word_spacing: 0.0,
+            leading_space_skip: 0,
             extra_char_spacing: 0.0,
             squeeze_unclamped: false,
             extra_dash_advance: 0.0,
@@ -1451,7 +1452,10 @@ pub(crate) fn char_width_decision<'a>(
     let mut final_width_px = base_width_px * ratio
         + glyph_letter_spacing(style.letter_spacing, base_width_px * ratio, font_size)
         + style.extra_char_spacing;
-    if c == ' ' {
+    // [JS-2] 줄머리 공백(텍스트 맨 앞 공백 런 중 처음 `leading_space_skip` 개)은 정렬 범위 밖이라 늘이지 않는다.
+    if c == ' '
+        && !(i < style.leading_space_skip && chars[..i].iter().all(|before| *before == ' '))
+    {
         final_width_px += style.extra_word_spacing;
     }
     if dash_leader {

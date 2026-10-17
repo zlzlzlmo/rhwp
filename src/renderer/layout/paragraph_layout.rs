@@ -1913,7 +1913,12 @@ fn compute_line_extra_spacing(
             .count()
             .min(trailing_space_limit);
         let visible_count = all_chars.len() - trailing_spaces;
-        let interior_spaces = all_chars[..visible_count]
+        // [JS-2] 정렬 범위는 첫 비공백 글자부터다 — 줄머리 공백(공백으로 들여쓴 문단 첫 줄)은 안쪽 공백이 아니다.
+        let leading_spaces = all_chars[..visible_count]
+            .iter()
+            .take_while(|c| **c == ' ')
+            .count();
+        let interior_spaces = all_chars[leading_spaces..visible_count]
             .iter()
             .filter(|c| **c == ' ')
             .count();
@@ -6840,6 +6845,8 @@ impl LayoutEngine {
             }
             counts
         };
+        // [JS-2] 줄머리 공백 영역 — 첫 비공백 글자를 가진 run 에서 닫힌다.
+        let mut leading_space_region_open = true;
         for (run_idx, run) in comp_line.runs.iter().enumerate() {
             // 조판부호: 이 run 시작 위치 이전의 도형 마커를 먼저 삽입
             for (smi, (spos, stext)) in shape_markers.iter().enumerate() {
@@ -7052,6 +7059,22 @@ impl LayoutEngine {
             }
             text_style.line_x_offset = x - col_area.x;
             text_style.extra_word_spacing = extra_word_sp;
+            // [JS-2] 양쪽 정렬이 늘이는 공백은 첫 비공백 글자 뒤 것뿐이다 — 줄머리 공백은 자연 폭을 지킨다.
+            let leading_spaces_in_run = if leading_space_region_open {
+                let run_text = effective_text_for_metrics(run);
+                let spaces = run_text.chars().take_while(|c| *c == ' ').count();
+                if spaces < run_text.chars().count() {
+                    leading_space_region_open = false;
+                }
+                spaces
+            } else {
+                0
+            };
+            text_style.leading_space_skip = if extra_word_sp != 0.0 {
+                leading_spaces_in_run
+            } else {
+                0
+            };
             text_style.extra_char_spacing = extra_char_sp;
             // 음수 자간은 «한 줄로 입력» 칸에서 squeeze 분기만 만든다(넘치면 늘 그 분기다).
             text_style.squeeze_unclamped = (self.squeeze_cell_line.get()
@@ -10194,13 +10217,33 @@ mod alignment_range_tests {
         laid_out_first_run_in_lines(alignment, letter_spacing, text, &[0])
     }
 
-    /// `line_starts` 는 줄마다 시작 UTF-16 위치(저장 LINE_SEG 의 text_start) — 첫 줄의 첫 TextRun 을 돌려준다.
     fn laid_out_first_run_in_lines(
         alignment: Alignment,
         letter_spacing: f64,
         text: &str,
         line_starts: &[u32],
     ) -> (f64, f64, f64, f64) {
+        let run = laid_out_run(alignment, letter_spacing, text, line_starts);
+        (run.x, run.width, run.col_left, run.col_width)
+    }
+
+    /// 깔아 놓은 첫 TextRun — 위치·폭과 그 줄의 스타일(렌더러가 글자 위치를 다시 재는 데 쓰는 것).
+    struct LaidOutRun {
+        x: f64,
+        width: f64,
+        text: String,
+        style: crate::renderer::TextStyle,
+        col_left: f64,
+        col_width: f64,
+    }
+
+    /// `line_starts` 는 줄마다 시작 UTF-16 위치(저장 LINE_SEG 의 text_start) — 첫 줄의 첫 TextRun 을 돌려준다.
+    fn laid_out_run(
+        alignment: Alignment,
+        letter_spacing: f64,
+        text: &str,
+        line_starts: &[u32],
+    ) -> LaidOutRun {
         use crate::model::page::{ColumnDef, PageDef};
         use crate::model::paragraph::{LineSeg, Paragraph};
         use crate::renderer::composer::compose_paragraph;
@@ -10210,9 +10253,14 @@ mod alignment_range_tests {
         use crate::renderer::render_tree::{RenderNode, RenderNodeType};
         use crate::renderer::style_resolver::ResolvedParaStyle;
 
-        fn first_run(node: &RenderNode) -> Option<(f64, f64)> {
-            if matches!(node.node_type, RenderNodeType::TextRun(_)) {
-                return Some((node.bbox.x, node.bbox.width));
+        fn first_run(node: &RenderNode) -> Option<(f64, f64, String, crate::renderer::TextStyle)> {
+            if let RenderNodeType::TextRun(run) = &node.node_type {
+                return Some((
+                    node.bbox.x,
+                    node.bbox.width,
+                    run.text.clone(),
+                    run.style.clone(),
+                ));
             }
             node.children.iter().find_map(first_run)
         }
@@ -10307,9 +10355,16 @@ mod alignment_range_tests {
             0,
             &[],
         );
-        let (x, width) = first_run(&tree.root).expect("TextRun 하나");
+        let (x, width, text, style) = first_run(&tree.root).expect("TextRun 하나");
         let dpi = 96.0;
-        (x, width, 8504.0 * dpi / 7200.0, 42520.0 * dpi / 7200.0)
+        LaidOutRun {
+            x,
+            width,
+            text,
+            style,
+            col_left: 8504.0 * dpi / 7200.0,
+            col_width: 42520.0 * dpi / 7200.0,
+        }
     }
 
     /// [JS-1] 가운데·오른쪽 정렬도 같은 범위 폭을 쓴다 — 끝 글자 자간을 뺀 «잉크 블록»이 가운데/오른쪽에 선다.
@@ -10359,6 +10414,32 @@ mod alignment_range_tests {
             (x - expected_x).abs() < 0.01,
             "줄 끝 공백이 가운데 정렬 폭에 들어갔다: x={x:.3} 기대 {expected_x:.3} (반 공백 {:.3}px 어긋남)",
             x - expected_x
+        );
+    }
+
+    /// [JS-2] 양쪽 정렬은 줄머리 공백을 늘이지 않는다 — 정렬 범위는 첫 비공백 글자부터다.
+    ///
+    /// 맥 한글 PDF(03a1a71f p9 첫 줄): 공백으로 들여쓴 문단의 앞 공백 진행폭이 자연폭 552HU 인데 같은 줄 낱말 사이
+    /// 공백은 672HU 로 늘어난다. 앞 공백 있는 양쪽 비끝줄 119줄은 전부 문단 첫 줄이고, 우리는 앞 공백도 늘여
+    /// 첫 글자가 앞 공백 1칸당 +50~60HU(2칸 +105 · 3칸 이상 +162HU) 오른쪽에 섰다.
+    #[test]
+    fn justified_line_does_not_stretch_its_leading_spaces() {
+        use crate::renderer::layout::text_measurement::compute_char_positions;
+
+        // 첫 줄 `␠␠가 나 다␠`(앞 공백 2 · 안쪽 공백 2 · 줄바꿈 공백 1) · 둘째 줄 `라마바사`. 16px 글자라 공백 8px.
+        let run = laid_out_run(Alignment::Justify, 0.0, "  가 나 다 라마바사", &[0, 8]);
+        let positions = compute_char_positions(&run.text, &run.style);
+        // 앞 공백 둘은 자연 폭(8px × 2) 그대로다.
+        assert!(
+            (positions[2] - 16.0).abs() < 0.001,
+            "앞 공백이 늘어났다: 첫 글자 x = {:.3}px (자연 16px)",
+            positions[2]
+        );
+        // 늘어난 몫은 안쪽 공백 둘이 나눠 갖고, 끝 글리프 우변이 줄 끝에 닿는다(`다` 다음 = 위치 7).
+        assert!(
+            (run.x + positions[7] - (run.col_left + run.col_width)).abs() < 0.01,
+            "끝 글리프 우변이 줄 끝에서 {:.3}px 벗어났다",
+            run.x + positions[7] - (run.col_left + run.col_width)
         );
     }
 
