@@ -1526,7 +1526,11 @@ fn test_reflow_trailing_space_does_not_open_a_row_for_the_end_mark() {
             &styles,
             96.0,
         );
-        assert_eq!(para.line_segs.len(), 1, "{text:?}: 끝 공백만 담은 줄이 생겼다");
+        assert_eq!(
+            para.line_segs.len(),
+            1,
+            "{text:?}: 끝 공백만 담은 줄이 생겼다"
+        );
     }
 }
 
@@ -1562,7 +1566,11 @@ fn test_reflow_squeeze_paragraph_keeps_one_line_per_forced_break() {
     styles.para_styles[0].line_wrap_squeeze = true;
     let mut squeezed = one_paragraph("안녕하세요 반갑습니다");
     reflow_line_segs(&mut squeezed, narrow.clone(), &styles, 96.0);
-    assert_eq!(squeezed.line_segs.len(), 1, "한 줄로 입력은 줄을 나누지 않는다");
+    assert_eq!(
+        squeezed.line_segs.len(),
+        1,
+        "한 줄로 입력은 줄을 나누지 않는다"
+    );
 
     // 강제 줄바꿈 뒤는 새 줄이다 — 줄바꿈 사이마다 한 줄.
     let mut forced = one_paragraph("안녕하세요 반갑습니다\n안녕하세요 반갑습니다");

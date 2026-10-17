@@ -1480,8 +1480,7 @@ pub(crate) fn char_width_decision<'a>(
         + glyph_letter_spacing(style.letter_spacing, base_width_px * ratio, font_size)
         + style.extra_char_spacing;
     // [JS-2] 줄머리 공백(텍스트 맨 앞 공백 런 중 처음 `leading_space_skip` 개)은 정렬 범위 밖이라 늘이지 않는다.
-    if c == ' '
-        && !(i < style.leading_space_skip && chars[..i].iter().all(|before| *before == ' '))
+    if c == ' ' && !(i < style.leading_space_skip && chars[..i].iter().all(|before| *before == ' '))
     {
         final_width_px += style.extra_word_spacing;
     }

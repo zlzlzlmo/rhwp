@@ -2131,7 +2131,12 @@ mod tests {
     /// [LB-G04] 속성2 bit0-1 → `breakSetting@lineWrap` (0 BREAK · 1 SQUEEZE · 2 KEEP) — 파서의 역매핑.
     #[test]
     fn write_para_pr_emits_line_wrap_from_attr2() {
-        for (attr2, token) in [(0u32, "BREAK"), (1, "SQUEEZE"), (2, "KEEP"), (1 | (1 << 4), "SQUEEZE")] {
+        for (attr2, token) in [
+            (0u32, "BREAK"),
+            (1, "SQUEEZE"),
+            (2, "KEEP"),
+            (1 | (1 << 4), "SQUEEZE"),
+        ] {
             let mut ps = ParaShape::default();
             ps.attr2 = attr2;
             let mut writer = Writer::new(Vec::new());

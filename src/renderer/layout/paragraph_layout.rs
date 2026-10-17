@@ -10556,8 +10556,9 @@ mod alignment_range_tests {
             false,
         );
         // 추가 간격은 모든 글자 뒤에 붙는다 — 끝 글자 뒤 몫은 그려지지 않는다.
-        let glyph_right =
-            width_with(&styles, text, 0.0, extra_char) - extra_char - last_glyph_spacing(&styles, "라");
+        let glyph_right = width_with(&styles, text, 0.0, extra_char)
+            - extra_char
+            - last_glyph_spacing(&styles, "라");
         assert!(
             (glyph_right - avail).abs() < 0.001,
             "끝 글리프 우변이 줄 끝에서 {:.3}px 벗어났다",

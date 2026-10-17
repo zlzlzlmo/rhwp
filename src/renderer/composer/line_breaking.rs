@@ -5317,9 +5317,10 @@ mod frame_reflow_tests {
         tokens[..count]
             .iter()
             .map(|token| match token {
-                BreakToken::Text { base_width, .. } | BreakToken::Space { width: base_width, .. } => {
-                    *base_width
-                }
+                BreakToken::Text { base_width, .. }
+                | BreakToken::Space {
+                    width: base_width, ..
+                } => *base_width,
                 _ => 0.0,
             })
             .sum()
