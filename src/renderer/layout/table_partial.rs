@@ -4444,8 +4444,15 @@ impl LayoutEngine {
                         0.0
                     } else if !has_row_cut
                         && (in_start || in_end)
-                        && self.row_cut_content_height(table, r, &[], &[], styles)
-                            <= col_area.height
+                        && {
+                            // 블록(걸침 행 묶음) 전체가 쪽의 40% 안에 드는 작은 블록에 한정한다 — 큰 블록은 조판이 내용
+                            // 높이로 소비하므로 선언 높이로 그리면 쪽 바닥을 넘는다(21217935 심사지표). 조판의 `row_limit` 과 같은 값.
+                            let (bs, be) = rowspan_block_range(table, r);
+                            (bs..be.min(row_count))
+                                .map(|br| self.row_cut_content_height(table, br, &[], &[], styles))
+                                .sum::<f64>()
+                                <= col_area.height * 0.4
+                        }
                     {
                         self.row_cut_content_height(table, r, &[], &[], styles)
                     } else if has_row_cut || in_start || in_end {

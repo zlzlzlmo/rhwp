@@ -15686,6 +15686,7 @@ impl LayoutEngine {
         start_cut: &[usize],
         end_cut: &[usize],
         styles: &ResolvedStyleSet,
+        whole_row_limit: Option<f64>,
     ) -> f64 {
         let mut block_cells = Self::row_block_cells(table, b_start, b_end);
         block_cells.sort_by_key(|c| (c.row, c.col));
@@ -15735,7 +15736,17 @@ impl LayoutEngine {
         if has_row_cut {
             self.row_cut_content_height(table, row, &per_start, &per_end, styles)
         } else {
-            self.row_cut_content_height(table, row, &[], &[], styles)
+            let whole = self.row_cut_content_height(table, row, &[], &[], styles);
+            // `whole_row_limit` 가 있으면 쪽보다 큰 블록의 행은 내용 높이로 센다(렌더러 `table_partial` 2b 와 같은 규칙).
+            let block_whole: f64 = (b_start..b_end)
+                .map(|br| self.row_cut_content_height(table, br, &[], &[], styles))
+                .sum();
+            if whole_row_limit.is_some_and(|limit| block_whole > limit) {
+                // 큰 블록은 이 질의의 대상이 아니다(조판 소비는 종전 블록 컷 높이 그대로) — 0 으로 돌려 하한에서 빠진다.
+                0.0
+            } else {
+                whole
+            }
         }
     }
 

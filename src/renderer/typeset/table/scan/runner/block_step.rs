@@ -65,6 +65,7 @@ impl TypesetEngine {
             cut_row_h,
             rowspan_touched,
             cs,
+            row_limit: st.base_available_height() * 0.4,
         };
         let table::scan::RowBlockCandidate {
             b_start,

@@ -84,21 +84,31 @@ impl<'a> SelectedBlockCut<'a> {
             //   overflow, PR #2290 P1 리뷰).
             // frag_total 은 렌더 조각 표시용 참고값으로만 두고, 소비는
             // 컷 워크와 발산할 때 consumed_height 로 정정한다.
-            let frag_total = rows.fragment_height(block, end_row, blk_start_cut, &cut_res.end_cut);
+            let frag_total =
+                rows.fragment_height(block, end_row, blk_start_cut, &cut_res.end_cut, None);
             if (frag_total - cut_res.consumed_height).abs() <= 0.5 {
                 frag_total
             } else {
                 cut_res.consumed_height
             }
         } else {
-            layout_engine.row_block_content_height(
+            let content = layout_engine.row_block_content_height(
                 table,
                 b_start,
                 b_end,
                 blk_start_cut,
                 &cut_res.end_cut,
                 styles,
-            )
+            );
+            // 렌더러(`table_partial` 2b)는 이 조각에서 칸이 온전히 끝나는 행을 선언 높이로 그린다 — 조판 소비도 같은 행별
+            // 합(쪽보다 큰 행은 내용 높이)을 하한으로 삼아야 렌더가 쪽 바닥을 넘지 않는다.
+            content.max(rows.fragment_height(
+                block,
+                end_row,
+                blk_start_cut,
+                &cut_res.end_cut,
+                Some(rows.row_limit),
+            ))
         }
     }
 }

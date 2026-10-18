@@ -92,6 +92,7 @@ impl TypesetEngine {
                 cut_row_h,
                 rowspan_touched,
                 cs: v.cs,
+                row_limit: st.base_available_height() * 0.4,
             };
             let block = block_query.candidate(r);
             let step = if (block.protected || block.rowbreak_rowspan_block) && block.b_start == r {

@@ -26,6 +26,8 @@ pub(in crate::renderer::typeset) struct RowBlockQuery<'a> {
     pub(in crate::renderer::typeset) cut_row_h: &'a [f64],
     pub(in crate::renderer::typeset) rowspan_touched: &'a [bool],
     pub(in crate::renderer::typeset) cs: f64,
+    /// 이 한도 이하인 행이 조각에서 칸이 온전히 끝나면 렌더러는 선언 높이로 그린다(`table_partial` 2b) — 쪽 본문 높이.
+    pub(in crate::renderer::typeset) row_limit: f64,
 }
 
 pub(in crate::renderer::typeset) struct RowBlockCandidate {
@@ -49,6 +51,7 @@ impl RowBlockQuery<'_> {
             cut_row_h,
             rowspan_touched,
             cs,
+            ..
         } = *self;
         // rowspan 보호 블록 — 블록 전체를 분할 없이 한 단위로.
         let (b_start, b_end, _) = mt.row_block_for(r);
@@ -131,6 +134,7 @@ impl RowBlockQuery<'_> {
         row_end: usize,
         block_start_cut: &[usize],
         block_end_cut: &[usize],
+        whole_row_limit: Option<f64>,
     ) -> f64 {
         let Self {
             layout_engine,
@@ -157,6 +161,7 @@ impl RowBlockQuery<'_> {
                 block_start_cut,
                 block_end_cut,
                 styles,
+                whole_row_limit,
             );
             if row_h > 0.0 {
                 if has_row {
@@ -204,7 +209,7 @@ impl RowBlockQuery<'_> {
             // 계상 사례(59043 병리 표: 음수 패딩 + 측정/렌더 발산,
             // #2237 계열)는 기존 동작 보존 — **완전 증발(=0)** 만 보정.
             // start_cut 없는 첫 조각(#1486)은 불변.
-            let frag_h = self.fragment_height(block, b_end, blk_start_cut, &[]);
+            let frag_h = self.fragment_height(block, b_end, blk_start_cut, &[], None);
             if blk_start_cut.is_empty() || frag_h > 0.5 {
                 frag_h
             } else {
@@ -217,14 +222,20 @@ impl RowBlockQuery<'_> {
                 ))
             }
         } else {
-            layout_engine.row_block_content_height(
+            let content = layout_engine.row_block_content_height(
                 table,
                 b_start,
                 b_end,
                 blk_start_cut,
                 &[],
                 styles,
-            ) + cs * block_size.saturating_sub(1) as f64
+            ) + cs * block_size.saturating_sub(1) as f64;
+            // 렌더러가 이 조각에서 칸이 온전히 끝나는 행을 선언 높이로 그리므로(`table_partial` 2b) 소비도 그 합을 하한으로 한다.
+            if blk_start_cut.is_empty() {
+                content
+            } else {
+                content.max(self.fragment_height(block, b_end, blk_start_cut, &[], Some(self.row_limit)))
+            }
         }
     }
 }
