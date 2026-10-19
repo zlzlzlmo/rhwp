@@ -2699,6 +2699,9 @@ pub(crate) fn topbottom_float_displaced_below_following_flow(
 }
 
 #[cfg(test)]
+mod mac_hangul_parity_pins;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
