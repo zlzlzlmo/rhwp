@@ -462,6 +462,7 @@ fn parse_hwp_with_cfb(
         section_count,
         compressed,
         distribution,
+        file_header.flags.viewtext_is_body(),
         encrypted,
         password,
         &mut decompression_budget,
@@ -784,8 +785,12 @@ fn apply_hwp3_origin_fixup(doc: &mut Document, summary_hwp3_era: bool) {
 /// 배포용(0x04) 문서만 `ViewText` 를 읽던 종전 규칙은, **변경 추적**(0x4000) 등으로
 /// `BodyText` 와 `ViewText` 가 갈라진 일반 문서에서 rhwp 가 한글이 **렌더하지 않는**
 /// `BodyText` 를 읽게 만들었다(예: 연구계획서 — `BodyText` 표 4·3,540자 vs `ViewText`
-/// 표 10·10,210자). 한글은 `ViewText` 가 있으면 그것을 렌더하므로, 정상 복호되는
-/// `ViewText` 를 우선한다.
+/// 표 10·10,210자). 그 문서에서는 한글이 `ViewText` 를 렌더한다.
+///
+/// 🔴 호출부는 `FileHeaderFlags::viewtext_is_body()`(= 한글의 `flags & 0x4414`)일 때만 이 함수를
+/// 부른다. 그 비트가 하나도 없는 문서의 `ViewText` 는 한글이 무시하는 잔재다 — 처음 #5169 는
+/// «복호되면 우선»으로 일반화해 이런 파일에서 한글과 다른 본문(2024년 계획안 ↔ 2026 신청서)을
+/// 읽었다(맥 한글 12.30 REA: 열기 검증 `FUN_004f67d8`, 로더 `FUN_00503c84`).
 ///
 /// 단 일부 문서는 압축 비트가 서 있어도 `ViewText` 가 deflate 로 풀리지 않는 스텁이라
 /// (예: `20250130-hongbo.hwp`), 무조건 우선하면 본문을 잃는다. 그래서 **복호에 성공하고
@@ -817,6 +822,7 @@ fn parse_sections_strict(
     section_count: u32,
     compressed: bool,
     distribution: bool,
+    viewtext_is_body: bool,
     encrypted: bool,
     password: Option<&[u8]>,
     decompression_budget: &mut Hwp5DocumentOpenDecompressionBudget,
@@ -849,12 +855,16 @@ fn parse_sections_strict(
             )
             .map_err(ParseError::CryptoError)?
         } else {
-            // [#5169] 비배포 문서라도 정상 복호되는 ViewText 가 있으면 한글이 렌더하는
-            // 본문이므로 우선한다. 복호 실패·스텁이면 BodyText 로 폴백한다.
-            let rendered = cfb
-                .read_viewtext_section_raw_limited(i, section_raw_limit)
-                .ok()
-                .and_then(|raw| decode_rendered_viewtext(raw, compressed, section_output_limit));
+            // [#5169] 한글은 변경 추적(0x4000)·DRM(0x10·0x400) 문서의 본문을 ViewText 에서 연다.
+            // 그 속성이 없으면 ViewText 는 무시되는 잔재라 BodyText 를 읽는다. 복호 실패·스텁이면
+            // BodyText 로 폴백한다.
+            let rendered = if viewtext_is_body {
+                cfb.read_viewtext_section_raw_limited(i, section_raw_limit)
+                    .ok()
+                    .and_then(|raw| decode_rendered_viewtext(raw, compressed, section_output_limit))
+            } else {
+                None
+            };
             match rendered {
                 Some(decoded) => decoded,
                 None => {
@@ -968,12 +978,16 @@ fn parse_hwp_with_lenient(
             )
             .map_err(ParseError::CryptoError)?
         } else {
-            // [#5169] 비배포 문서라도 정상 복호되는 ViewText 가 있으면 우선한다(위 strict
-            // 경로와 동일 규칙). 복호 실패·스텁이면 BodyText 로 폴백.
-            let rendered = lenient
-                .read_viewtext_section_raw_limited(i, section_raw_limit)
-                .ok()
-                .and_then(|raw| decode_rendered_viewtext(raw, compressed, section_output_limit));
+            // [#5169] 변경 추적(0x4000)·DRM(0x10·0x400) 문서만 ViewText 를 본문으로 연다(위 strict
+            // 경로와 동일 규칙 — 한글의 `flags & 0x4414`). 복호 실패·스텁이면 BodyText 로 폴백.
+            let rendered = if file_header.flags.viewtext_is_body() {
+                lenient
+                    .read_viewtext_section_raw_limited(i, section_raw_limit)
+                    .ok()
+                    .and_then(|raw| decode_rendered_viewtext(raw, compressed, section_output_limit))
+            } else {
+                None
+            };
             match rendered {
                 Some(decoded) => decoded,
                 None => {
@@ -3809,5 +3823,130 @@ mod tests {
                 .expect("저장 고아 BinData"),
             ORPHAN_TEXT
         );
+    }
+
+    // ── 한글의 본문 스트림 선택 규칙 (맥 한글 12.30 `HwpApp.dylib` arm64 REA) ──────────
+    // 열기 검증 `FUN_004f67d8` 은 FileHeader 속성 `flags & 0x4414`(배포용 0x4 · DRM 0x10 ·
+    // 공인DRM 0x400 · 변경추적 0x4000)가 켜질 때만 `ViewText` 를, 아니면 `BodyText` 를 연다.
+    // 실제 로더 `FUN_00503c84` 도 같은 범주로 ViewText 로더(`FUN_00504730`)와 일반 로더를 가른다.
+    // 그 밖의 속성(스크립트·XML 템플릿·이력·서명·CCL·KOGL 등)이면 ViewText 는 **무시**된다 —
+    // 변경추적 문서를 일반 문서로 바꿔 저장한 뒤 남은 ViewText 잔재가 그런 경우다.
+
+    /// `FileHeader` 속성에 `mask` 비트를 더한다(압축 비트는 그대로).
+    fn or_header_flags(data: &[u8], mask: u32) -> Vec<u8> {
+        use std::io::{Read, Seek, SeekFrom, Write};
+
+        let mut compound =
+            cfb::CompoundFile::open(std::io::Cursor::new(data.to_vec())).expect("cfb open");
+        let mut header = Vec::new();
+        {
+            let mut stream = compound
+                .open_stream("/FileHeader")
+                .expect("FileHeader 스트림");
+            stream.read_to_end(&mut header).unwrap();
+        }
+        let flags = u32::from_le_bytes(header[36..40].try_into().unwrap()) | mask;
+        header[36..40].copy_from_slice(&flags.to_le_bytes());
+        {
+            let mut stream = compound
+                .create_stream("/FileHeader")
+                .expect("FileHeader 갱신");
+            stream.seek(SeekFrom::Start(0)).unwrap();
+            stream.write_all(&header).unwrap();
+        }
+        compound.into_inner().into_inner()
+    }
+
+    /// 첫 구역 문단 수 — 서로 다른 두 본문 중 어느 스트림을 읽었는지 가르는 지문이다.
+    fn first_section_paragraphs(data: &[u8]) -> usize {
+        parse_document(data).expect("파싱").sections[0]
+            .paragraphs
+            .len()
+    }
+
+    /// `BodyText/Section0` = 2010-01-06 본문, `ViewText/Section0` = 다른 문서의 본문.
+    /// 돌려주는 값은 (파일, BodyText 쪽 문단 수, ViewText 쪽 문단 수)다. 두 수가 달라야 시험이 선다.
+    fn bodytext_and_viewtext_fixture(view_payload: Option<&[u8]>) -> (Vec<u8>, usize, usize) {
+        let base = std::fs::read("samples/2010-01-06.hwp").expect("sample 존재");
+        let donor =
+            std::fs::read("samples/issue5169_viewtext_changetracking.hwp").expect("sample 존재");
+        let donor_body = cfb_reader::CfbReader::open(&donor)
+            .expect("donor CFB")
+            .read_stream_raw("/BodyText/Section0")
+            .expect("donor Section0");
+        let body_paragraphs = first_section_paragraphs(&base);
+        let view_paragraphs = first_section_paragraphs(&replace_raw_stream(
+            &base,
+            "/BodyText/Section0",
+            &donor_body,
+        ));
+        assert_ne!(
+            body_paragraphs, view_paragraphs,
+            "두 본문의 문단 수가 같으면 어느 스트림을 읽었는지 가를 수 없다"
+        );
+        let file = add_raw_streams(
+            &base,
+            &[("/ViewText/Section0", view_payload.unwrap_or(&donor_body))],
+        );
+        (file, body_paragraphs, view_paragraphs)
+    }
+
+    /// strict 열기와, strict 가 거부해 lenient 로 떨어지는 열기를 둘 다 지난다.
+    fn both_readers(file: &[u8]) -> [(&'static str, Vec<u8>); 2] {
+        [
+            ("strict", file.to_vec()),
+            ("lenient", force_lenient_cfb_fallback(file)),
+        ]
+    }
+
+    /// 배포용(0x4)·DRM(0x10)·공인DRM(0x400)·변경추적(0x4000)이 아니면 ViewText 가 있어도 BodyText 를 읽는다.
+    #[test]
+    fn hwp5_ignores_viewtext_when_header_flags_do_not_select_it() {
+        let (file, body_paragraphs, _) = bodytext_and_viewtext_fixture(None);
+        // 스크립트·XML 템플릿·이력·서명·CCL·모바일·개인정보보안·KOGL·비디오·목차필드
+        for extra in [
+            0x0u32, 0x08, 0x20, 0x40, 0x80, 0x800, 0x1000, 0x2000, 0x8000, 0x10000, 0x20000,
+        ] {
+            for (reader, bytes) in both_readers(&or_header_flags(&file, extra)) {
+                assert_eq!(
+                    first_section_paragraphs(&bytes),
+                    body_paragraphs,
+                    "{reader} 열기 · 속성 +0x{extra:x}: 한글은 BodyText 를 연다(ViewText 는 잔재)"
+                );
+            }
+        }
+    }
+
+    /// DRM(0x10)·공인DRM(0x400)·변경추적(0x4000)이면 한글은 ViewText 를 본문으로 연다.
+    #[test]
+    fn hwp5_reads_viewtext_when_header_flags_select_it() {
+        let (file, _, view_paragraphs) = bodytext_and_viewtext_fixture(None);
+        for flag in [0x4000u32, 0x10, 0x400, 0x4000 | 0x10, 0x4000 | 0x400] {
+            for (reader, bytes) in both_readers(&or_header_flags(&file, flag)) {
+                assert_eq!(
+                    first_section_paragraphs(&bytes),
+                    view_paragraphs,
+                    "{reader} 열기 · 속성 +0x{flag:x}: 한글은 ViewText 를 연다"
+                );
+            }
+        }
+    }
+
+    /// 고른 ViewText 가 본문 스트림이 아니면(deflate 가 안 풀리는 스텁 · 첫 레코드가 구역 시작 문단이 아님)
+    /// BodyText 로 폴백한다 — `20250130-hongbo.hwp` 계약.
+    #[test]
+    fn hwp5_falls_back_to_bodytext_when_selected_viewtext_is_a_stub() {
+        let not_deflate: &[u8] = b"not a deflate stream";
+        let wrong_first_record = raw_deflate(&[0u8; 64]);
+        for stub in [not_deflate, wrong_first_record.as_slice()] {
+            let (file, body_paragraphs, _) = bodytext_and_viewtext_fixture(Some(stub));
+            for (reader, bytes) in both_readers(&or_header_flags(&file, 0x4000)) {
+                assert_eq!(
+                    first_section_paragraphs(&bytes),
+                    body_paragraphs,
+                    "{reader} 열기: 스텁 ViewText 는 본문이 아니다"
+                );
+            }
+        }
     }
 }

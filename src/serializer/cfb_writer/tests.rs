@@ -1802,3 +1802,103 @@ fn test_compressed_ole_storage_payload_is_deflated() {
     );
     assert_eq!(&payload[4..], &ole_cfb[..]);
 }
+
+// ── 직렬화는 ViewText 를 쓰지 않는다 — ViewText 를 고르게 하는 속성 비트를 남기지 않는다 ─────────
+// 맥 한글 12.30(REA `HwpApp.dylib` arm64): 열기 검증 `FUN_004f67d8` 은 FileHeader 속성
+// `flags & 0x4414`(배포용 0x4 · DRM 0x10 · 공인DRM 0x400 · 변경추적 0x4000)가 켜진 문서의 본문을
+// `ViewText` 에서 열고, 저장 `FUN_004fd1a0` 은 그런 문서의 `BodyText` 에 안내 문구 스텁만 쓴다.
+// 그러니 BodyText 만 쓰면서 이 비트를 두면 한글이 없는 ViewText 를 찾아 빈 문서가 된다.
+// 배포용(0x4)·암호(0x2)를 지우던 #1768 과 같은 이유로 일반 문서로 강하한다.
+
+fn header_flags_of(bytes: &[u8]) -> u32 {
+    let mut cfb = crate::parser::cfb_reader::CfbReader::open(bytes).expect("산출물 CFB");
+    let header = crate::parser::header::parse_file_header(&cfb.read_file_header().unwrap())
+        .expect("산출물 FileHeader");
+    header.flags.raw
+}
+
+/// 모델과 원본 FileHeader 바이트(`raw_data`)의 속성에 `mask` 비트를 더한다 — 파서가 만든 상태와 같다.
+fn doc_with_header_flags(source: &[u8], mask: u32) -> Document {
+    let mut doc = crate::parser::parse_document(source).expect("파싱");
+    doc.header.flags |= mask;
+    if let Some(raw) = doc.header.raw_data.as_mut() {
+        let flags = u32::from_le_bytes([raw[36], raw[37], raw[38], raw[39]]) | mask;
+        raw[36..40].copy_from_slice(&flags.to_le_bytes());
+    }
+    doc
+}
+
+#[test]
+fn test_serialize_change_tracking_sample_drops_viewtext_selecting_flags() {
+    use crate::parser::header::VIEWTEXT_BODY_FLAGS;
+
+    let source =
+        std::fs::read("samples/issue5169_viewtext_changetracking.hwp").expect("sample 존재");
+    let doc = crate::parser::parse_document(&source).expect("파싱");
+    assert_eq!(doc.header.flags, 0x4001, "표본은 압축 + 변경추적이다");
+
+    let out = serialize_hwp(&doc).expect("직렬화");
+    let flags = header_flags_of(&out);
+    assert_eq!(
+        flags & VIEWTEXT_BODY_FLAGS,
+        0,
+        "BodyText 만 쓰는데 ViewText 를 고르게 하는 비트(0x{flags:x})가 남았다 — 한글에서 빈 문서가 된다"
+    );
+    assert_eq!(flags & 0x01, 0x01, "압축 비트는 지킨다");
+    let mut cfb = crate::parser::cfb_reader::CfbReader::open(&out).unwrap();
+    assert!(!cfb.has_stream("/ViewText/Section0"));
+
+    // 다시 읽으면 같은 본문이다 — 한글이 BodyText 에서 여는 것과 우리가 읽는 것이 같다.
+    let reparsed = crate::parser::parse_document(&out).expect("재파싱");
+    assert_eq!(
+        reparsed.sections[0].paragraphs.len(),
+        doc.sections[0].paragraphs.len()
+    );
+}
+
+#[test]
+fn test_serialize_clears_each_viewtext_selecting_bit_and_keeps_the_others() {
+    use crate::parser::header::VIEWTEXT_BODY_FLAGS;
+
+    let source = std::fs::read("samples/2010-01-06.hwp").expect("sample 존재");
+    let plain =
+        header_flags_of(&serialize_hwp(&crate::parser::parse_document(&source).unwrap()).unwrap());
+    assert_eq!(
+        plain & VIEWTEXT_BODY_FLAGS,
+        0,
+        "일반 문서는 그대로 일반 문서다"
+    );
+
+    // 지울 것: DRM · 공인DRM · 변경추적. 남길 것: 스크립트 0x8 · 이력 0x40.
+    for bit in [0x10u32, 0x400, 0x4000, 0x10 | 0x400 | 0x4000] {
+        let doc = doc_with_header_flags(&source, bit | 0x08 | 0x40);
+        let flags = header_flags_of(&serialize_hwp(&doc).expect("직렬화"));
+        assert_eq!(
+            flags & VIEWTEXT_BODY_FLAGS,
+            0,
+            "+0x{bit:x}: ViewText 선택 비트가 남았다"
+        );
+        assert_eq!(
+            flags & (0x08 | 0x40),
+            0x08 | 0x40,
+            "+0x{bit:x}: 다른 속성은 지킨다"
+        );
+        assert_eq!(flags & 0x01, plain & 0x01, "+0x{bit:x}: 압축 비트는 지킨다");
+    }
+}
+
+#[test]
+fn test_serialize_with_password_also_drops_viewtext_selecting_flags() {
+    use crate::parser::header::VIEWTEXT_BODY_FLAGS;
+
+    let source = std::fs::read("samples/2010-01-06.hwp").expect("sample 존재");
+    let doc = doc_with_header_flags(&source, 0x4000 | 0x400);
+    let out = serialize_hwp_with_password(&doc, b"pw").expect("직렬화");
+    let flags = header_flags_of(&out);
+    assert_eq!(
+        flags & VIEWTEXT_BODY_FLAGS,
+        0,
+        "비밀번호 산출물도 BodyText 가 본문이다"
+    );
+    assert_eq!(flags & 0x02, 0x02, "암호 비트는 켜져 있다");
+}

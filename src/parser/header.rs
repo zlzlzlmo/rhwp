@@ -72,7 +72,22 @@ pub struct FileHeaderFlags {
     pub prepare_distribution: bool,
 }
 
+/// 한글이 본문 스토리지를 `ViewText` 로 고르는 FileHeader 속성 비트의 합 —
+/// 배포용 `0x4` · DRM `0x10` · 공인 인증서 DRM `0x400` · 변경 추적 `0x4000`.
+///
+/// 맥 한글 12.30(`HwpApp.dylib` arm64) 디컴파일: 열기 검증 `FUN_004f67d8` 이 `flags & 0x4414` 일 때만
+/// `ViewText` 를, 아니면 `BodyText` 를 연다. 실제 로더 `FUN_00503c84` 도 같은 범주로 ViewText 로더
+/// (`FUN_00504730`)와 일반 로더를 가르고, 저장 `FUN_004fd1a0` 은 그런 문서의 `BodyText` 에 안내 문구
+/// 스텁만 쓰고 진짜 본문을 `ViewText` 에 쓴다. 이 비트가 하나도 없으면 `ViewText` 는 무시된다 —
+/// 변경 추적 문서를 일반 문서로 바꿔 저장한 뒤 남은 잔재가 그런 경우다.
+pub const VIEWTEXT_BODY_FLAGS: u32 = 0x4414;
+
 impl FileHeaderFlags {
+    /// 한글이 이 문서의 본문을 `ViewText` 에서 여는가(아니면 `BodyText`).
+    pub fn viewtext_is_body(&self) -> bool {
+        self.raw & VIEWTEXT_BODY_FLAGS != 0
+    }
+
     /// u32 플래그 값에서 파싱
     pub fn from_u32(flags: u32) -> Self {
         FileHeaderFlags {
@@ -220,6 +235,34 @@ mod tests {
         assert!(header.flags.compressed);
         assert!(header.flags.distribution);
         assert!(!header.flags.encrypted);
+    }
+
+    /// 맥 한글 12.30(REA `HwpApp.dylib` arm64): 열기 검증 `FUN_004f67d8` 은 속성 `flags & 0x4414` 일 때만
+    /// 본문 스토리지를 `ViewText` 로 고르고 아니면 `BodyText` 로 고른다. 실제 로더 `FUN_00503c84` 도 같은
+    /// 범주(배포용 · DRM · 공인DRM · 변경추적)로 ViewText 로더와 일반 로더를 가른다.
+    #[test]
+    fn viewtext_is_body_follows_hancom_mask() {
+        assert_eq!(VIEWTEXT_BODY_FLAGS, 0x4414);
+        // 켜지는 비트: 배포용 0x4 · DRM 0x10 · 공인DRM 0x400 · 변경추적 0x4000
+        for bit in [0x4u32, 0x10, 0x400, 0x4000] {
+            assert!(
+                FileHeaderFlags::from_u32(0x01 | bit).viewtext_is_body(),
+                "속성 +0x{bit:x} 는 ViewText 를 본문으로 연다"
+            );
+        }
+        // 그 밖의 비트는 하나씩 켜도 BodyText 가 본문이다(ViewText 는 잔재).
+        for bit in (0..32)
+            .map(|i| 1u32 << i)
+            .filter(|bit| bit & VIEWTEXT_BODY_FLAGS == 0)
+        {
+            assert!(
+                !FileHeaderFlags::from_u32(0x01 | bit).viewtext_is_body(),
+                "속성 +0x{bit:x} 는 ViewText 를 본문으로 열지 않는다"
+            );
+        }
+        assert!(!FileHeaderFlags::from_u32(0x01).viewtext_is_body());
+        // 상류 #5169 표본(외교부 연구계획서)은 변경추적 0x4001 이다.
+        assert!(FileHeaderFlags::from_u32(0x4001).viewtext_is_body());
     }
 
     #[test]

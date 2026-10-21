@@ -13,6 +13,7 @@ use std::io::Write;
 use crate::model::bin_data::BinDataContent;
 use crate::model::bin_data::{BinData, BinDataType, MAX_BIN_DATA_BYTES};
 use crate::model::document::{Document, Preview};
+use crate::parser::header::VIEWTEXT_BODY_FLAGS;
 use crate::password_crypto::{encrypt_hwp5_stream, HWP5_ENCRYPT_VERSION};
 
 use super::body_text::serialize_section;
@@ -73,11 +74,16 @@ fn serialize_hwp_inner(
     // 재로드가 "암호 오류: DISTRIBUTE_DOC_DATA 레코드 없음" 으로 실패한다. 일반
     // 문서로 강하(배포용 0x04 · 암호화 0x02 클리어, raw_data 의 플래그와
     // EncryptVersion도 패치).
+    //
+    // 같은 이유로 `VIEWTEXT_BODY_FLAGS`(배포용 0x4 · DRM 0x10 · 공인DRM 0x400 · 변경추적 0x4000)를
+    // 모두 지운다. 맥 한글 12.30(REA 열기 검증 `FUN_004f67d8` · 로더 `FUN_00503c84`)은 그 비트가 켜진
+    // 문서의 본문을 `ViewText` 에서 여는데, 이 직렬화는 `BodyText` 만 쓴다 — 비트를 두면 한글이 없는
+    // ViewText 를 찾아 빈 문서가 된다. 변경 추적 문서를 읽어(#5169) 다시 쓰는 길이 그렇다.
     let header_bytes = if let Some(_) = password {
         let mut header = doc.header.clone();
         header.distribution = false;
         header.encrypted = true;
-        header.flags = (header.flags | 0x02) & !0x04;
+        header.flags = (header.flags | 0x02) & !VIEWTEXT_BODY_FLAGS;
         if let Some(raw) = header.raw_data.as_mut() {
             if raw.len() >= 48 {
                 raw[36..40].copy_from_slice(&header.flags.to_le_bytes());
@@ -92,14 +98,27 @@ fn serialize_hwp_inner(
         let mut header = doc.header.clone();
         header.distribution = false;
         header.encrypted = false;
-        header.flags &= !0x06;
+        header.flags &= !(0x06 | VIEWTEXT_BODY_FLAGS);
         if let Some(raw) = header.raw_data.as_mut() {
             if raw.len() >= 40 {
-                let flags = u32::from_le_bytes([raw[36], raw[37], raw[38], raw[39]]) & !0x06u32;
+                let flags = u32::from_le_bytes([raw[36], raw[37], raw[38], raw[39]])
+                    & !(0x06u32 | VIEWTEXT_BODY_FLAGS);
                 raw[36..40].copy_from_slice(&flags.to_le_bytes());
             }
             if doc.header.encrypted && raw.len() >= 48 {
                 raw[44..48].fill(0);
+            }
+        }
+        serialize_file_header(&header)
+    } else if doc.header.flags & VIEWTEXT_BODY_FLAGS != 0 {
+        // 변경 추적(0x4000)·DRM(0x10·0x400) 문서 — 위 강하와 같은 이유로 BodyText 가 본문인 일반 문서로 쓴다.
+        let mut header = doc.header.clone();
+        header.flags &= !VIEWTEXT_BODY_FLAGS;
+        if let Some(raw) = header.raw_data.as_mut() {
+            if raw.len() >= 40 {
+                let flags =
+                    u32::from_le_bytes([raw[36], raw[37], raw[38], raw[39]]) & !VIEWTEXT_BODY_FLAGS;
+                raw[36..40].copy_from_slice(&flags.to_le_bytes());
             }
         }
         serialize_file_header(&header)
