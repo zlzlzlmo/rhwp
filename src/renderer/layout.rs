@@ -14472,6 +14472,17 @@ impl LayoutEngine {
                             ) {
                                 result_y = saved_y_offset;
                             }
+                            // 호스트 문단에 보이는 글이 있으면 그 줄은 이미 흐름을 진행했다 — 글 뒤로 그림이 되감으면 아래 문단이
+                            // 그 줄 높이만큼 위로 접힌다(칠곡군 공고문 날짜 줄 + 직인: 맥 한글 · 저장 vpos 와 21px 차).
+                            // 글 없는 빈 호스트(복학원서 로고)만 종전의 비전진 경로를 지킨다.
+                            if matches!(
+                                pic.common.text_wrap,
+                                crate::model::shape::TextWrap::BehindText
+                            ) && para.text.chars().any(|c| {
+                                c > '\u{001F}' && c != '\u{FFFC}' && c != '\u{200B}' && !c.is_whitespace()
+                            }) {
+                                result_y = saved_y_offset;
+                            }
                             // A co-anchored fixed title needs the otherwise
                             // empty host's content line. Keep ordinary BehindText
                             // logo hosts on the legacy path described above.

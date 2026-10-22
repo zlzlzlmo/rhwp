@@ -28208,3 +28208,36 @@ fn kicxup_split_cell_pages_match_mac_hangul() {
         );
     }
 }
+
+/// 칠곡군 공고문(hwpx) 1쪽 — 날짜 문단에 «글 뒤로» 직인 그림이 붙어 있어도 날짜 줄의 높이가 흐름에서 빠지지 않는다.
+/// 정답: 맥 한글 12.30 PDF 줄 상단 y(px, pdftotext) — 저장 vpos(윈도 한글)와도 같다. 사고: 그림 호스트 문단이 글이 있는데도
+/// 「글 없는 빈 호스트」용 비전진 경로를 타서 아래 줄들이 21px 위로 접혔다.
+#[test]
+fn behind_text_picture_host_with_text_keeps_its_line_advance() {
+    let doc = HwpDocument::from_bytes(
+        &std::fs::read("samples/webiz_chilgok_notice_2026.hwpx").expect("칠곡 표본"),
+    )
+    .expect("파싱");
+    let json = doc.get_page_text_layout_native(0).expect("텍스트 레이아웃");
+    let layout: Value = serde_json::from_str(&json).expect("JSON");
+    let runs = layout["runs"].as_array().expect("runs");
+    // (찾을 글, 맥 줄 상단 px, 허용 px)
+    let probes: [(&str, f64, f64); 3] = [
+        ("칠곡군수", 409.6, 4.0),
+        ("※사물인터넷", 453.7, 4.0),
+        ("까지만", 488.0, 4.0),
+    ];
+    for (needle, mac_y, tol) in probes {
+        let run = runs
+            .iter()
+            .find(|r| r["text"].as_str().is_some_and(|t| t.replace(' ', "").contains(needle)))
+            .unwrap_or_else(|| panic!("«{needle}» 글줄이 없다"));
+        let ours = run["y"].as_f64().expect("y");
+        assert!(
+            (ours - mac_y).abs() <= tol,
+            "«{needle}»: 한글 {mac_y:.1}px ↔ rhwp {ours:.1}px (Δ{:+.1}) — 글 뒤로 그림 호스트 문단의 줄 높이가 흐름에서 빠졌다",
+            ours - mac_y
+        );
+    }
+}
+
