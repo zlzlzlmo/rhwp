@@ -28126,3 +28126,85 @@ fn stacked_single_column_zones_do_not_push_flow_below_body_wide_float() {
         "본문 마지막 줄 아래 {last_line_bottom:.1}px가 표 윗변 {table_top}px를 넘는다 — 글과 표가 겹친다"
     );
 }
+
+/// 쪽을 가르는 칸의 세로 정렬은 한글처럼 **조각마다** 한다 (맥 한글 12.30 PDF가 정답).
+/// 표본: 1×1 표(쪽 나눔=셀 단위, 칸 높이 130000HU) 안에 70줄 — 1쪽 40줄 · 2쪽 30줄 · 3쪽은 끝 빈 문단.
+/// 한글 줄 상단 y(px, pdftotext): 위 135.1/135.1 · 가운데 144.5/250.0 · 아래 154.0/364.7 (1쪽 첫 줄/2쪽 첫 줄).
+/// 우리 글줄 y는 줄 상단보다 2.8px 아래다(위 정렬 표본이 135.1 ↔ 137.9).
+#[test]
+fn split_cell_vertical_align_is_applied_per_fragment() {
+    const TEXT_BOX_OFFSET: f64 = 2.8;
+    let cases: [(&str, [f64; 2], f64); 3] = [
+        ("top", [135.1, 135.1], 753.8),
+        ("center", [144.5, 250.0], 868.5),
+        ("bottom", [154.0, 364.7], 983.4),
+    ];
+    for (name, [p1_first, p2_first], p2_last) in cases {
+        let path = format!("samples/webiz_split_cell_70lines_{name}.hwp");
+        let doc = HwpDocument::from_bytes(&std::fs::read(&path).expect("표본")).expect("파싱");
+        assert_eq!(doc.page_count(), 3, "{name}: 한글도 3쪽이다(끝 빈 문단이 표 아래에 안 들어가 3쪽)");
+        let first_run_y = |page: u32, cell_para: u64| -> f64 {
+            let json = doc.get_page_text_layout_native(page).expect("텍스트 레이아웃");
+            let layout: Value = serde_json::from_str(&json).expect("JSON");
+            layout["runs"]
+                .as_array()
+                .expect("runs")
+                .iter()
+                .find(|r| r["cellParaIdx"].as_u64() == Some(cell_para) && r["charStart"].as_u64() == Some(0))
+                .unwrap_or_else(|| panic!("{name}: 칸 문단 {cell_para} 줄이 없다"))["y"]
+                .as_f64()
+                .expect("y")
+        };
+        for (what, ours, mac) in [
+            ("1쪽 첫 줄", first_run_y(0, 0), p1_first),
+            ("2쪽 첫 줄", first_run_y(1, 40), p2_first),
+            ("2쪽 끝 줄", first_run_y(1, 69), p2_last),
+        ] {
+            let want = mac + TEXT_BOX_OFFSET;
+            assert!(
+                (ours - want).abs() <= 2.5,
+                "{name} {what}: 한글 {mac:.1}px(+{TEXT_BOX_OFFSET}) ↔ rhwp {ours:.1}px (Δ{:+.1})",
+                ours - want
+            );
+        }
+    }
+}
+
+/// 공고 179496 첨부 «킥스업 로컬 지원신청서» — 쪽을 가른 1×2 표(칸 안 TAC 비용표 포함)의 2·3쪽이 맥 한글과 맞는다.
+/// 정답: 맥 한글 12.30 PDF 줄 상단 y(px, pdftotext). 우리 글줄 y는 줄 상단보다 2.8px 아래다.
+#[test]
+fn kicxup_split_cell_pages_match_mac_hangul() {
+    const TEXT_BOX_OFFSET: f64 = 2.8;
+    let doc = HwpDocument::from_bytes(
+        &std::fs::read("samples/webiz_kicxup_local_form_bodytext.hwp").expect("킥스업 표본"),
+    )
+    .expect("파싱");
+    assert_eq!(doc.page_count(), 5, "한글도 5쪽이다(BodyText 본문)");
+    let probes: [(u32, &str, f64); 9] = [
+        (1, "정량목표", 469.0),
+        (1, "추진체계", 536.6),
+        (1, "추진전략", 743.3),
+        (1, "기대효과", 824.2),
+        (1, "자금 사용", 928.9),
+        (2, "구분", 118.6),
+        (2, "인건비", 151.0),
+        (2, "교육훈련비", 289.1),
+        (2, "이사장 귀하", 666.2),
+    ];
+    for (page, needle, mac_y) in probes {
+        let json = doc.get_page_text_layout_native(page).expect("텍스트 레이아웃");
+        let layout: Value = serde_json::from_str(&json).expect("JSON");
+        let found = layout["runs"].as_array().expect("runs").iter().find(|r| {
+            r["text"].as_str().is_some_and(|t| t.replace(' ', "").contains(&needle.replace(' ', "")))
+        });
+        let ours = found.unwrap_or_else(|| panic!("p{} «{needle}» 글줄이 없다", page + 1))["y"]
+            .as_f64()
+            .expect("y");
+        assert!(
+            (ours - mac_y - TEXT_BOX_OFFSET).abs() <= 4.0,
+            "p{} «{needle}»: 한글 {mac_y:.1}px(+{TEXT_BOX_OFFSET}) ↔ rhwp {ours:.1}px (Δ{:+.1}) — 쪽을 가른 칸의 조각별 정렬·끝 조각 높이·칸 안 TAC 표",
+            page + 1,
+            ours - mac_y - TEXT_BOX_OFFSET
+        );
+    }
+}

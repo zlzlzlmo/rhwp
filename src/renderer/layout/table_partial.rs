@@ -429,6 +429,10 @@ impl CellComposedStore {
     }
 }
 
+/// 거대 칸 기준 문단 수 — 이보다 많은 칸은 쪽을 가를 때 조각 문단 창만 구성(windowed)하고 세로 정렬은 위로 둔다
+/// (전량 compose가 느리다 · #4149). 그 이하의 칸은 한글처럼 **조각마다** 세로 정렬한다(맥 한글 12.30).
+pub(crate) const GIANT_CELL_PARAS: usize = 64;
+
 /// [#4149] 프로브 사전 계획 결과.
 pub(crate) enum ProbeCutPlan {
     /// 프로브로 다룰 수 없는 조합 (rowspan 셀, 빈 창 등) — legacy 폴백.
@@ -1318,7 +1322,11 @@ impl LayoutEngine {
                         window_paras,
                         split_proven: true,
                         ..
-                    } => Some(window_paras),
+                    } if cell.paragraphs.len() > GIANT_CELL_PARAS
+                        || matches!(cell.vertical_align, crate::model::table::VerticalAlign::Top) =>
+                    {
+                        Some(window_paras)
+                    }
                     _ => None,
                 }
             } else {
@@ -1522,6 +1530,15 @@ impl LayoutEngine {
                 0.0
             } else if let Some(ref ranges) = line_ranges {
                 let mut total = 0.0;
+                // 한글은 조각의 마지막 줄 뒤 줄 간격을 내용 높이에 세지 않는다 — 쪽을 가르는 칸의
+                // 가운데/아래 정렬이 조각 단위로 이 값을 쓴다(맥 한글 12.30 합성 문서 실측).
+                // 셀 마지막 줄이 아니어도 이 조각의 마지막 줄이면 뒤 간격을 뺀다.
+                let fragment_last_para = ranges
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|&(pi, &(s, e))| s < e && !empty_paragraphs[pi])
+                    .map(|(pi, _)| pi);
                 for (pi, ((comp, para), &(start, end))) in composed_store
                     .eager_slice()
                     .iter()
@@ -1556,7 +1573,8 @@ impl LayoutEngine {
                         if li < line_count {
                             let line = &comp.lines[li];
                             let h = hwpunit_to_px(line.line_height, self.dpi);
-                            let is_cell_last_line = is_last_para && li + 1 == line_count;
+                            let is_cell_last_line = (is_last_para && li + 1 == line_count)
+                                || (fragment_last_para == Some(pi) && li + 1 == end);
                             if !is_cell_last_line {
                                 total += h + hwpunit_to_px(line.line_spacing, self.dpi);
                             } else {
@@ -1684,10 +1702,27 @@ impl LayoutEngine {
                     .iter()
                     .any(|c| matches!(c, Control::Table(t) if t.col_count > 1))
             });
+            // 중첩 표를 품은 칸을 가른 조각은 **이 조각의 내용 높이**가 상자에 들면 한글처럼 조각 기준으로 정렬하고
+            // (맥 한글 12.30: 킥스업 로컬 신청서 2쪽), 안 들면(표 둘이 쪽을 넘겨 흐르는 42065 Row2) 위로 둔다.
+            let nested_fragment_content: Option<f64> = if has_multicol_nested {
+                cut_units.map(|(start_unit, end_unit)| {
+                    let (_, _, pt, pb) = self.resolve_cell_padding(cell, table);
+                    (self.cell_cut_visible_height(cell, table, styles, start_unit, end_unit)
+                        - pt
+                        - pb
+                        - self.cell_cut_trailing_line_spacing(cell, table, styles, end_unit))
+                    .max(0.0)
+                })
+            } else {
+                None
+            };
             let cell_content_cut_by_slice = has_multicol_nested
-                && self.cell_units_content_height(cell, table, styles) > inner_height + 0.5;
+                && match nested_fragment_content {
+                    Some(fragment) => fragment > inner_height + 0.5,
+                    None => self.cell_units_content_height(cell, table, styles) > inner_height + 0.5,
+                };
             let effective_align = if (is_in_split_row || is_rowbreak_straddle)
-                && (cell_was_split || cell_content_cut_by_slice)
+                && (windowed_composition || cell_content_cut_by_slice)
             {
                 VerticalAlign::Top
             } else {
@@ -1767,6 +1802,10 @@ impl LayoutEngine {
                 } else {
                     total_content_height
                 };
+            let (centered_content_height, total_content_height) = match nested_fragment_content {
+                Some(fragment) if !cell_content_cut_by_slice => (fragment, fragment),
+                _ => (centered_content_height, total_content_height),
+            };
             let text_y_start = match effective_align {
                 VerticalAlign::Top => cell_y + pad_top,
                 VerticalAlign::Center => {
@@ -4790,6 +4829,38 @@ impl LayoutEngine {
                 );
                 let limit = box_bottom - y_start - above;
                 if limit > 0.0 && row_heights[last] > limit {
+                    row_heights[last] = limit;
+                }
+            }
+        }
+        // 한글은 쪽을 가른 행의 비끝 조각 상자를 쪽 바닥(본문 아래 − 바깥 아래 여백 − 100HU)까지 늘린다 —
+        // 칸의 가운데/아래 정렬은 이 상자를 기준으로 한다(맥 한글 12.30: 킥스업 로컬 신청서 2쪽 칸 안 내용이
+        // 상자 여유의 절반만큼 내려앉는다). 가른 행이 이 조각의 마지막 행이고 내용이 상자보다 짧을 때만 늘린다.
+        if !single_cell_page_fragment
+            && enclosing_cell_ctx.is_none()
+            && stored_reset_paint_geometry.is_none()
+            && end_row_height_override.is_none()
+            && end_cut.iter().any(|&unit| unit > 0)
+            && !start_cut_is_block
+            && !is_block_split
+            && !(start_row == 0
+                && !is_continuation
+                && start_cut.is_empty()
+                && table
+                    .caption
+                    .as_ref()
+                    .is_some_and(|c| c.direction == CaptionDirection::Top))
+        {
+            if let Some((&last, above_rows)) = render_rows.split_last() {
+                let above = above_rows.iter().map(|&r| row_heights[r]).sum::<f64>()
+                    + cell_spacing * above_rows.len() as f64;
+                let box_bottom = crate::renderer::float_placement::single_cell_page_fragment_bottom(
+                    table,
+                    col_area.y + col_area.height,
+                    self.dpi,
+                );
+                let limit = box_bottom - y_start - above;
+                if limit > row_heights[last] {
                     row_heights[last] = limit;
                 }
             }

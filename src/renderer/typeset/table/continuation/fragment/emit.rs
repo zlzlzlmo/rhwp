@@ -66,7 +66,27 @@ impl TypesetEngine {
         } = scan;
         // [Task #1022] walk 가 consumed 에 분할 행 기여까지 누적하므로
         // partial_height = consumed + header_overhead 로 단일화.
-        let partial_height: f64 = consumed + header_overhead;
+        let mut partial_height: f64 = consumed + header_overhead;
+        let mut end_row_height_override = end_row_height_override;
+        // 한글은 쪽을 가른 행의 조각 상자를 합쳐 선언 행 높이로 맞춘다 — 끝 조각 상자 = 선언 − 앞 상자 합
+        // (내용이 더 크면 내용). 맥 한글 12.30 합성 문서: 867.8 + 865.2 = 선언 1733px.
+        let splits_one_row_tail = end_row == cursor_row + 1
+            && is_continuation
+            && !start_cut.is_empty()
+            && !start_cut_is_block
+            && !row_cursor_is_nested
+            && end_row_height_override.is_none()
+            && continuation.split_row_box_px > 0.0
+            && mt.allows_row_break_split();
+        if end_row >= row_count && split_end_limit == 0.0 && splits_one_row_tail {
+            let declared = cut_row_h.get(cursor_row).copied().unwrap_or(0.0);
+            let remainder_box = declared - continuation.split_row_box_px;
+            let content_box = consumed;
+            if remainder_box > content_box + 0.5 {
+                end_row_height_override = Some(remainder_box);
+                partial_height = remainder_box + header_overhead;
+            }
+        }
         let commit_fragment = |st: &mut TypesetState, owner_height: f64, terminal: bool| {
             if let Some(mut placement) = fragment_placement {
                 placement.occupied_bottom = placement.table_top
@@ -378,7 +398,25 @@ impl TypesetEngine {
             }
             (tail > 0.5 && tail_band_continues).then_some(tail)
         });
+        // 가른 행의 앞 조각 상자 합 — 조각이 이 행 하나뿐일 때 상자는 쪽이 정한 높이(avail_for_rows)다.
+        let keeps_split_row_box = split_end_limit > 0.0
+            && end_row == cursor_row + 1
+            && !start_cut_is_block
+            && split_block_start.is_none()
+            && !row_cursor_is_nested
+            && mt.allows_row_break_split();
+        let next_split_row_box = if keeps_split_row_box {
+            let carried = if is_continuation && !start_cut.is_empty() {
+                continuation.split_row_box_px
+            } else {
+                0.0
+            };
+            carried + avail_for_rows
+        } else {
+            0.0
+        };
         continuation.advance(end_row, split_block_start, next_cut, split_end_limit > 0.0);
+        continuation.split_row_box_px = next_split_row_box;
         continuation.start_row_height_override = next_start_row_height_override;
         TableContinuationIteration::Emitted
     }

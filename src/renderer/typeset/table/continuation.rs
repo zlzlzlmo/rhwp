@@ -23,6 +23,9 @@ pub(in crate::renderer::typeset) struct TableContinuationCursor {
     /// 테두리/그리드만 이어 준다.
     pub(in crate::renderer::typeset) start_row_height_override: Option<f64>,
     pub(in crate::renderer::typeset) is_continuation: bool,
+    /// 쪽을 가르는 행의 앞 조각 상자 높이 합(px). 한글은 조각 상자 합이 선언 행 높이가 되도록
+    /// 끝 조각의 상자를 `선언 − 합`으로 잡는다(맥 한글 12.30). 가른 행이 이어지는 동안만 값이 있다.
+    pub(in crate::renderer::typeset) split_row_box_px: f64,
     pub(in crate::renderer::typeset) fragments_emitted: usize,
     /// fragment queue에서 이미 page에 등록한 표 각주 수.
     pub(in crate::renderer::typeset) next_table_footnote: usize,

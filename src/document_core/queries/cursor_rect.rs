@@ -3225,7 +3225,7 @@ impl DocumentCore {
         );
         // 전량 compose 를 허용하는 셀 크기 상한 — 정확성이 아니라 fast path 의
         // 존재 이유(속도)를 지키는 게이트다.
-        const FULL_COMPOSE_MAX: usize = 64;
+        const FULL_COMPOSE_MAX: usize = crate::renderer::layout::GIANT_CELL_PARAS;
         let n_paras = cell.paragraphs.len();
         let (windowed, window_paras) = match plan {
             ProbeCutPlan::Unsupported => return Ok(Unsupported),
@@ -3250,7 +3250,8 @@ impl DocumentCore {
                 } else {
                     // windowed 사전 증명:
                     //  (a) line_segs>=2 문단 존재 → shrink 패딩 축소 조기탈출과 동일
-                    //  (b) Top 정렬 확정 — split 증명 또는 원래 valign 이 Top
+                    //  (b) Top 정렬 확정 — 거대 칸(이 분기)은 쪽을 가를 때 세로 정렬을 위로 둔다
+                    //      (작은 칸은 한글처럼 조각마다 정렬해 전량 경로다 · table_partial GIANT_CELL_PARAS)
                     //  (c) 가로쓰기 (세로쓰기는 전량 슬라이스 필요)
                     let any_multiline = cell.paragraphs.iter().any(|p| p.line_segs.len() >= 2);
                     let top_ok = split_proven

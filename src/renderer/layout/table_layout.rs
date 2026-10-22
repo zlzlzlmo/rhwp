@@ -11575,8 +11575,11 @@ impl LayoutEngine {
                         _ => None,
                     })
                     .collect();
+                // 글자처럼 취급한 칸 안 표는 한 줄짜리 개체라 쪽 경계에서 나뉘지 않는다 — 통째로 다음 조각으로
+                // 간다(맥 한글 12.30 PDF: 표 위 여유가 4행분이어도 통째 이월 · Windows 저장 줄도 호스트 문단 y=0 리셋).
                 if nested_tables.len() == 1
                     && nested_tables[0].row_count >= 2
+                    && !nested_tables[0].common.treat_as_char
                     && !matches!(
                         nested_tables[0].page_break,
                         crate::model::table::TablePageBreak::None
@@ -15635,6 +15638,37 @@ impl LayoutEngine {
         }
         let (_, _, pad_top, pad_bottom) = self.resolve_cell_padding(cell, table);
         content + pad_top + pad_bottom
+    }
+
+    /// 컷 범위(su..eu) 마지막 줄 뒤 줄 간격(px). 한글은 조각의 마지막 줄 뒤 간격을 내용 높이에 세지 않는다
+    /// (맥 한글 12.30 — 쪽을 가른 칸의 가운데/아래 정렬 기준). 중첩 표·혼합 조각이 끝이면 0.
+    pub(crate) fn cell_cut_trailing_line_spacing(
+        &self,
+        cell: &crate::model::table::Cell,
+        table: &crate::model::table::Table,
+        styles: &ResolvedStyleSet,
+        end_unit: usize,
+    ) -> f64 {
+        let units = self.cell_units(cell, table, styles);
+        let eu = end_unit.min(units.len());
+        let Some(last) = eu.checked_sub(1).and_then(|i| units.get(i)) else {
+            return 0.0;
+        };
+        if last.nested_row.is_some()
+            || last.nested_table_fragment.is_some()
+            || last.mixed_nested_fragment
+        {
+            return 0.0;
+        }
+        let Some(para) = cell.paragraphs.get(last.para_idx) else {
+            return 0.0;
+        };
+        let composed = crate::renderer::composer::compose_paragraph_in_context(para, styles);
+        composed
+            .lines
+            .get(last.vis_end.saturating_sub(1))
+            .map(|line| hwpunit_to_px(line.line_spacing, self.dpi))
+            .unwrap_or(0.0)
     }
 
     pub(crate) fn row_block_cut_remaining_height(
