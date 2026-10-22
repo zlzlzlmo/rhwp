@@ -1404,9 +1404,16 @@ pub(crate) fn native_single_cell_rowbreak_page_fragment(
 /// Physical bottom of a nonterminal single-cell page fragment. Callers use
 /// the same column-relative boundary for row fitting and page-relative painting.
 pub(crate) fn single_cell_page_fragment_bottom(table: &Table, body_bottom: f64, dpi: f64) -> f64 {
+    // 100HU 안쪽 여유는 1×1 표(칠곡·정책연구)의 맥 실측이다. 칸이 둘 이상인 한 행 표는 맥 한글 12.30 이 본문 아래 − 바깥 아래 여백
+    // 까지 그린다(킥스업 신청서 hwpx 변형: 바깥 아래 여백 0/141/283HU → 2쪽 아래 괘선 771.0/769.6/768.1pt).
+    let inset_hu = if table.col_count == 1 {
+        SINGLE_CELL_PAGE_FRAGMENT_BOTTOM_INSET_HU
+    } else {
+        0
+    };
     body_bottom
         - hwpunit_to_px(i32::from(table.outer_margin_bottom), dpi)
-        - hwpunit_to_px(SINGLE_CELL_PAGE_FRAGMENT_BOTTOM_INSET_HU, dpi)
+        - hwpunit_to_px(inset_hu, dpi)
 }
 
 /// [#6887] 문단 기준 왼쪽 정렬 어울림 표가 원점에 싣는 바깥 왼쪽 여백 (HU).

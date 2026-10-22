@@ -426,9 +426,19 @@ impl TypesetEngine {
             // 끝 조각 잔여(선언 − 앞 상자 합)는 그려진 상자로 센다(맥 한글 12.30: 칠곡군 공고문 3쪽 190.5 + 4쪽 140.1 = 선언 330.6px).
             // 예산이 이미 뺀 조각(쪽 상단 · 이어진 조각)은 그대로 두고, 쪽 중간에서 시작한 첫 조각만 여기서 뺀다.
             // 맥 정답이 있는 hwpx 계보에만 건다 — 네이티브 hwp5 의 끝 조각은 윈도 저장 줄이 정답이라 종전 그대로다.
+            // 칸이 둘 이상인 한 행 표(킥스업 신청서)도 그려진 첫 상자가 쪽 아래 − 바깥 아래 여백이라 같은 보정을 건다 — 안 하면 끝 조각
+            // 잔여가 바깥 아래 여백(1.4pt)만큼 짧아진다(맥 한글 12.30 변형: 2쪽 701.2 + 3쪽 264.8 = 선언 966.0pt · 우리 700.0 + 263.2).
+            // 네이티브·hwpx 모두 맥 PDF 가 같다(원본 hwp 도 같은 어긋남).
+            let multi_col_one_row_rowbreak = table.row_count == 1
+                && table.col_count > 1
+                && !table.common.treat_as_char
+                && matches!(table.page_break, crate::model::table::TablePageBreak::RowBreak)
+                && (self.profile.get().hwpx_stored_layout()
+                    || self.profile.get().hwp5_stored_pagination_layout());
             let pinned_inset = if !budget_pinned
-                && self.profile.get().hwpx_stored_layout()
-                && crate::renderer::float_placement::native_single_cell_rowbreak_page_fragment(true, table)
+                && ((self.profile.get().hwpx_stored_layout()
+                    && crate::renderer::float_placement::native_single_cell_rowbreak_page_fragment(true, table))
+                    || multi_col_one_row_rowbreak)
             {
                 -crate::renderer::float_placement::single_cell_page_fragment_bottom(table, 0.0, self.dpi)
             } else {

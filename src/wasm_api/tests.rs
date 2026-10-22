@@ -28505,3 +28505,43 @@ fn floating_rowbreak_table_opens_outer_top_margin_with_text_host_like_mac_hangul
         assert!((page3 - cont).abs() <= 0.3, "{sample} 3쪽 윗선 {cont}pt(맥) ↔ 우리 {page3:.1}pt");
     }
 }
+
+#[test]
+fn multi_col_one_row_split_fragments_align_like_mac_hangul() {
+    // 맥 한글 12.30 변형 실측(10-23 · 킥스업 신청서 hwpx, 큰 표 1×2 · 칸 세로 정렬 가운데/아래):
+    //  · 첫 쪽 상자 아래 = 본문 아래 − 바깥 아래 여백(100HU 안쪽 여유는 1×1 표 몫이다) — 769.6pt
+    //  · 끝 조각 상자 = 선언 − 앞 상자 합(바깥 아래 여백까지 센 합이 아니다) — 3쪽 아래 308.6pt
+    //  · 칸을 끝내는 조각은 마지막 줄 뒤 줄 간격까지 내용 높이 — 3쪽 첫 안쪽 줄 가운데 80.4 · 아래 97.3pt
+    let rules = |sample: &str, page: u32| -> Vec<f64> {
+        let doc = HwpDocument::from_bytes(&std::fs::read(sample).expect("표본")).expect("파싱");
+        let svg = doc.render_page_svg_native(page).expect("SVG");
+        let mut ys: Vec<f64> = Vec::new();
+        for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+            let attr = |name: &str| -> Option<f64> {
+                let key = format!(" {name}=\"");
+                let i = tag.find(&key)? + key.len();
+                tag[i..].split('"').next()?.parse().ok()
+            };
+            if let (Some(x1), Some(x2), Some(y1)) = (attr("x1"), attr("x2"), attr("y1")) {
+                if x2 - x1 > 300.0 {
+                    ys.push(y1 * 0.75);
+                }
+            }
+        }
+        ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ys
+    };
+    for (sample, inner_first) in [
+        ("samples/webiz_kicxup_floating_rowbreak_om141.hwpx", 80.4),
+        ("samples/webiz_kicxup_floating_rowbreak_valign_bottom.hwpx", 97.3),
+    ] {
+        let p2 = rules(sample, 1);
+        let p3 = rules(sample, 2);
+        let p2_bottom = *p2.last().expect("2쪽 괘선");
+        assert!((p2_bottom - 769.6).abs() <= 0.3, "{sample} 2쪽 아래 괘선 769.6pt(맥) ↔ 우리 {p2_bottom:.1}pt");
+        let p3_bottom = *p3.last().expect("3쪽 괘선");
+        assert!((p3_bottom - 308.6).abs() <= 0.4, "{sample} 3쪽 아래 괘선 308.6pt(맥) ↔ 우리 {p3_bottom:.1}pt");
+        let inner = p3.iter().copied().find(|y| *y > p3[0] + 5.0).expect("3쪽 첫 안쪽 줄");
+        assert!((inner - inner_first).abs() <= 0.4, "{sample} 3쪽 첫 안쪽 줄 {inner_first}pt(맥) ↔ 우리 {inner:.1}pt");
+    }
+}

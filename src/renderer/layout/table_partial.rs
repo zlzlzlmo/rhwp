@@ -1721,10 +1721,18 @@ impl LayoutEngine {
             {
                 cut_units.map(|(start_unit, end_unit)| {
                     let (_, _, pt, pb) = self.resolve_cell_padding(cell, table);
+                    // 칸을 끝내는 조각은 마지막 줄 뒤 줄 간격까지 내용 높이다 — 맥 한글 12.30(킥스업 신청서 hwpx 변형: 칸 세로
+                    // 정렬 가운데/아래 → 3쪽 첫 안쪽 줄 80.4/97.3pt). 쪽 중간에서 끊긴 조각만 그 간격을 뺀다.
+                    let ends_cell = end_unit >= self.cell_units(cell, table, styles).len();
+                    let trailing_ls = if ends_cell {
+                        0.0
+                    } else {
+                        self.cell_cut_trailing_line_spacing(cell, table, styles, end_unit)
+                    };
                     (self.cell_cut_visible_height(cell, table, styles, start_unit, end_unit)
                         - pt
                         - pb
-                        - self.cell_cut_trailing_line_spacing(cell, table, styles, end_unit))
+                        - trailing_ls)
                     .max(0.0)
                 })
             } else {
