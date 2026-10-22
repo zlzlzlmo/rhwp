@@ -1333,14 +1333,14 @@ fn para_has_non_whitespace_text(para: &Paragraph) -> bool {
         .any(|ch| ch > '\u{001F}' && ch != '\u{FFFC}' && !ch.is_whitespace())
 }
 
-/// 글 없는 host(빈 문단 · 공백만 든 문단)의 문단 기준 자리차지 표 — 쪽을 넘어 갈릴 때 맥 한글 12.30 은 이어진 조각을
-/// 본문 위 + 바깥 위 여백에 앉힌다(80168 이어진 쪽 40곳 가로선 +1.3pt = 141HU 일정).
-pub(crate) fn textless_para_topbottom_float(para: &Paragraph, table: &Table) -> bool {
+/// 문단 기준 자리차지 표(다중 칸) — 쪽을 넘어 갈릴 때 맥 한글 12.30 은 이어진 조각을 본문 위 + 바깥 위 여백에 앉히고, 쪽 중간에서
+/// 시작하는 첫 조각도 «문단 위 + 오프셋 + 바깥 위 여백» 이다(80168 이어진 쪽 40곳 가로선 +1.3pt = 141HU 일정).
+/// host 에 글이 있어도 같다 — 킥스업 신청서 hwpx 변형(바깥 위 여백 0/141/283HU)에서 윗선 67.1/68.5/70.0pt · 이어진 쪽 42.4/43.8/45.2pt.
+pub(crate) fn textless_para_topbottom_float(_para: &Paragraph, table: &Table) -> bool {
     // 1×1 표는 감싸개·쪽 조각 계약(#7095 · 중첩 표 행 커서)이 따로 여백을 다룬다.
     !(table.row_count == 1 && table.col_count == 1)
         && !table.common.treat_as_char
         && is_para_topbottom_float(&table.common)
-        && !para_has_non_whitespace_text(para)
 }
 
 /// [#5922] native HWP5 CellBreak 자리차지 표의 연속 조각 바깥 여백 재개방 계약.

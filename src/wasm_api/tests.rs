@@ -28472,3 +28472,36 @@ fn columndef_only_separator_paragraph_advances_one_stored_line_like_mac_hangul()
         plain.iter().map(|y| (y * 10.0).round() / 10.0).take(8).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn floating_rowbreak_table_opens_outer_top_margin_with_text_host_like_mac_hangul() {
+    // 맥 한글 12.30 변형 실측(10-23 · 킥스업 신청서 hwpx · 표 바깥 위 여백 141/283HU): 글 있는 host 의 양수 오프셋 자리차지 표도
+    // 첫 윗선은 «문단 위 + 오프셋 + 바깥 위 여백»(68.5/70.0pt), 이어진 쪽 윗선은 «본문 위 + 바깥 위 여백»(43.8/45.2pt).
+    let top_rule = |sample: &str, page: u32| -> f64 {
+        let doc = HwpDocument::from_bytes(&std::fs::read(sample).expect("표본")).expect("파싱");
+        let svg = doc.render_page_svg_native(page).expect("SVG");
+        let mut ys: Vec<f64> = Vec::new();
+        for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+            let attr = |name: &str| -> Option<f64> {
+                let key = format!(" {name}=\"");
+                let i = tag.find(&key)? + key.len();
+                tag[i..].split('"').next()?.parse().ok()
+            };
+            if let (Some(x1), Some(x2), Some(y1)) = (attr("x1"), attr("x2"), attr("y1")) {
+                if x2 - x1 > 300.0 {
+                    ys.push(y1 * 0.75);
+                }
+            }
+        }
+        ys.into_iter().fold(f64::INFINITY, f64::min)
+    };
+    for (sample, first, cont) in [
+        ("samples/webiz_kicxup_floating_rowbreak_om141.hwpx", 68.5, 43.8),
+        ("samples/webiz_kicxup_floating_rowbreak_om283.hwpx", 70.0, 45.2),
+    ] {
+        let page2 = top_rule(sample, 1);
+        let page3 = top_rule(sample, 2);
+        assert!((page2 - first).abs() <= 0.3, "{sample} 2쪽 윗선 {first}pt(맥) ↔ 우리 {page2:.1}pt");
+        assert!((page3 - cont).abs() <= 0.3, "{sample} 3쪽 윗선 {cont}pt(맥) ↔ 우리 {page3:.1}pt");
+    }
+}
