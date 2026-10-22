@@ -1,6 +1,7 @@
 //! 행 스캔의 불변 입력과 컷·누적 높이 결과.
 
 /// [#2085] 표 행-스캔 분할점 캐리 (값 왕복). split_end_cut 은 move.
+#[derive(Clone)]
 pub(in crate::renderer::typeset) struct BlockTableRowScan {
     pub(in crate::renderer::typeset) consumed: f64,
     pub(in crate::renderer::typeset) end_row: usize,

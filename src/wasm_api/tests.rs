@@ -28311,3 +28311,29 @@ fn hwpx_single_cell_rowbreak_fragments_match_mac_hangul() {
     }
 }
 
+/// 초창패 채움본 2쪽 8×5 표 — 마지막 두 행에 걸친 «이미지» 라벨(rowspan 2)과 빈 칸(이미지 자리, 선언 158.9px) 행을 한글(맥)은 쪽 끝에서 행 안에서 가르고
+/// «이미지» 라벨은 2쪽 조각 높이의 가운데에 둔다(3쪽은 쪽 번호만). 앞 구현은 rowspan 이 시작되는 행을 못 갈라 묶음째 3쪽으로 넘겼다.
+/// 정답: 맥 한글 12.30 PDF(2쪽 끝 글줄 «이미지» 742.4pt · 표 아래 괘선 769.6pt, 3쪽 글 없음). 1741000(task2097) 같은 «눌러 넣는» 형상은 그대로다.
+#[test]
+fn rowspan_start_band_row_splits_inside_the_row_like_mac_hangul() {
+    let doc = HwpDocument::from_bytes(
+        &std::fs::read("samples/webiz_filled_chochangpae_rowspan_band.hwp").expect("채움본 표본"),
+    )
+    .expect("파싱");
+    assert_eq!(doc.page_count(), 7, "한글도 7쪽이다");
+    let texts = |page: u32| -> String {
+        let json = doc.get_page_text_layout_native(page).expect("텍스트 레이아웃");
+        let layout: Value = serde_json::from_str(&json).expect("JSON");
+        layout["runs"]
+            .as_array()
+            .expect("runs")
+            .iter()
+            .filter_map(|r| r["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("")
+            .replace(' ', "")
+    };
+    assert!(texts(1).contains("이미지"), "«이미지» 라벨은 2쪽(조각 가운데)에 있다 — 한글: 2쪽 끝 글줄");
+    assert!(!texts(2).contains("이미지"), "3쪽에는 «이미지»가 없다(한글: 쪽 번호만)");
+}
+

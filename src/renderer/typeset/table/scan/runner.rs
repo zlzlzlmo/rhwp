@@ -20,6 +20,7 @@ struct ScanInput<'a> {
     table_storage_declares_splits: bool,
 }
 
+#[derive(Clone)]
 struct ScanProgress {
     r: usize,
     scan: BlockTableRowScan,
@@ -95,11 +96,26 @@ impl TypesetEngine {
                 row_limit: st.base_available_height() * 0.4,
             };
             let block = block_query.candidate(r);
-            let step = if (block.protected || block.rowbreak_rowspan_block) && block.b_start == r {
+            // 한글(맥 12.30)은 RowBreak 표 중간(조각 첫 행이 아닌)의 «선언 빈 띠» 행을 rowspan 이 걸려 있어도 행 안에서 가른다 —
+            // 초창패 채움본 2쪽 8×5 표 6행(이미지 칸): 빈 칸 158.9px 행을 쪽 끝에서 띠째 가르고 «이미지» 라벨은 그 조각 높이의 가운데에 선다.
+            // 기존 블록 단계가 묶음을 놓았거나 눌러 넣은 경우(1741000 squeeze)는 그대로 두고, **한 행도 못 놓고 묶음째 미루려 할 때만**
+            // 일반 행 단계로 다시 시도한다. 표 첫 블록(#1145 · 조각 첫 행)은 대상이 아니다 — 맥도 제목 rowspan 첫 블록은 다음 쪽으로 넘긴다.
+            let block_step_applies = (block.protected || block.rowbreak_rowspan_block) && block.b_start == r;
+            let band_fallback_snapshot = (block_step_applies
+                && mt.allows_row_break_split()
+                && r > v.cursor_row
+                && table::scan::row::row_is_declared_empty_band(mt, table, r))
+            .then(|| progress.clone());
+            let mut step = if block_step_applies {
                 self.scan_rowspan_block_step(input, progress, block, cs_before)
             } else {
                 self.scan_ordinary_row_step(input, progress, cs_before)
             };
+            if let Some(snapshot) = band_fallback_snapshot {
+                if step.progress.r == r && step.progress.scan.end_row == snapshot.scan.end_row {
+                    step = self.scan_ordinary_row_step(input, snapshot, cs_before);
+                }
+            }
             progress = step.progress;
             if !step.keep_scanning {
                 break;

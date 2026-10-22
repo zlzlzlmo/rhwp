@@ -85,8 +85,14 @@ impl TypesetEngine {
                 start_cut,
                 start_row_height_override,
             };
-            let rowbreak_rowspan_row_splittable =
-                mt.allows_row_break_split() && can_intra_split && mt.is_row_splittable(r);
+            // rowspan 이 **여기서 시작하는** 선언 빈 띠 행(앞 행의 rowspan 이 덮은 행이 아닌)은 행 안에서 가를 수 있다(맥 한글 12.30).
+            let starts_rowspan_band = rowspan_touched[r]
+                && r > cursor_row
+                && !row_query.band_shape().has_prior_rowspan_cover
+                && table::scan::row::row_is_declared_empty_band(mt, table, r);
+            let rowbreak_rowspan_row_splittable = mt.allows_row_break_split()
+                && can_intra_split
+                && (mt.is_row_splittable(r) || starts_rowspan_band);
             if rowspan_touched[r] && !rowbreak_rowspan_row_splittable {
                 // 실제로 수용한 앞 행들의 높이(consumed)를 사용한다. 이전 행의
                 // 증분까지 포함하며, 늘린 높이가 안 맞으면 원래 높이로 되돌리지 않는다.
@@ -533,7 +539,9 @@ impl TypesetEngine {
                 // 표 — 종전엔 행 통째 이월로 한 쪽이 늘었다). rowspan 걸침 행의 Stage 76 띠 넘김과 같은 연산이다.
                 // ponytail: 남은 띠가 다음 쪽보다도 길면(r == cursor_row) 다시 가르지 않고 넘친다 — 한 쪽보다 긴
                 // 빈 띠 행이 실물에 나오면 이어진 조각에도 같은 자르기를 연다.
-                if !rowspan_touched[r]
+                // rowspan 이 시작되는 행도 같다(맥 한글 12.30: 초창패 채움본 2쪽 8×5 표 6행 — 이미지 칸 rowspan 2).
+                // 앞 행의 rowspan 이 덮은 행은 위 Stage 76 띠 넘김이 맡는다.
+                if (!rowspan_touched[r] || starts_rowspan_band)
                     && r > cursor_row
                     && row_start_cut.is_empty()
                     && table::scan::row::row_is_declared_empty_band(mt, table, r)
