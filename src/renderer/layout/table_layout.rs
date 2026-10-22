@@ -4825,6 +4825,35 @@ impl LayoutEngine {
         self.resolve_cell_padding_for_context(cell, table)
     }
 
+    /// 쪽을 가른 조각의 안 여백. 내용이 선언 높이를 넘는 칸의 «비정상 세로 여백» 축소(#501)는 하지 않는다 —
+    /// 측정기는 이런 칸을 내용 + 원 여백으로 키우고, 맥 한글도 조각마다 원 여백을 위·아래로 온전히 둔다
+    /// (issue2004 칸 안 그림 더미 변형 실측: 여백 0/141/282HU 에서 조각 상자가 내용 + 0/2.8/5.6pt,
+    /// 종전 우리는 0/1.4/1.4pt).
+    pub(crate) fn resolve_cell_padding_for_cut(
+        &self,
+        cell: &crate::model::table::Cell,
+        table: &crate::model::table::Table,
+        styles: &ResolvedStyleSet,
+    ) -> (f64, f64, f64, f64) {
+        // 맥 한글로 확인한 모양만 — 쪽을 가르는 1×1 RowBreak 표 안의 떠 있는 그림 더미. 다른 모양은 윈도 실측(#501)대로.
+        let floating_stack_in_single_cell = table.row_count == 1
+            && table.col_count == 1
+            && !table.common.treat_as_char
+            && matches!(table.page_break, TablePageBreak::RowBreak)
+            && cell.paragraphs.iter().any(|para| {
+                para.controls
+                    .iter()
+                    .any(|control| matches!(control, Control::Picture(_) | Control::Shape(_)))
+            });
+        if floating_stack_in_single_cell
+            && self.whole_row_has_overflowing_abnormal_padding(table, cell.row as usize, styles)
+        {
+            self.resolve_cell_padding_unscaled(cell, table)
+        } else {
+            self.resolve_cell_padding(cell, table)
+        }
+    }
+
     /// Native HWP5의 긴 1×1 child 중 `applyInnerMargin=false`이고 table 좌우
     /// inMargin이 0인 경우, 저장 cell margin은 편집 원장일 뿐 PDF paint
     /// viewport에 덧적용하지 않는다. 같은 문단의 literal-space 들여쓰기와
@@ -15640,7 +15669,7 @@ impl LayoutEngine {
         if content <= 0.0 {
             return 0.0;
         }
-        let (_, _, pad_top, pad_bottom) = self.resolve_cell_padding(cell, table);
+        let (_, _, pad_top, pad_bottom) = self.resolve_cell_padding_for_cut(cell, table, styles);
         content + pad_top + pad_bottom
     }
 
@@ -17182,7 +17211,7 @@ impl LayoutEngine {
             let content: f64 =
                 (units[su..eu].iter().map(|u| u.height).sum::<f64>() - trailing_trim).max(0.0)
                     + mixed_nested_extra;
-            let (_, _, pad_top, pad_bottom) = self.resolve_cell_padding(cell, table);
+            let (_, _, pad_top, pad_bottom) = self.resolve_cell_padding_for_cut(cell, table, styles);
             let has_visible_cut = units[su..eu]
                 .iter()
                 .any(|unit| Self::cell_unit_has_visible_content(cell, unit));

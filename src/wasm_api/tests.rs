@@ -28387,3 +28387,34 @@ fn hwpx_column_top_tac_table_keeps_stored_vpos_like_mac_hangul() {
         ys.iter().map(|b| (b * 10.0).round() / 10.0).take(12).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn overflowing_cell_fragments_keep_full_vertical_padding_like_mac_hangul() {
+    // 맥 한글 12.30: 선언 높이(282HU)보다 내용이 훨씬 큰 칸은 «비정상 세로 여백» 축소를 하지 않는다 —
+    // 쪽을 가른 조각 상자 아래 괘선이 내용 아래 padding(141HU) 만큼 더 내려온다(5~8쪽 698.6/718.7/719.0/715.1pt).
+    for sample in ["samples/issue2004_cell_image_stack.hwpx", "samples/issue2004_cell_image_stack.hwp"] {
+        let doc = HwpDocument::from_bytes(&std::fs::read(sample).expect("표본")).expect("파싱");
+        for (page, mac_bottom) in [(4usize, 698.6f64), (5, 718.7), (6, 719.0), (7, 715.1)] {
+            let svg = doc.render_page_svg_native(page as u32).expect("SVG");
+            let mut bottoms: Vec<f64> = Vec::new();
+            for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+                let attr = |name: &str| -> Option<f64> {
+                    let key = format!(" {name}=\"");
+                    let i = tag.find(&key)? + key.len();
+                    tag[i..].split('"').next()?.parse().ok()
+                };
+                if let (Some(x1), Some(x2), Some(y1)) = (attr("x1"), attr("x2"), attr("y1")) {
+                    if (x2 - x1) > 300.0 {
+                        bottoms.push(y1 * 0.75);
+                    }
+                }
+            }
+            assert!(
+                bottoms.iter().any(|b| (b - mac_bottom).abs() <= 0.3),
+                "{sample} {}쪽 아래 괘선 {mac_bottom}pt(맥) 가 없다(우리 {:?})",
+                page + 1,
+                bottoms.iter().map(|b| (b * 10.0).round() / 10.0).collect::<Vec<_>>()
+            );
+        }
+    }
+}

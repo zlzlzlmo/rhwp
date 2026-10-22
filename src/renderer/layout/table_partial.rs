@@ -1294,7 +1294,7 @@ impl LayoutEngine {
 
             // 셀 패딩
             let (mut pad_left, mut pad_right, pad_top, pad_bottom) =
-                self.resolve_cell_padding(cell, table);
+                self.resolve_cell_padding_for_cut(cell, table, styles);
 
             // 실제 cut이 있는 셀은 cursor probe와 전체 렌더링이 같은 문단 창을
             // 소비한다. 다중줄은 padding shrink의 조기 반환, split_proven은 Top
