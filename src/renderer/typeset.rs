@@ -929,7 +929,7 @@ fn paper_overlay_object_bottom_abs_px(para: &Paragraph, dpi: f64) -> Option<f64>
     max_bottom
 }
 
-fn para_is_columndef_only_separator(para: &Paragraph) -> bool {
+pub(crate) fn para_is_columndef_only_separator(para: &Paragraph) -> bool {
     para.text.trim().is_empty()
         && !para.controls.is_empty()
         && para

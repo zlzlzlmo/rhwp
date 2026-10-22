@@ -148,6 +148,9 @@ pub(crate) struct HeightCursor {
     ///
     /// 0 이면 종전과 완전히 같은 경로다(트림이 없었거나 sb 몫이 아닐 때).
     pub trimmed_prev_spacing_before_px: f64,
+    /// 단 정의 전용 문단이 저장 줄 높이만큼 흐름에 더한 진행의 합(px). 저장 vpos 에는 그 진행이 없으므로(한글이 문단을
+    /// 0 만 진행시키던 시절의 값) 사다리 기준을 처음 역산할 때 흐름 위치에서 이만큼을 빼야 «역산 무효(음수)» 로 떨어지지 않는다.
+    pub rendered_extra_flow_px: f64,
     /// [편집 세션] 저장 사다리의 전방 점프가 쪽 말미(하단 15%)로 향하면 기각한다.
     /// 편집으로 앞 내용이 밀린 뒤의 저장 좌표는 이 쪽의 물리 상태와 무관해,
     /// 점프하면 후속 분할 조각이 쪽 밖으로 밀린다(셀 Enter 재현).
@@ -191,6 +194,7 @@ impl HeightCursor {
             last_compacted_endnote_title_gap: false,
             min_flow_floor: f64::MIN,
             trimmed_prev_spacing_before_px: 0.0,
+            rendered_extra_flow_px: 0.0,
             session_edited: false,
         }
     }
@@ -378,7 +382,10 @@ impl HeightCursor {
                 trailing_ls_hu,
                 self.trimmed_prev_spacing_before_px,
             );
-            if lazy_base < 0 {
+            // 단 정의 전용 문단이 더한 진행(`rendered_extra_flow_px`)은 저장 vpos 에 없는 몫이라 기준이 그만큼 음수로 나올 수 있다 —
+            // 그 몫까지는 무효로 보지 않는다(기준은 그대로 두어 사다리 출력이 같은 만큼 내려간다).
+            let extra_flow_hu = (self.rendered_extra_flow_px / self.dpi * 7200.0).round() as i32;
+            if lazy_base < -extra_flow_hu {
                 // 역산 무효(자리차지 표 등): 이전 개체 높이가 sequential y 에 이미
                 // 반영된 상태다. 여기서 vpos 보정을 적용하면 단 상단으로 되감겨
                 // 본문 표와 뒤따르는 미주가 겹친다.

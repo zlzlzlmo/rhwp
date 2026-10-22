@@ -984,6 +984,23 @@ fn para_has_visible_text(para: &Paragraph) -> bool {
 /// 상한은 Task #1811 과 같은 계약이다 — 쪽-상대 증거인 `vpos ≤ spacing_before` 만 쓰고
 /// 누적축 인코딩(`vpos ≫ spacing_before`)은 쪽-상대 증거가 아니므로 종전대로 버린다.
 /// 합성 사다리(`TAG_IMPLEMENTATION_PROPERTY`)도 증거가 아니다.
+/// 텍스트 없이 단 정의만 든 문단이 흐름에 싣는 높이(px) — 저장 첫 줄 `line_height`. 저장 줄 간격이 음수일 때만
+/// (고정 0 문단의 -vertsize) 의미가 있고, 합성 줄(구현 태그)은 저장 증거가 아니라 제외한다.
+fn columndef_only_separator_advance_px(para: Option<&Paragraph>, stored_layout: bool, dpi: f64) -> Option<f64> {
+    let para = para?;
+    if !stored_layout || !crate::renderer::typeset::para_is_columndef_only_separator(para) {
+        return None;
+    }
+    let seg = para.line_segs.first()?;
+    if seg.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0
+        || seg.line_spacing >= 0
+        || seg.line_height <= 0
+    {
+        return None;
+    }
+    Some(hwpunit_to_px(seg.line_height, dpi))
+}
+
 fn tac_column_top_stored_vpos_px(para: &Paragraph, spacing_before: f64, dpi: f64) -> Option<f64> {
     let seg = para.line_segs.first()?;
     if seg.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0 {
@@ -8675,6 +8692,17 @@ impl LayoutEngine {
                 if let Some(plan) = col_content.inline_flow_plans.get(para_index) {
                     hcursor.min_flow_floor = hcursor.min_flow_floor.max(col_area.y + plan.end);
                 }
+                // 단 정의 전용 문단이 더한 진행(`layout_column_item`)만큼 저장 줄 사다리 기준도 함께 민다 — 저장 vpos 는
+                // 그 문단이 0 만 진행하던 시절의 값이라, 기준을 두면 뒤 문단이 다시 저장 위치로 끌려 올라간다.
+                if let Some(advance) = columndef_only_separator_advance_px(
+                    paragraphs.get(*para_index),
+                    self.profile.get().hwp5_stored_pagination_layout()
+                        || self.profile.get().hwpx_stored_layout(),
+                    self.dpi,
+                ) {
+                    hcursor.shift_vpos_base_for_rendered_delta(advance);
+                    hcursor.rendered_extra_flow_px += advance;
+                }
             }
             if zero_between_shape_tail_margin_px > 0.0 {
                 // 미주 사이 0에서 직전 미주의 마지막 수식 tail을 앞 단에 남기고
@@ -10092,6 +10120,17 @@ impl LayoutEngine {
                         } else {
                             flow_end
                         };
+                        // 맥 한글 12.30(10-23 동의서 변형 실측): 텍스트 없이 단 정의만 든 문단은 저장 줄 높이만큼 흐름을 민다 —
+                        // 고정 0 줄간격의 음수 저장 간격(-vertsize)이 그 진행을 되돌리지 않는다. 컨트롤 없는 빈 문단은 종전대로 0.
+                        // 문단 배치 자체는 그대로 거쳐야 저장 줄 사다리 상태가 이어진다.
+                        if let Some(advance) = columndef_only_separator_advance_px(
+                            Some(para),
+                            self.profile.get().hwp5_stored_pagination_layout()
+                                || self.profile.get().hwpx_stored_layout(),
+                            self.dpi,
+                        ) {
+                            y_offset += advance;
+                        }
                     }
                     // TAC Shape 높이 보정: 문단에 TAC Shape(개체묶기 등)가 있으면
                     // Shape 높이가 문단 텍스트 높이보다 클 수 있으므로 y_offset을 보정.

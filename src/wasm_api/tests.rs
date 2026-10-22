@@ -28103,7 +28103,8 @@ fn stacked_single_column_zones_do_not_push_flow_below_body_wide_float() {
     };
 
     let oracle: [(&str, f64); 6] = [
-        ("개인정보 수집·이용 동의서", 112.2),
+        // 제목: 맥 PDF baseline 106.0pt(= 단 정의 전용 문단 +2.4pt 포함, 10-23 변형 실측)에서 글자 위쪽 환산 118.6px — 옛 112.2 는 대략값이었다.
+        ("개인정보 수집·이용 동의서", 118.6),
         ("본인은 한국산업단지공단의", 262.6),
         ("개인정보의 수집 및 이용에 (", 534.8),
         ("귀하는 위와 같은", 585.8),
@@ -28418,4 +28419,56 @@ fn overflowing_cell_fragments_keep_full_vertical_padding_like_mac_hangul() {
             );
         }
     }
+}
+
+#[test]
+fn columndef_only_separator_paragraph_advances_one_stored_line_like_mac_hangul() {
+    // 맥 한글 12.30(10-23 변형 실측): 텍스트 없이 단 정의만 든 고정 0 줄간격 문단은 저장 줄 높이(240HU=2.4pt)만큼
+    // 흐름을 민다 — 컨트롤 없는 평범한 빈 고정 0 문단은 몇 개든 0.
+    let first_rule_ys = |sample: &str| -> Vec<f64> {
+        let doc = HwpDocument::from_bytes(&std::fs::read(sample).expect("표본")).expect("파싱");
+        let svg = doc.render_page_svg_native(0).expect("SVG");
+        let mut ys: Vec<f64> = Vec::new();
+        for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+            let key = " y1=\"";
+            if let Some(i) = tag.find(key) {
+                if let Some(v) = tag[i + key.len()..].split('"').next().and_then(|v| v.parse::<f64>().ok()) {
+                    ys.push(v * 0.75);
+                }
+            }
+        }
+        ys
+    };
+    let with_colpr = first_rule_ys("samples/webiz_consent_colpr_separator.hwpx");
+    assert!(
+        with_colpr.iter().any(|y| (y - 109.4).abs() <= 0.3),
+        "단 정의 문단: 첫 괘선 109.4pt(맥) 가 없다(우리 {:?})",
+        with_colpr.iter().map(|y| (y * 10.0).round() / 10.0).take(8).collect::<Vec<_>>()
+    );
+    // 뒤 문단도 함께 내려간다(저장 줄 사다리가 같은 만큼 밀린다) — 본문 첫 묶음 맨 위 글줄 baseline 210.0pt(맥) ↔ 평범한 변형 207.6pt.
+    let body_block_baseline = |sample: &str| -> f64 {
+        let doc = HwpDocument::from_bytes(&std::fs::read(sample).expect("표본")).expect("파싱");
+        let json = doc.get_page_text_layout_native(0).expect("텍스트 레이아웃");
+        let layout: Value = serde_json::from_str(&json).expect("JSON");
+        let run = layout["runs"]
+            .as_array()
+            .expect("runs")
+            .iter()
+            .find(|run| run["text"].as_str().is_some_and(|t| t.contains("본인은 한국산업단지공단의")))
+            .expect("본문 첫 글줄");
+        run["y"].as_f64().expect("y") * 0.75
+    };
+    let with_gap = body_block_baseline("samples/webiz_consent_colpr_separator.hwpx");
+    let without = body_block_baseline("samples/webiz_consent_plain_empty_fixed0.hwpx");
+    assert!(
+        ((with_gap - without) - 2.4).abs() <= 0.3,
+        "단 정의 문단 뒤 본문은 평범한 변형보다 2.4pt(맥) 아래여야 한다(차 {:.2}pt)",
+        with_gap - without
+    );
+    let plain = first_rule_ys("samples/webiz_consent_plain_empty_fixed0.hwpx");
+    assert!(
+        plain.iter().any(|y| (y - 107.0).abs() <= 0.3),
+        "평범한 빈 문단: 첫 괘선 107.0pt(맥) 가 없다(우리 {:?})",
+        plain.iter().map(|y| (y * 10.0).round() / 10.0).take(8).collect::<Vec<_>>()
+    );
 }
