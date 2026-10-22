@@ -67,7 +67,8 @@ impl TypesetEngine {
         // rowbreak-problem-pages 14쪽 pi16 · 18→19). 렌더러의 상자 고정 조건과 같은 축이다.
         let single_cell_page_fragment =
             crate::renderer::float_placement::native_single_cell_rowbreak_page_fragment(
-                self.profile.get().hwp5_stored_pagination_layout(),
+                self.profile.get().hwp5_stored_pagination_layout()
+                    || self.profile.get().hwpx_stored_layout(),
                 table,
             ) && (is_continuation || st.current_height < 0.5);
         // 저장된 첫 조각의 원점은 paint와 같은 값으로 예약한다.
@@ -323,7 +324,8 @@ impl TypesetEngine {
         // silently lose the margin that table_partial would add afterwards.
         let single_cell_fragment_shape =
             crate::renderer::float_placement::native_single_cell_rowbreak_page_fragment(
-                self.profile.get().hwp5_stored_pagination_layout(),
+                self.profile.get().hwp5_stored_pagination_layout()
+                    || self.profile.get().hwpx_stored_layout(),
                 table,
             ) && std::ptr::eq(row_geometry_table, table);
         let fragment_placement = fragment_placement.map(|mut p| {
@@ -583,6 +585,7 @@ impl TypesetEngine {
             source_first_fragment_overflow_allowance,
             header_overhead,
             avail_for_rows,
+            single_cell_page_fragment,
         }
     }
 }

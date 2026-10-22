@@ -28253,3 +28253,61 @@ fn soft_hyphen_in_text_is_drawn_as_a_visible_hyphen() {
     assert!(!svg.contains('\u{00AD}'), "U+00AD 가 그대로 나가면 브라우저가 그리지 않는다");
     assert!(svg.contains('\u{2010}'), "소프트 하이픈은 보이는 하이픈으로 그려야 한다(한글 정합)");
 }
+
+/// 칠곡군 공고문(hwpx) 3·4쪽 — 쪽을 가른 1×1 `RowBreak` 표의 두 조각이 맥 한글처럼 놓인다: 조각 상자 합 = 선언 높이(190.5 + 140.1 = 330.6px),
+/// 이어진 조각은 쪽 맨 위에서 바깥 위 여백(283HU)만큼 아래, 쪽 중간에서 시작한 첫 조각의 상자는 쪽이 정한다(본문 아래 − 바깥 아래 여백 − 100HU).
+/// 정답: 맥 한글 12.30 PDF — 3쪽 표 괘선 638.4 · 781.3pt, 4쪽 표 괘선 73.7 · 178.7pt, 줄 상단 «12. 이행확인서» 104.0px · «7. 사업장 선정절차» 373.9px.
+/// 앞 구현은 이 술어(#7095)를 네이티브 hwp5 저장본에만 열었다 — 맥 한글은 hwpx 도 같다(issue2004 hwpx 5~8쪽 표 윗 괘선 65.3pt).
+#[test]
+fn hwpx_single_cell_rowbreak_fragments_match_mac_hangul() {
+    let doc = HwpDocument::from_bytes(
+        &std::fs::read("samples/webiz_chilgok_notice_2026.hwpx").expect("칠곡 표본"),
+    )
+    .expect("파싱");
+    // (쪽 0부터, 찾을 글(공백 무시), 맥 줄 상단 px, 허용 px)
+    let probes: [(u32, &str, f64, f64); 2] = [
+        (3, "이행확인서", 104.0, 4.0),
+        (3, "사업장선정절차", 373.9, 4.0),
+    ];
+    for (page, needle, mac_y, tol) in probes {
+        let json = doc.get_page_text_layout_native(page).expect("텍스트 레이아웃");
+        let layout: Value = serde_json::from_str(&json).expect("JSON");
+        let run = layout["runs"]
+            .as_array()
+            .expect("runs")
+            .iter()
+            .find(|r| r["text"].as_str().is_some_and(|t| t.replace(' ', "").contains(needle)))
+            .unwrap_or_else(|| panic!("p{} «{needle}» 글줄이 없다", page + 1));
+        let ours = run["y"].as_f64().expect("y");
+        assert!(
+            (ours - mac_y).abs() <= tol,
+            "p{} «{needle}»: 한글 {mac_y:.1}px ↔ rhwp {ours:.1}px (Δ{:+.1}) — hwpx 1×1 RowBreak 조각의 윗 여백 · 상자 합",
+            page + 1,
+            ours - mac_y
+        );
+    }
+    // 표 괘선(pt): 이어진 조각 4쪽 윗 괘선은 본문 위 + 바깥 위 여백, 아래 괘선은 선언 잔여(맥 178.7pt)에서 끝난다.
+    let svg = doc.render_page_svg_native(3).expect("SVG");
+    let mut ys: Vec<f64> = Vec::new();
+    for tag in svg.split('<').filter(|t| t.starts_with("rect ")) {
+        let attr = |name: &str| -> Option<f64> {
+            let key = format!("{name}=\"");
+            let i = tag.find(&key)? + key.len();
+            tag[i..].split('"').next()?.parse().ok()
+        };
+        if let (Some(y), Some(w), Some(h)) = (attr("y"), attr("width"), attr("height")) {
+            if w > 66.0 * 4.0 / 3.0 && h > 2.0 {
+                ys.push(y * 0.75);
+                ys.push((y + h) * 0.75);
+            }
+        }
+    }
+    for want in [73.7, 178.7] {
+        assert!(
+            ys.iter().any(|y| (y - want).abs() <= 0.6),
+            "4쪽 표 괘선 {want}pt 가 없다(우리 괘선 {:?})",
+            ys.iter().map(|y| (y * 10.0).round() / 10.0).collect::<Vec<_>>()
+        );
+    }
+}
+

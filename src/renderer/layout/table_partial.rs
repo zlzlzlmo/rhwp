@@ -3897,7 +3897,8 @@ impl LayoutEngine {
         // 기하 계약이 따로 있고(`hwpx_stored_layout` 계열), 넓히면 `rowbreak-problem-pages.hwpx`
         // 16쪽에서 칸 안 글상자가 꼬리말과 겹친다(text_overlap 1 → 2). 근거가 있는 범위로 좁힌다.
         crate::renderer::float_placement::native_single_cell_rowbreak_page_fragment(
-            self.profile.get().hwp5_stored_pagination_layout(),
+            self.profile.get().hwp5_stored_pagination_layout()
+                || self.profile.get().hwpx_stored_layout(),
             table,
         )
     }
@@ -4864,7 +4865,12 @@ impl LayoutEngine {
         // 한글은 쪽을 가른 행의 비끝 조각 상자를 쪽 바닥(본문 아래 − 바깥 아래 여백 − 100HU)까지 늘린다 —
         // 칸의 가운데/아래 정렬은 이 상자를 기준으로 한다(맥 한글 12.30: 킥스업 로컬 신청서 2쪽 칸 안 내용이
         // 상자 여유의 절반만큼 내려앉는다). 가른 행이 이 조각의 마지막 행이고 내용이 상자보다 짧을 때만 늘린다.
-        if !single_cell_page_fragment
+        // 1×1 쪽 조각 술어(#7095)가 선 hwpx 에서도 **쪽 중간**에서 시작하는 조각은 위 #7095 갈래가 상자를 안 정하니(네이티브 hwp 의
+        // 윈도 정본 156645214 19쪽 때문) 맥 한글(칠곡군 공고문 3쪽: 쪽 중간 첫 조각 상자 아래 781.3pt = 본문 아래 − 바깥 아래 여백 −
+        // 100HU)대로 여기서 늘린다.
+        let hwpx_mid_page_single_cell =
+            single_cell_page_fragment && self.profile.get().hwpx_stored_layout() && !starts_at_body_top;
+        if (!single_cell_page_fragment || hwpx_mid_page_single_cell)
             && table.row_count == 1
             && enclosing_cell_ctx.is_none()
             && stored_reset_paint_geometry.is_none()

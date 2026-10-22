@@ -51,6 +51,8 @@ struct FragmentBudget {
     source_first_fragment_overflow_allowance: f64,
     header_overhead: f64,
     avail_for_rows: f64,
+    /// 예산이 1×1 쪽 조각의 아래 인셋(바깥 아래 여백 + 100HU)을 이미 뺀 조각인가(쪽 상단에서 시작하거나 이어진 조각).
+    single_cell_page_fragment: bool,
 }
 
 impl TypesetEngine {
