@@ -3,7 +3,7 @@
 use super::super::composer::{
     compose_paragraph, reflow_line_segs, ComposedParagraph, ParagraphBox,
 };
-use super::super::page_layout::LayoutRect;
+use super::super::page_layout::{LayoutRect, PageLayoutInfo};
 use super::super::pagination::PageItem;
 use super::super::render_tree::*;
 use super::super::style_resolver::ResolvedStyleSet;
@@ -4238,17 +4238,34 @@ impl LayoutEngine {
 
     /// 다단 레이아웃에서 body_area 전체에 걸치는 TopAndBottom 개체의 예약 높이 계산
     /// 모든 단의 items를 순회하여 body_area 너비와 동일하거나 큰 개체만 반환
+    ///
+    /// 🔴 **나란한 단이 둘 이상인 구역(zone)의 개체만** 센다(Task #321). 쪽에 구역이 여럿이어도 각 구역이 한 단이면 단이
+    /// 나란하지 않아 «모든 단의 시작 y를 개체 아래로 민다»는 규칙의 근거가 없다 — 그 규칙을 켜면 구역 0의 본문 폭 자리차지 표가
+    /// 쪽 맨 위 빈 문단·제목·본문까지 표 아래로 밀어 글이 표를 덮는다(맥 한글 12.30 정답 PDF는 밀지 않는다:
+    /// 개인정보 수집·이용 동의서 +121px · `stacked_single_column_zones_do_not_push_flow_below_body_wide_float`).
+    ///
+    /// 반환 `(문단 번호, 개체 아래 y, 그 개체가 속한 구역의 y 시작 오프셋)` — 적용은 **같은 구역의 단**에만 한다.
     pub(crate) fn calculate_body_wide_shape_reserved(
         &self,
         paragraphs: &[Paragraph],
         column_contents: &[super::super::pagination::ColumnContent],
         body_area: &LayoutRect,
-    ) -> Vec<(usize, f64)> {
+        page_layout: &PageLayoutInfo,
+    ) -> Vec<(usize, f64, f64)> {
         use crate::model::shape::TextWrap;
 
-        let mut result: Vec<(usize, f64)> = Vec::new();
+        let mut result: Vec<(usize, f64, f64)> = Vec::new();
 
         for col_content in column_contents {
+            let zone_columns = col_content
+                .zone_layout
+                .as_ref()
+                .unwrap_or(page_layout)
+                .column_areas
+                .len();
+            if zone_columns <= 1 {
+                continue;
+            }
             for item in &col_content.items {
                 let (para_index, control_index) = match item {
                     super::super::pagination::PageItem::Shape {
@@ -4298,12 +4315,12 @@ impl LayoutEngine {
                 if shape_y > threshold_y {
                     continue;
                 }
-                if let Some(existing) = result.iter_mut().find(|(pi, _)| *pi == *para_index) {
+                if let Some(existing) = result.iter_mut().find(|(pi, _, _)| *pi == *para_index) {
                     if bottom_y > existing.1 {
                         existing.1 = bottom_y;
                     }
                 } else {
-                    result.push((*para_index, bottom_y));
+                    result.push((*para_index, bottom_y, col_content.zone_y_offset));
                 }
             }
         }

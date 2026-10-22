@@ -6281,12 +6281,13 @@ impl LayoutEngine {
         let mut prev_zone_was_header_band: bool = false;
 
         // 다단 레이아웃: body_area 전체에 걸치는 TopAndBottom 개체의 예약 높이
-        // (한 단에만 할당되더라도 모든 단에 적용)
-        let body_wide_reserved: Vec<(usize, f64)> = if page_content.column_contents.len() > 1 {
+        // (한 단에만 할당되더라도 **같은 구역의** 모든 단에 적용 — 나란한 단이 하나뿐인 구역은 대상이 아니다)
+        let body_wide_reserved: Vec<(usize, f64, f64)> = if page_content.column_contents.len() > 1 {
             self.calculate_body_wide_shape_reserved(
                 paragraphs,
                 &page_content.column_contents,
                 &layout.body_area,
+                layout,
             )
         } else {
             Vec::new()
@@ -6404,6 +6405,13 @@ impl LayoutEngine {
                 *col_area_base
             };
 
+            // 본문 폭 개체 예약은 그 개체가 속한 구역의 단에만 건다 — 다른 구역의 시작 y를 밀지 않는다.
+            let zone_body_wide_reserved: Vec<(usize, f64)> = body_wide_reserved
+                .iter()
+                .filter(|&&(_, _, zone_y)| (zone_y - col_content.zone_y_offset).abs() <= 0.1)
+                .map(|&(para_index, bottom_y, _)| (para_index, bottom_y))
+                .collect();
+
             let (col_node, y_offset) = self.build_single_column(
                 tree,
                 paper_images,
@@ -6419,7 +6427,7 @@ impl LayoutEngine {
                 &col_area,
                 outline_numbering_id,
                 wrap_around_paras,
-                &body_wide_reserved,
+                &zone_body_wide_reserved,
             );
 
             // [Task #874 Case 5] solo-single zone (1단 ColumnDef + 1 paragraph) leaving 시
@@ -8332,6 +8340,25 @@ impl LayoutEngine {
                     })
                     .unwrap_or(item_probe_height);
                 let mut jump_to = y_offset;
+                // 이 항목의 첫 줄 앞에 얹히는 문단 앞 간격(px) — 이어진 조각(start_line > 0)·표·개체는 0이다.
+                let item_spacing_before_px = match item {
+                    PageItem::FullParagraph { .. }
+                    | PageItem::PartialParagraph { start_line: 0, .. } => paragraphs
+                        .get(item_para)
+                        .map(|para| {
+                            let ps_id = composed
+                                .get(item_para)
+                                .map(|c| c.para_style_id as usize)
+                                .unwrap_or(para.para_shape_id as usize);
+                            styles
+                                .para_styles
+                                .get(ps_id)
+                                .map(|ps| ps.spacing_before)
+                                .unwrap_or(0.0)
+                        })
+                        .unwrap_or(0.0),
+                    _ => 0.0,
+                };
                 // [#2808] 단일 표 host 의 post-text 는 한컴에서 앵커에 남는다(#1549 유지).
                 // exclusion 소비는 #2439 의 다중 co-anchored float 스택(표 2개+서명란)
                 // 형상에서만 필요하므로, owner 문단의 co-anchored float 가 2개 이상일
@@ -8381,6 +8408,15 @@ impl LayoutEngine {
                         continue;
                     }
                     if item_para_inkless {
+                        continue;
+                    }
+                    // [맥 한글 12.30 REA 정답 · 개인정보 수집·이용 동의서] 줄의 잉크는 문단 윗변이 아니라
+                    // **윗변 + 앞 간격**에서 시작한다. 그 잉크 윗변이 이미 밴드 아랫변 이하면 밴드와 겹칠 것이
+                    // 없다 — 한글이 저장한 줄 위치(표 아랫변 220.4px)가 그것이다. 윗변으로만 재면 «겹친다»고 보고
+                    // 밴드 아래로 민 뒤 앞 간격을 **한 번 더** 더해 줄이 앞 간격(42.9px)만큼 아래로 간다.
+                    if self.profile.get().hwp5_stored_pagination_layout()
+                        && jump_to + item_spacing_before_px + 0.5 >= zone.bottom
+                    {
                         continue;
                     }
                     let starts_in_zone = jump_to + 0.5 >= zone.top && jump_to < zone.bottom;

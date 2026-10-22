@@ -28070,3 +28070,59 @@ fn issue_4576_rebuild_derived_state_recomputes_composition_and_pagination() {
         "페이지 트리가 기준선과 같아야 한다 (옛 코드 잔재 없음)"
     );
 }
+
+// ── 한 단짜리 구역 둘이 이어진 쪽의 «본문 폭 자리차지 개체 예약» (맥 한글 12.30 정답) ────────────
+//
+// 사고(2026-10-21): 공고 179496 첨부 «개인정보수집이용동의서.hwp» 1쪽이 한글과 달리 본문 글이 표를 덮어 그려졌다.
+// 쪽에는 **한 단짜리 구역이 위아래로 둘**(`column_contents` 2개 — 구역 0 = 제목·표·본문, 구역 1 = 끝의 빈 문단·그림)이 있고,
+// 구역 0 문단 3에 **문단 기준 자리차지 표**(폭 593px ≥ 본문 폭 80%, 세로 오프셋 79.7px)가 앉아 있다.
+// `calculate_body_wide_shape_reserved`(Task #321)는 «다단 쪽에서 본문 폭 자리차지 개체는 모든 단의 시작 y를 그 아래로 민다»는 규칙인데
+// `column_contents.len() > 1` 만 보고 켜져서, 나란한 단이 하나뿐인 이 쪽에서도 표 아래(+120.6px)까지 쪽 맨 위 빈 문단·제목·본문을 전부 밀었다.
+// 한글은 호스트 문단의 제목 줄을 표 위에 두고 표를 문단 위 + 오프셋에 놓는다(정답 PDF에 겹침 없음).
+//
+// 정답은 한글이 그린 PDF다: 맥 한글 12.30 «PDF로 저장하기» → `pdftotext -bbox-layout`의 줄 상단 y(pt) × 96/72.
+// (제목 112.2 · 소속 표 194.5 · «1. 본인은» 262.6 · «개인정보의 수집 및 이용에» 534.8 · «2. 귀하는» 585.8 · «4. 본인은» 765.0 · 기업명 893.0)
+// 우리 글 상자는 줄 위쪽 여백 몇 px 위에서 시작하므로 줄 상단 값과 ±4px로 견준다(밀림은 +121px이었다).
+#[test]
+fn stacked_single_column_zones_do_not_push_flow_below_body_wide_float() {
+    let bytes = std::fs::read("samples/webiz_consent_two_zones_topbottom_float.hwp")
+        .expect("동의서 표본 존재");
+    let doc = HwpDocument::from_bytes(&bytes).expect("파싱");
+    assert_eq!(doc.page_count(), 1, "한글도 1쪽이다");
+
+    let json = doc.get_page_text_layout_native(0).expect("텍스트 레이아웃");
+    let layout: Value = serde_json::from_str(&json).expect("JSON");
+    let runs = layout["runs"].as_array().expect("runs");
+    let y_of = |needle: &str| -> f64 {
+        runs.iter()
+            .find(|run| run["text"].as_str().is_some_and(|t| t.contains(needle)))
+            .unwrap_or_else(|| panic!("«{needle}» 글줄이 없다"))["y"]
+            .as_f64()
+            .expect("y")
+    };
+
+    let oracle: [(&str, f64); 6] = [
+        ("개인정보 수집·이용 동의서", 112.2),
+        ("본인은 한국산업단지공단의", 262.6),
+        ("개인정보의 수집 및 이용에 (", 534.8),
+        ("귀하는 위와 같은", 585.8),
+        ("본인은 씨엔티테크(주)의", 765.0),
+        ("기  업  명 :", 893.0),
+    ];
+    for (needle, mac_y) in oracle {
+        let ours = y_of(needle);
+        assert!(
+            (ours - mac_y).abs() <= 4.0,
+            "«{needle}»: 한글 {mac_y:.1}px ↔ rhwp {ours:.1}px (Δ{:+.1}) — 첫 구역의 본문 폭 자리차지 표가 쪽 맨 위부터 흐름을 밀고 있다",
+            ours - mac_y
+        );
+    }
+
+    // 본문 1~3행(줄 3개)은 «수집 및 이용 항목» 표(쪽 기준 y 348.9px) 위에 끝나야 한다 — 글이 표를 덮으면 안 된다.
+    let table_top = 348.9;
+    let last_line_bottom = y_of("규정 등에 따라 아래의 개인정보를") + 16.0;
+    assert!(
+        last_line_bottom <= table_top + 1.0,
+        "본문 마지막 줄 아래 {last_line_bottom:.1}px가 표 윗변 {table_top}px를 넘는다 — 글과 표가 겹친다"
+    );
+}
