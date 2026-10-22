@@ -28337,3 +28337,30 @@ fn rowspan_start_band_row_splits_inside_the_row_like_mac_hangul() {
     assert!(!texts(2).contains("이미지"), "3쪽에는 «이미지»가 없다(한글: 쪽 번호만)");
 }
 
+/// issue2004 hwpx 4쪽 — 호환 투영이 떠 있는 그림 더미를 인라인 원자로 바꾼 1×1 표의 첫 조각은 쪽 바닥이 아니라 내용 끝에서 끊긴다.
+/// 정답: 맥 한글 12.30 PDF 표 아래 괘선 749.8pt(쪽 바닥 공식 767.2pt 가 아니다). 남은 −1.5pt 는 바닥 안여백 몫 — 미확인(원장 layout-hwpx-single-cell-fragments).
+#[test]
+fn projected_picture_stack_first_fragment_ends_at_content_like_mac_hangul() {
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/issue2004_cell_image_stack.hwpx").expect("표본"))
+        .expect("파싱");
+    let svg = doc.render_page_svg_native(3).expect("SVG");
+    let mut bottoms: Vec<f64> = Vec::new();
+    for tag in svg.split('<').filter(|t| t.starts_with("rect ")) {
+        let attr = |name: &str| -> Option<f64> {
+            let key = format!("{name}=\"");
+            let i = tag.find(&key)? + key.len();
+            tag[i..].split('"').next()?.parse().ok()
+        };
+        if let (Some(y), Some(w), Some(h)) = (attr("y"), attr("width"), attr("height")) {
+            if w > 66.0 * 4.0 / 3.0 && h > 300.0 {
+                bottoms.push((y + h) * 0.75);
+            }
+        }
+    }
+    assert!(
+        bottoms.iter().any(|b| (b - 749.8).abs() <= 2.0),
+        "4쪽 표 아래 괘선 749.8pt(맥) 가 없다(우리 {:?})",
+        bottoms.iter().map(|b| (b * 10.0).round() / 10.0).collect::<Vec<_>>()
+    );
+}
+

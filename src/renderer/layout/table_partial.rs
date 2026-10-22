@@ -4912,7 +4912,18 @@ impl LayoutEngine {
                             .is_some_and(|next| next.height <= extra + 0.5)
                     })
                 });
-                if limit > row_heights[last] && extra < 48.0 && !next_unit_fits {
+                // 호환 투영이 떠 있는 그림 더미를 인라인 원자로 바꾼 조각은 줄 기하가 합성이라 저장된 쪽 틀이 아니다 — 맥 한글은 이 조각을
+                // 쪽 바닥이 아니라 내용 끝에서 끊는다(issue2004 hwpx 4쪽: 맥 749.8pt ↔ 쪽 바닥 767.2pt). #7095 갈래와 같은 예외다.
+                let projected_content = table.cells.first().is_some_and(|cell| {
+                    self.cell_cut_has_projected_lines(
+                        cell,
+                        table,
+                        styles,
+                        start_cut.first().copied().unwrap_or(0),
+                        end_cut.first().copied().unwrap_or(0),
+                    )
+                });
+                if limit > row_heights[last] && extra < 48.0 && !next_unit_fits && !projected_content {
                     row_heights[last] = limit;
                 }
             }
