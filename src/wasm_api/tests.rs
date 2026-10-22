@@ -28364,3 +28364,26 @@ fn projected_picture_stack_first_fragment_ends_at_content_like_mac_hangul() {
     );
 }
 
+
+#[test]
+fn hwpx_column_top_tac_table_keeps_stored_vpos_like_mac_hangul() {
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/issue2004_cell_image_stack.hwpx").expect("표본"))
+        .expect("파싱");
+    let svg = doc.render_page_svg_native(2).expect("SVG");
+    let mut ys: Vec<f64> = Vec::new();
+    for tag in svg.split('<').filter(|t| t.starts_with("line ") || t.starts_with("rect ")) {
+        for name in ["y1", "y"] {
+            let key = format!(" {name}=\"");
+            if let Some(i) = tag.find(&key) {
+                if let Some(v) = tag[i + key.len()..].split('"').next().and_then(|v| v.parse::<f64>().ok()) {
+                    ys.push(v * 0.75);
+                }
+            }
+        }
+    }
+    assert!(
+        ys.iter().any(|y| (y - 72.2).abs() <= 1.0),
+        "3쪽 표 위 괘선 72.2pt(맥) 가 없다(우리 {:?})",
+        ys.iter().map(|b| (b * 10.0).round() / 10.0).take(12).collect::<Vec<_>>()
+    );
+}

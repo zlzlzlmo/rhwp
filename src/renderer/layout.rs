@@ -11292,7 +11292,8 @@ impl LayoutEngine {
                     // column-top vpos 계약을 못 받고 0 으로 뭉개졌다.
                     let table_y_start = if is_tac
                         && inline_pos.is_none()
-                        && self.profile.get().hwp5_stored_pagination_layout()
+                        && (self.profile.get().hwp5_stored_pagination_layout()
+                            || self.profile.get().hwpx_stored_layout())
                         && (para_y_for_table - col_area.y).abs() < 1.0
                     {
                         let spacing_before = para_style.map(|st| st.spacing_before).unwrap_or(0.0);
