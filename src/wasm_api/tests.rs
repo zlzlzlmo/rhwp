@@ -25717,12 +25717,13 @@ fn issue2214_scoped_cache_coherence_preserves_transient_pagination() {
         let flushed_bounds_h = flushed_rect_json["cellBounds"]["h"]
             .as_f64()
             .expect("flushed bounds h");
+        // 947.8: 칸 여백(141HU×2)을 줄이지 않은 맥 한글 정합 값(종전 945.9 는 «비정상 여백» 축소본 · issue1949 맥 PDF 선 13→91).
         assert!(
-            (transient_bounds_h - 945.9).abs() <= 0.2,
+            (transient_bounds_h - 947.8).abs() <= 0.2,
             "{label}: transient bounds h={transient_bounds_h}"
         );
         assert!(
-            (flushed_bounds_h - 945.9).abs() <= 0.2,
+            (flushed_bounds_h - 947.8).abs() <= 0.2,
             "{label}: flushed bounds h={flushed_bounds_h}"
         );
         assert_eq!(doc.page_count(), 115, "{label}: page count");

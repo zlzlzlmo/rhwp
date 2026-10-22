@@ -1110,14 +1110,16 @@ mod tests {
 
         assert_eq!(page_rows(&core, 93, 1000), vec![0, 1, 2], "#3820 p94 표 28");
         assert_eq!(page_rows(&core, 94, 1000), vec![3], "#3820 p95 표 28");
+        // 맥 한글 12.30 PDF(10-23): 106쪽은 표 29 의 3행까지 싣는다(글 34/34 일치 · 종전 [0,1,2] 는 20/34). 껍데기 선언
+        // 높이 칸의 «비정상 세로 여백» 축소를 하지 않기 때문이다(`resolve_cell_padding_for_cut`).
         assert_eq!(
             page_rows(&core, 105, 1136),
-            vec![0, 1, 2],
+            vec![0, 1, 2, 3],
             "#3820 p106 표 29"
         );
         assert_eq!(
             page_rows(&core, 106, 1136),
-            vec![3, 4, 5, 6, 7],
+            vec![4, 5, 6, 7],
             "#3820 p107 표 29",
         );
     }
