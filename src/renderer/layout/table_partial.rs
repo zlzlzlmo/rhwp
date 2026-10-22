@@ -1533,11 +1533,16 @@ impl LayoutEngine {
                 // 한글은 조각의 마지막 줄 뒤 줄 간격을 내용 높이에 세지 않는다 — 쪽을 가르는 칸의
                 // 가운데/아래 정렬이 조각 단위로 이 값을 쓴다(맥 한글 12.30 합성 문서 실측).
                 // 셀 마지막 줄이 아니어도 이 조각의 마지막 줄이면 뒤 간격을 뺀다.
+                // 칸이 잘리지 않았으면(문단 줄 범위가 전부 온전) 조각이 아니라 칸 전체라 종전 셈을 쓴다.
+                let fragment_is_cut = ranges
+                    .iter()
+                    .zip(composed_store.eager_slice().iter())
+                    .any(|(&(s, e), comp)| s > 0 || e < comp.lines.len());
                 let fragment_last_para = ranges
                     .iter()
                     .enumerate()
                     .rev()
-                    .find(|&(pi, &(s, e))| s < e && !empty_paragraphs[pi])
+                    .find(|&(pi, &(s, e))| fragment_is_cut && s < e && !empty_paragraphs[pi])
                     .map(|(pi, _)| pi);
                 for (pi, ((comp, para), &(start, end))) in composed_store
                     .eager_slice()
@@ -1704,7 +1709,16 @@ impl LayoutEngine {
             });
             // 중첩 표를 품은 칸을 가른 조각은 **이 조각의 내용 높이**가 상자에 들면 한글처럼 조각 기준으로 정렬하고
             // (맥 한글 12.30: 킥스업 로컬 신청서 2쪽), 안 들면(표 둘이 쪽을 넘겨 흐르는 42065 Row2) 위로 둔다.
-            let nested_fragment_content: Option<f64> = if has_multicol_nested {
+            // 조각 내용 높이 추정이 맞는 것은 칸 안 다열 표가 전부 글자처럼 취급(TAC)된 경우뿐이다(킥스업) —
+            // 그 밖의 중첩 표는 그려진 높이가 추정보다 커 가운데 정렬 오프셋이 내용을 칸 밖으로 민다.
+            let nested_multicol_all_tac = cell.paragraphs.iter().all(|p| {
+                p.controls
+                    .iter()
+                    .all(|c| !matches!(c, Control::Table(t) if t.col_count > 1 && !t.common.treat_as_char))
+            });
+            let nested_fragment_content: Option<f64> = if has_multicol_nested
+                && nested_multicol_all_tac
+            {
                 cut_units.map(|(start_unit, end_unit)| {
                     let (_, _, pt, pb) = self.resolve_cell_padding(cell, table);
                     (self.cell_cut_visible_height(cell, table, styles, start_unit, end_unit)
@@ -1721,8 +1735,22 @@ impl LayoutEngine {
                     Some(fragment) => fragment > inner_height + 0.5,
                     None => self.cell_units_content_height(cell, table, styles) > inner_height + 0.5,
                 };
+            // 한글이 조각마다 세로 정렬하는 것은 선언 높이가 내용보다 큰 고정 높이 칸이다(조각 상자 합 = 선언 높이).
+            // 내용에 맞춰 늘어난 칸은 상자가 내용과 같아 정렬할 여유가 없으니 종전처럼 위로 둔다.
+            // 그림·도형이 있는 칸은 내용 높이 셈에 그 개체가 안 들어가 «여유가 있다»고 잘못 읽는다 — 종전대로 둔다.
+            let fixed_height_box = cell_was_split
+                && cell.height < 0x8000_0000
+                && !cell.paragraphs.iter().any(|p| {
+                    p.controls
+                        .iter()
+                        .any(|c| matches!(c, Control::Picture(_) | Control::Shape(_)))
+                })
+                && hwpunit_to_px(cell.height as i32, self.dpi)
+                    > self.cell_units_content_height(cell, table, styles) + pad_top + pad_bottom + 0.5;
             let effective_align = if (is_in_split_row || is_rowbreak_straddle)
-                && (windowed_composition || cell_content_cut_by_slice)
+                && (windowed_composition
+                    || cell_content_cut_by_slice
+                    || (cell_was_split && !fixed_height_box))
             {
                 VerticalAlign::Top
             } else {
@@ -4837,6 +4865,7 @@ impl LayoutEngine {
         // 칸의 가운데/아래 정렬은 이 상자를 기준으로 한다(맥 한글 12.30: 킥스업 로컬 신청서 2쪽 칸 안 내용이
         // 상자 여유의 절반만큼 내려앉는다). 가른 행이 이 조각의 마지막 행이고 내용이 상자보다 짧을 때만 늘린다.
         if !single_cell_page_fragment
+            && table.row_count == 1
             && enclosing_cell_ctx.is_none()
             && stored_reset_paint_geometry.is_none()
             && end_row_height_override.is_none()
@@ -4860,7 +4889,24 @@ impl LayoutEngine {
                     self.dpi,
                 );
                 let limit = box_bottom - y_start - above;
-                if limit > row_heights[last] {
+                // 쪽 나눔이 끊은 자리 다음 유닛이 늘린 상자에 들어가면(= 쪽 나눔이 한글보다 일찍 끊었다) 상자를 키우면
+                // 끊긴 줄이 한 번 더 그려져 다음 쪽과 겹친다 — 그때는 키우지 않는다. 여유가 줄 둘 높이(48px) 이상이면
+                // 다음 유닛의 첫 줄이 들어갈 수 있어 쪽 나눔을 다시 셈하기 전에는 키우지 않는다(미확인: 큰 여유의 한글 모양).
+                let extra = limit - row_heights[last];
+                let mut cut_cells: Vec<&crate::model::table::Cell> = table
+                    .cells
+                    .iter()
+                    .filter(|c| c.row as usize == last && c.row_span == 1)
+                    .collect();
+                cut_cells.sort_by_key(|c| c.col);
+                let next_unit_fits = cut_cells.iter().enumerate().any(|(i, c)| {
+                    end_cut.get(i).copied().filter(|&u| u > 0).is_some_and(|u| {
+                        self.cell_units(c, table, styles)
+                            .get(u)
+                            .is_some_and(|next| next.height <= extra + 0.5)
+                    })
+                });
+                if limit > row_heights[last] && extra < 48.0 && !next_unit_fits {
                     row_heights[last] = limit;
                 }
             }

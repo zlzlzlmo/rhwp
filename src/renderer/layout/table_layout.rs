@@ -220,7 +220,7 @@ fn stored_layout_relocated_empty_rowbreak_picture_resets_offset(
         || table.common.treat_as_char
         || !matches!(table.common.text_wrap, TextWrap::TopAndBottom)
         || !matches!(table.common.vert_rel_to, VertRelTo::Para)
-        || table.row_count != 1
+        || table.row_count != 1 || cell.paragraphs.len() > crate::renderer::layout::GIANT_CELL_PARAS
         || table.col_count != 1
         || table.cells.len() != 1
         || cell.row != 0
@@ -11577,9 +11577,13 @@ impl LayoutEngine {
                     .collect();
                 // 글자처럼 취급한 칸 안 표는 한 줄짜리 개체라 쪽 경계에서 나뉘지 않는다 — 통째로 다음 조각으로
                 // 간다(맥 한글 12.30 PDF: 표 위 여유가 4행분이어도 통째 이월 · Windows 저장 줄도 호스트 문단 y=0 리셋).
+                // 맥 정답이 있는 모양(행 하나짜리 바깥 표 · 칸 선언 높이가 안의 표보다 큰 고정 높이 상자)에만 적용한다 —
+                // 내용에 맞춰 늘어난 칸이나 여러 행 표는 한글 2020 정답(#1073 · issue_3637 · issue_6697)대로 행 단위로 나눈다.
                 if nested_tables.len() == 1
                     && nested_tables[0].row_count >= 2
-                    && !nested_tables[0].common.treat_as_char
+                    && (!nested_tables[0].common.treat_as_char
+                        || table.row_count != 1
+                        || (cell.height as i64) <= (nested_tables[0].common.height as i64))
                     && !matches!(
                         nested_tables[0].page_break,
                         crate::model::table::TablePageBreak::None

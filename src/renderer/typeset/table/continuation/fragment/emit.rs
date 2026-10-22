@@ -70,7 +70,8 @@ impl TypesetEngine {
         let mut end_row_height_override = end_row_height_override;
         // 한글은 쪽을 가른 행의 조각 상자를 합쳐 선언 행 높이로 맞춘다 — 끝 조각 상자 = 선언 − 앞 상자 합
         // (내용이 더 크면 내용). 맥 한글 12.30 합성 문서: 867.8 + 865.2 = 선언 1733px.
-        let splits_one_row_tail = end_row == cursor_row + 1
+        let splits_one_row_tail = row_count == 1
+            && end_row == cursor_row + 1
             && is_continuation
             && !start_cut.is_empty()
             && !start_cut_is_block
@@ -82,7 +83,8 @@ impl TypesetEngine {
             let declared = cut_row_h.get(cursor_row).copied().unwrap_or(0.0);
             let remainder_box = declared - continuation.split_row_box_px;
             let content_box = consumed;
-            if remainder_box > content_box + 0.5 {
+            // 쪽에 남은 높이를 넘는 만큼은 한글도 다시 가른다 — 늘리는 값은 이 쪽에 들어가는 만큼만.
+            if remainder_box > content_box + 0.5 && remainder_box <= avail_for_rows + 0.1 {
                 end_row_height_override = Some(remainder_box);
                 partial_height = remainder_box + header_overhead;
             }
@@ -399,8 +401,16 @@ impl TypesetEngine {
             (tail > 0.5 && tail_band_continues).then_some(tail)
         });
         // 가른 행의 앞 조각 상자 합 — 조각이 이 행 하나뿐일 때 상자는 쪽이 정한 높이(avail_for_rows)다.
+        // 위 행이 같이 놓인 조각이면 가른 행의 상자 = 쪽이 정한 높이 − 위 행들(새로 시작한 조각만 — 이어받은 조각의 위 행 높이는 덮어쓰기라 못 믿는다).
+        let rows_above_split_px: Option<f64> = if end_row == cursor_row + 1 {
+            Some(0.0)
+        } else if !is_continuation && start_cut.is_empty() && end_row > cursor_row + 1 {
+            Some(cut_row_h[cursor_row..end_row - 1].iter().sum())
+        } else {
+            None
+        };
         let keeps_split_row_box = split_end_limit > 0.0
-            && end_row == cursor_row + 1
+            && rows_above_split_px.is_some()
             && !start_cut_is_block
             && split_block_start.is_none()
             && !row_cursor_is_nested
@@ -411,7 +421,7 @@ impl TypesetEngine {
             } else {
                 0.0
             };
-            carried + avail_for_rows
+            carried + (avail_for_rows - rows_above_split_px.unwrap_or(0.0)).max(0.0)
         } else {
             0.0
         };
