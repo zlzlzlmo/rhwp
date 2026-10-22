@@ -3323,7 +3323,13 @@ impl Renderer for SvgRenderer {
         // 보이지 않게 처리. HWP/HWPX 의 inline 도형/표/그림 등 treat_as_char 컨트롤이
         // paragraph text 자체에 U+FFFC 로 표현됨 — 도형 path 는 별도 emit 되므로 본
         // placeholder character 는 시각적으로 invisible 해야 한다. 한컴 정답지 정합.
-        let text: String = text.chars().filter(|&c| c != '\u{FFFC}').collect();
+        // 소프트 하이픈(U+00AD)은 한글이 줄 안에서도 하이픈 글리프로 그린다(칠곡군 공고문 «- 보조금» · 맥 한글 PDF) — 브라우저는
+        // 줄 끝이 아니면 안 그리니 보이는 하이픈(U+2010)으로 내보낸다. 글자 수가 그대로라 줄별 x 좌표는 변하지 않는다.
+        let text: String = text
+            .chars()
+            .filter(|&c| c != '\u{FFFC}')
+            .map(|c| if c == '\u{00AD}' { '\u{2010}' } else { c })
+            .collect();
         if text.is_empty() {
             return;
         }

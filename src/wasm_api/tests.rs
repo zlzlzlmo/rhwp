@@ -28241,3 +28241,15 @@ fn behind_text_picture_host_with_text_keeps_its_line_advance() {
     }
 }
 
+/// 한글은 글에 든 소프트 하이픈(U+00AD, hwp `ad 00`)을 줄 안에서도 하이픈 글리프로 그린다 — 칠곡군 공고문 «- 보조금» 줄(맥 한글 PDF에
+/// `\xad` 글자가 그려져 있다). 브라우저는 U+00AD를 줄 끝이 아니면 그리지 않으니 SVG에는 보이는 하이픈(U+2010)으로 내보낸다.
+#[test]
+fn soft_hyphen_in_text_is_drawn_as_a_visible_hyphen() {
+    let doc = HwpDocument::from_bytes(
+        &std::fs::read("samples/webiz_chilgok_notice_2026.hwpx").expect("칠곡 표본"),
+    )
+    .expect("파싱");
+    let svg = doc.render_page_svg_native(0).expect("SVG");
+    assert!(!svg.contains('\u{00AD}'), "U+00AD 가 그대로 나가면 브라우저가 그리지 않는다");
+    assert!(svg.contains('\u{2010}'), "소프트 하이픈은 보이는 하이픈으로 그려야 한다(한글 정합)");
+}

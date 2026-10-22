@@ -2243,7 +2243,12 @@ impl Renderer for WebCanvasRenderer {
     ) {
         // [Task #1067] inline 컨트롤 placeholder (U+FFFC OBJECT REPLACEMENT CHARACTER) skip.
         // svg.rs::draw_text 와 동일 정합.
-        let text: String = text.chars().filter(|&c| c != '\u{FFFC}').collect();
+        // 소프트 하이픈(U+00AD)은 한글이 줄 안에서도 하이픈 글리프로 그린다 — svg.rs 와 같은 정합(보이는 하이픈 U+2010).
+        let text: String = text
+            .chars()
+            .filter(|&c| c != '\u{FFFC}')
+            .map(|c| if c == '\u{00AD}' { '\u{2010}' } else { c })
+            .collect();
         if text.is_empty() {
             return;
         }
