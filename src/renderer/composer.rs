@@ -1217,8 +1217,42 @@ fn effective_line_seg_count(para: &Paragraph) -> usize {
     if is_sample16_2022_bcp_orphan_tail_lineseg(para) {
         para.line_segs.len().saturating_sub(1)
     } else {
-        para.line_segs.len()
+        para.line_segs.len() - empty_guide_wrapped_line_count(para)
     }
+}
+
+/// 빈 누름틀(ClickHere) 안내문이 줄바꿈된 «가짜 줄» 수.
+///
+/// 한글 편집 화면은 안내문(예: «민간부담금: 지원금의 10%이상 …» 83자)을 문단 안에서 접어 저장 LINE_SEG 를 늘린다.
+/// 안내문은 찍히지 않으므로 그 줄은 실제 글자가 없다 — 줄의 시작 위치가 문단 글자 수(`char_count`)를 넘는다.
+/// 맥 한글 12.30 PDF(a05cee0f 9쪽)는 그런 문단을 한 줄(lh + ls)만 차지한다. 안내문 누름틀이 없는 문단은 건드리지 않는다.
+pub(crate) fn empty_guide_wrapped_line_count(para: &Paragraph) -> usize {
+    if para.line_segs.len() < 2 || para.char_count == 0 {
+        return 0;
+    }
+    let has_guide = para.controls.iter().any(|c| {
+        matches!(c, Control::Field(f)
+            if f.field_type == crate::model::control::FieldType::ClickHere
+                && f.guide_text().is_some())
+    });
+    if !has_guide {
+        return 0;
+    }
+    (1..para.line_segs.len())
+        .filter(|&i| para.line_seg_text_start(i) >= para.char_count)
+        .count()
+}
+
+/// 위 «가짜 줄»이 저장 사다리에 싣고 있는 높이(HU) — 줄 높이 + 줄 간격의 합. 흐름은 그만큼 짧으므로 사다리 기준을 같이 움직인다.
+pub(crate) fn empty_guide_phantom_hu(para: &Paragraph) -> i32 {
+    let n = empty_guide_wrapped_line_count(para);
+    if n == 0 {
+        return 0;
+    }
+    para.line_segs[para.line_segs.len() - n..]
+        .iter()
+        .map(|seg| seg.line_height.saturating_add(seg.line_spacing).max(0))
+        .sum()
 }
 
 /// [#4384 조사] 이 문단 텍스트 리터럴을 IR 속성 판정으로 일반화할 수 있는지 조사했으나

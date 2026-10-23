@@ -8703,6 +8703,13 @@ impl LayoutEngine {
                     hcursor.shift_vpos_base_for_rendered_delta(advance);
                     hcursor.rendered_extra_flow_px += advance;
                 }
+                // 빈 누름틀 안내문이 접힌 «가짜 줄»은 저장 사다리에만 있고 흐름엔 없다(맥 한글 12.30 a05cee0f 9쪽) — 기준을 그만큼 되돌린다.
+                if let Some(para) = paragraphs.get(*para_index) {
+                    let phantom_hu = crate::renderer::composer::empty_guide_phantom_hu(para);
+                    if phantom_hu > 0 {
+                        hcursor.shift_vpos_base_for_rendered_backtrack(hwpunit_to_px(phantom_hu, self.dpi));
+                    }
+                }
             }
             if zero_between_shape_tail_margin_px > 0.0 {
                 // 미주 사이 0에서 직전 미주의 마지막 수식 tail을 앞 단에 남기고

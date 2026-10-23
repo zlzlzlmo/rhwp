@@ -28600,3 +28600,30 @@ fn float_rowbreak_table_after_tac_title_row_keeps_line_spacing_and_offset_like_m
         ys.iter().map(|y| (y * 10.0).round() / 10.0).take(10).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn paragraph_with_only_empty_clickhere_guide_text_takes_one_line_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(a05cee0f 9쪽): 비어 있는 누름틀(안내문 «민간부담금: …» 83자)만 든 문단은 저장 줄이 둘(안내문이 줄바꿈된 것)이지만
+    // 안내문은 찍히지 않으므로 한 줄(lh 1600 + ls 960 = 25.6pt)만 차지한다 — 뒤 표 윗선 125.9pt (우리는 두 줄을 세어 151.6pt).
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_empty_clickhere_guide_lines.hwp").expect("표본")).expect("파싱");
+    let svg = doc.render_page_svg_native(1).expect("SVG");
+    let mut ys: Vec<f64> = Vec::new();
+    for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+        let attr = |name: &str| -> Option<f64> {
+            let key = format!(" {name}=\"");
+            let i = tag.find(&key)? + key.len();
+            tag[i..].split('"').next()?.parse().ok()
+        };
+        if let (Some(x1), Some(x2), Some(y1)) = (attr("x1"), attr("x2"), attr("y1")) {
+            if x2 - x1 > 100.0 {
+                ys.push(y1 * 0.75);
+            }
+        }
+    }
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(
+        ys.iter().any(|y| (y - 125.9).abs() <= 0.4),
+        "표 윗선 125.9pt(맥) 가 없다(우리 {:?})",
+        ys.iter().map(|y| (y * 10.0).round() / 10.0).take(6).collect::<Vec<_>>()
+    );
+}
