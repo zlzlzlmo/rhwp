@@ -360,7 +360,78 @@ pub struct SectionDef {
     pub master_pages: Vec<MasterPage>,
 }
 
+/// 문서가 선언한 «호환 대상»(한컴 `COMPATIBLE_DOCUMENT` · `LAYOUT_COMPATIBILITY`) — 읽기 전용 파생값이다.
+/// 조판은 이 값을 읽지 않는다(맥 한글 12.30 은 호환 모드 문서를 다른 조판 규칙으로 그린다 — 쪽 수 측정 신뢰 진단용).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CompatInfo {
+    /// 대상 프로그램: 0 현재 한글 · 1 한글 2007 호환 · 2 MS 워드 호환. 선언이 없으면 `None`.
+    pub target_program: Option<u32>,
+    /// HWP5 `LAYOUT_COMPATIBILITY` 의 5개 u32 플래그(전부 0 이 기본). 레코드가 없거나 짧으면 `None`.
+    pub layout_words: Option<[u32; 5]>,
+    /// HWPX `<hh:layoutCompatibility>` 안에서 값이 붙은(0 이 아닌) 항목 수. HWPX 가 아니거나 블록이 없으면 `None`.
+    pub hwpx_layout_flags: Option<u32>,
+}
+
+impl CompatInfo {
+    /// 한글 현재 버전이 아닌 호환 모드로 선언됐거나 호환 플래그가 하나라도 켜졌다.
+    pub fn is_compat_mode(&self) -> bool {
+        self.target_program.is_some_and(|t| t != 0)
+            || self.layout_words.is_some_and(|w| w.iter().any(|&x| x != 0))
+            || self.hwpx_layout_flags.is_some_and(|n| n > 0)
+    }
+}
+
 impl Document {
+    /// 호환 문서 선언을 `extra_records`(HWP5) 또는 HWPX 머리 꼬리 블록에서 읽는다.
+    pub fn compat_info(&self) -> CompatInfo {
+        use crate::parser::tags;
+        let mut info = CompatInfo::default();
+        for record in &self.doc_info.extra_records {
+            match record.tag_id {
+                tags::HWPTAG_COMPATIBLE_DOCUMENT if record.data.len() >= 4 => {
+                    let d = &record.data;
+                    info.target_program = Some(u32::from_le_bytes([d[0], d[1], d[2], d[3]]));
+                }
+                tags::HWPTAG_LAYOUT_COMPATIBILITY if record.data.len() >= 20 => {
+                    let mut words = [0u32; 5];
+                    for (i, w) in words.iter_mut().enumerate() {
+                        let d = &record.data[i * 4..i * 4 + 4];
+                        *w = u32::from_le_bytes([d[0], d[1], d[2], d[3]]);
+                    }
+                    info.layout_words = Some(words);
+                }
+                _ => {}
+            }
+        }
+        if let Some(tail) = &self.doc_info.hwpx_head_tail {
+            if let Some(i) = tail.find("targetProgram=\"") {
+                let rest = &tail[i + "targetProgram=\"".len()..];
+                info.target_program = match rest.split('"').next() {
+                    Some("HWP201X") => Some(0),
+                    Some("HWP200X") => Some(1),
+                    Some("MS_WORD") => Some(2),
+                    _ => info.target_program,
+                };
+            }
+            // 다섯 항목(char·paragraph·section·object·field)은 값이 0이면 `<hh:char/>` 로 비어 나온다 —
+            // 속성이나 내용이 붙은(켜진) 항목만 센다.
+            if let Some(a) = tail.find("<hh:layoutCompatibility") {
+                let block = &tail[a..tail.find("</hh:layoutCompatibility>").unwrap_or(tail.len()).max(a)];
+                info.hwpx_layout_flags = Some(
+                    ["char", "paragraph", "section", "object", "field"]
+                        .iter()
+                        .filter(|name| {
+                            block
+                                .find(&format!("<hh:{name}"))
+                                .is_some_and(|i| !block[i + name.len() + 4..].starts_with("/>"))
+                        })
+                        .count() as u32,
+                );
+            }
+        }
+        info
+    }
+
     /// HWPX 원본 보조 엔트리를 경로로 조회한다.
     ///
     /// 직렬화기가 하드코딩 상수 대신 원본 바이트를 출력할지 결정할 때 사용한다.
@@ -893,5 +964,69 @@ mod tests {
         let id2 = doc.find_or_create_para_shape(0, &mods);
         assert_eq!(id2, 1);
         assert_eq!(doc.doc_info.para_shapes.len(), 2);
+    }
+
+    #[test]
+    fn compat_info_reads_hwp5_target_and_layout_words() {
+        use crate::parser::tags;
+        let mut doc = Document::default();
+        assert!(!doc.compat_info().is_compat_mode(), "선언이 없으면 호환 모드가 아니다");
+        doc.doc_info.extra_records.push(RawRecord {
+            tag_id: tags::HWPTAG_COMPATIBLE_DOCUMENT,
+            level: 0,
+            data: 1u32.to_le_bytes().to_vec(),
+        });
+        let mut words = Vec::new();
+        for w in [0u32, 0, 4, 0, 0] {
+            words.extend_from_slice(&w.to_le_bytes());
+        }
+        doc.doc_info.extra_records.push(RawRecord {
+            tag_id: tags::HWPTAG_LAYOUT_COMPATIBILITY,
+            level: 1,
+            data: words,
+        });
+        let info = doc.compat_info();
+        assert_eq!(info.target_program, Some(1));
+        assert_eq!(info.layout_words, Some([0, 0, 4, 0, 0]));
+        assert!(info.is_compat_mode());
+    }
+
+    #[test]
+    fn compat_info_current_target_with_zero_words_is_not_compat_mode() {
+        use crate::parser::tags;
+        let mut doc = Document::default();
+        doc.doc_info.extra_records.push(RawRecord {
+            tag_id: tags::HWPTAG_COMPATIBLE_DOCUMENT,
+            level: 0,
+            data: vec![0; 4],
+        });
+        doc.doc_info.extra_records.push(RawRecord {
+            tag_id: tags::HWPTAG_LAYOUT_COMPATIBILITY,
+            level: 1,
+            data: vec![0; 20],
+        });
+        assert!(!doc.compat_info().is_compat_mode());
+    }
+
+    #[test]
+    fn compat_info_reads_hwpx_target_and_set_flags_only() {
+        let mut doc = Document::default();
+        doc.doc_info.hwpx_head_tail = Some(
+            r#"<hh:compatibleDocument targetProgram="HWP201X"><hh:layoutCompatibility><hh:char/><hh:paragraph/><hh:section/><hh:object/><hh:field/></hh:layoutCompatibility></hh:compatibleDocument>"#
+                .to_string(),
+        );
+        let info = doc.compat_info();
+        assert_eq!(info.target_program, Some(0));
+        assert_eq!(info.hwpx_layout_flags, Some(0), "비어 있는 다섯 항목은 켜진 것이 아니다");
+        assert!(!info.is_compat_mode());
+
+        doc.doc_info.hwpx_head_tail = Some(
+            r#"<hh:compatibleDocument targetProgram="MS_WORD"><hh:layoutCompatibility><hh:char flags="2"/><hh:paragraph/></hh:layoutCompatibility></hh:compatibleDocument>"#
+                .to_string(),
+        );
+        let info = doc.compat_info();
+        assert_eq!(info.target_program, Some(2));
+        assert_eq!(info.hwpx_layout_flags, Some(1));
+        assert!(info.is_compat_mode());
     }
 }

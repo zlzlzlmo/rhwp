@@ -427,8 +427,16 @@ impl DocumentCore {
             .collect();
         let font_substitutions_json =
             serde_json::to_string(&font_substitutions).unwrap_or_else(|_| "[]".to_string());
+        let compat = self.document.compat_info();
+        let compat_json = serde_json::json!({
+            "targetProgram": compat.target_program,
+            "layoutWords": compat.layout_words,
+            "hwpxLayoutFlags": compat.hwpx_layout_flags,
+            "isCompatMode": compat.is_compat_mode(),
+        })
+        .to_string();
         format!(
-            "{{\"version\":\"{}.{}.{}.{}\",\"sectionCount\":{},\"pageCount\":{},\"encrypted\":{},\"hwp3Variant\":{},\"fallbackFont\":\"{}\",\"fontsUsed\":[{}],\"fontSubstitutions\":{}}}",
+            "{{\"version\":\"{}.{}.{}.{}\",\"sectionCount\":{},\"pageCount\":{},\"encrypted\":{},\"hwp3Variant\":{},\"fallbackFont\":\"{}\",\"fontsUsed\":[{}],\"fontSubstitutions\":{},\"compat\":{}}}",
             self.document.header.version.major,
             self.document.header.version.minor,
             self.document.header.version.build,
@@ -440,6 +448,7 @@ impl DocumentCore {
             escaped_fallback,
             fonts_json.join(","),
             font_substitutions_json,
+            compat_json,
         )
     }
 
