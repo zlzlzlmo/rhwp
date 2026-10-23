@@ -28545,3 +28545,30 @@ fn multi_col_one_row_split_fragments_align_like_mac_hangul() {
         assert!((inner - inner_first).abs() <= 0.4, "{sample} 3쪽 첫 안쪽 줄 {inner_first}pt(맥) ↔ 우리 {inner:.1}pt");
     }
 }
+
+#[test]
+fn multi_col_one_row_terminal_fragment_flow_adds_outer_bottom_margin_like_mac_hangul() {
+    // 맥 한글 12.30 변형 실측(10-23 · 킥스업 신청서 hwpx): 끝 조각 뒤 다음 문단은 표 아래 + 바깥 아래 여백에서 이어진다.
+    // 바깥 여백 141 → 283HU 로 키우면 표 뒤 글줄 baseline 이 354.5 → 360.1pt(+5.6 = 위 +1.41 · 앞 상자 −… · 아래 +1.41 의 합)다.
+    let post_table_text_y = |sample: &str| -> f64 {
+        let doc = HwpDocument::from_bytes(&std::fs::read(sample).expect("표본")).expect("파싱");
+        let json = doc.get_page_text_layout_native(2).expect("텍스트 레이아웃");
+        let layout: Value = serde_json::from_str(&json).expect("JSON");
+        // 표 아래(≈ 331pt)에서 처음 나오는 글줄 — 표 뒤 첫 문단.
+        layout["runs"]
+            .as_array()
+            .expect("runs")
+            .iter()
+            .filter_map(|run| run["y"].as_f64())
+            .filter(|y| y * 0.75 > 335.0)
+            .fold(f64::INFINITY, f64::min)
+            * 0.75
+    };
+    let om141 = post_table_text_y("samples/webiz_kicxup_floating_rowbreak_om141.hwpx");
+    let om283 = post_table_text_y("samples/webiz_kicxup_floating_rowbreak_om283.hwpx");
+    assert!(
+        ((om283 - om141) - 5.6).abs() <= 0.3,
+        "바깥 여백 141→283HU 표 뒤 글줄 +5.6pt(맥) ↔ 우리 {:+.2}pt",
+        om283 - om141
+    );
+}

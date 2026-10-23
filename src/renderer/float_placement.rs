@@ -1401,6 +1401,20 @@ pub(crate) fn native_single_cell_rowbreak_page_fragment(
         && matches!(table.page_break, TablePageBreak::RowBreak)
 }
 
+/// 칸이 둘 이상인 한 행 `RowBreak` 쪽 나눔 표(킥스업 신청서 큰 표)의 쪽 조각인가 — 저장 레이아웃(네이티브·hwpx)에서.
+///
+/// 맥 한글 12.30 변형 실측(10-23): 첫 쪽 상자 아래는 본문 아래 − 바깥 아래 여백, 끝 조각 잔여는 그려진 상자 합 기준, 그리고
+/// **끝 조각 뒤 다음 문단은 표 아래 + 바깥 아래 여백**에서 이어진다(바깥 아래 여백 0/141/283HU → 표 뒤 글줄 +0/1.4/2.8pt).
+/// 1×1 표의 끝 조각은 여백을 두지 않는 윈도 정본(hwpctl 73쪽 · rbp 14쪽)이 따로 있어 이 술어에서 뺀다.
+pub(crate) fn multi_col_one_row_rowbreak_fragment(stored_layout: bool, table: &Table) -> bool {
+    stored_layout
+        && table.row_count == 1
+        && table.col_count > 1
+        && !table.common.treat_as_char
+        && matches!(table.page_break, TablePageBreak::RowBreak)
+        && is_para_topbottom_float(&table.common)
+}
+
 /// Physical bottom of a nonterminal single-cell page fragment. Callers use
 /// the same column-relative boundary for row fitting and page-relative painting.
 pub(crate) fn single_cell_page_fragment_bottom(table: &Table, body_bottom: f64, dpi: f64) -> f64 {

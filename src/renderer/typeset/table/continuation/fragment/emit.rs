@@ -429,12 +429,12 @@ impl TypesetEngine {
             // 칸이 둘 이상인 한 행 표(킥스업 신청서)도 그려진 첫 상자가 쪽 아래 − 바깥 아래 여백이라 같은 보정을 건다 — 안 하면 끝 조각
             // 잔여가 바깥 아래 여백(1.4pt)만큼 짧아진다(맥 한글 12.30 변형: 2쪽 701.2 + 3쪽 264.8 = 선언 966.0pt · 우리 700.0 + 263.2).
             // 네이티브·hwpx 모두 맥 PDF 가 같다(원본 hwp 도 같은 어긋남).
-            let multi_col_one_row_rowbreak = table.row_count == 1
-                && table.col_count > 1
-                && !table.common.treat_as_char
-                && matches!(table.page_break, crate::model::table::TablePageBreak::RowBreak)
-                && (self.profile.get().hwpx_stored_layout()
-                    || self.profile.get().hwp5_stored_pagination_layout());
+            let multi_col_one_row_rowbreak =
+                crate::renderer::float_placement::multi_col_one_row_rowbreak_fragment(
+                    self.profile.get().hwpx_stored_layout()
+                        || self.profile.get().hwp5_stored_pagination_layout(),
+                    table,
+                );
             let pinned_inset = if !budget_pinned
                 && ((self.profile.get().hwpx_stored_layout()
                     && crate::renderer::float_placement::native_single_cell_rowbreak_page_fragment(true, table))

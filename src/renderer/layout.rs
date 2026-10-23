@@ -13586,6 +13586,21 @@ impl LayoutEngine {
                     y_offset += hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi);
                 }
             }
+            // 칸이 둘 이상인 한 행 쪽 나눔 표의 끝 조각 뒤 흐름 = 표 아래 + 바깥 아래 여백(맥 한글 12.30 변형 실측 · 조판
+            // `terminal_outer_bottom_overhead` 와 같은 계약). 이미 반복 여백 계약이 더한 경우는 그대로 둔다.
+            if !repeat_fragment_outer_margin && end_cut.is_empty() {
+                if let Some(Control::Table(table)) = para.controls.get(control_index) {
+                    if end_row >= table.row_count as usize
+                        && crate::renderer::float_placement::multi_col_one_row_rowbreak_fragment(
+                            self.profile.get().hwp5_stored_pagination_layout()
+                                || self.profile.get().hwpx_stored_layout(),
+                            table,
+                        )
+                    {
+                        y_offset += hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi);
+                    }
+                }
+            }
 
             // The terminal nested child owns the visible table bbox, while its saved
             // empty host Enter owns only the following flow advance. Typeset records

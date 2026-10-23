@@ -124,6 +124,12 @@ impl TypesetEngine {
                 self.dpi,
             )
             .1
+        } else if crate::renderer::float_placement::multi_col_one_row_rowbreak_fragment(
+            self.profile.get().hwpx_stored_layout() || self.profile.get().hwp5_stored_pagination_layout(),
+            table,
+        ) {
+            // 끝 조각 뒤 흐름은 표 아래 + 바깥 아래 여백이다(맥 한글 12.30 · 렌더러 `layout_partial_table_item` 과 같은 계약).
+            fragment_outer_bottom_overhead.max(hwpunit_to_px(table.outer_margin_bottom as i32, self.dpi))
         } else {
             fragment_outer_bottom_overhead
         };
