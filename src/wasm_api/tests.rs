@@ -28654,3 +28654,40 @@ fn cell_lines_flow_by_stored_vertical_positions_when_smaller_than_line_height_li
         ys.iter().map(|y| (y * 10.0).round() / 10.0).take(14).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn next_paragraph_stored_above_float_table_flows_in_the_gap_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(PluginOsaka 2·3쪽): 빈 host 의 문단 기준 자리차지 표(오프셋 5152HU)는 흐름을 밀지 않는다 — 뒤 문단 저장 줄(vpos 12040)이
+    // 표 윗변(11340 + 5152) 위에 있으면 글자처럼 제목 표(1×4)는 큰 표 위 틈 178.3pt 에 놓이고, 같은 문단의 오프셋 0 자리차지 표(1×3)만 3쪽 맨 위 58.0pt 로 넘어간다.
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_float_gap_fill_heading_above_table.hwp").expect("표본")).expect("파싱");
+    let rules = |page: u32| -> Vec<(f64, f64)> {
+        let svg = doc.render_page_svg_native(page).expect("SVG");
+        let mut out = Vec::new();
+        for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+            let attr = |name: &str| -> Option<f64> {
+                let key = format!(" {name}=\"");
+                let i = tag.find(&key)? + key.len();
+                tag[i..].split('"').next()?.parse().ok()
+            };
+            if let (Some(x1), Some(x2), Some(y1)) = (attr("x1"), attr("x2"), attr("y1")) {
+                if x2 - x1 > 30.0 {
+                    out.push((y1 * 0.75, x2 - x1));
+                }
+            }
+        }
+        out
+    };
+    let p2 = rules(1);
+    assert!(
+        p2.iter().any(|(y, _)| (y - 178.3).abs() <= 0.8),
+        "2쪽 큰 표 위 틈에 제목 표 윗선 178.3pt 가 없다(우리 {:?})",
+        p2.iter().map(|(y, w)| (((y * 10.0).round() / 10.0), w.round())).take(8).collect::<Vec<_>>()
+    );
+    assert!(p2.iter().any(|(y, _)| (y - 222.9).abs() <= 0.8), "큰 표 윗선 222.9pt 유지");
+    let p3 = rules(2);
+    assert!(
+        p3.iter().any(|(y, w)| (y - 58.0).abs() <= 0.8 && *w > 500.0),
+        "3쪽 맨 위 자리차지 표 윗선 58.0pt 가 없다(우리 {:?})",
+        p3.iter().map(|(y, w)| (((y * 10.0).round() / 10.0), w.round())).take(8).collect::<Vec<_>>()
+    );
+}

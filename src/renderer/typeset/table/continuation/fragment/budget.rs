@@ -320,6 +320,7 @@ impl TypesetEngine {
                     flow: original.flow,
                     anchor_y: st.current_height,
                     stored_host_origin: None,
+                    layout_owns_paint: false,
                     table_top: st.current_height + host_before_overhead,
                     occupied_bottom: st.current_height + host_before_overhead,
                 }

@@ -1158,6 +1158,76 @@ impl TypesetEngine {
             } else {
                 table_total
             };
+        // 글 없는 host 의 틈 배치(맥 한글 12.30 PluginOsaka 2쪽) — 뒤 문단 저장 줄이 표 위 틈에 있다는 증거가 있을 때만.
+        let empty_host_gap_placement = (!para_has_non_whitespace_text(para)
+            && st.profile.hwp5_stored_pagination_layout()
+            && st.col_count == 1)
+            .then(|| {
+                crate::renderer::float_placement::ParagraphFloatPlacement::from_empty_host_gap(
+                    para,
+                    paragraphs_all.get(para_idx + 1),
+                    table,
+                    placement_para_start_height,
+                    ft.effective_height,
+                    self.dpi,
+                )
+            })
+            .flatten()
+            .map(|placement| {
+                // 저장 사다리가 이 쪽의 원점을 증언하면(앞 문단이 전부 저장 줄 · 한 단 · 편집 안 됨) host 줄 원점을 그 좌표로 둔다 —
+                // 흐름 누적은 저장 좌표보다 몇 px 짧을 수 있고, 배치는 이 배치의 표 윗변을 그대로 쓴다.
+                let base = (para.line_segs.len() == 1
+                    && st.col_count == 1
+                    && !st.vpos_ladder_dirty
+                    && !st.profile.session_edited()
+                    && fmt.computed_host_lines.is_none())
+                .then(|| {
+                    let PageItem::FullParagraph { para_index: first } = st.current_items.first()?
+                    else {
+                        return None;
+                    };
+                    let chain = paragraphs_all.get(*first..=para_idx)?;
+                    let mut previous = None;
+                    for host in chain {
+                        if host.stored_text_partition_is_dirty() || host.line_segs.is_empty() {
+                            return None;
+                        }
+                        for line in &host.line_segs {
+                            if is_synthetic_line_seg(line)
+                                || previous.is_some_and(|vpos| line.vertical_pos < vpos)
+                            {
+                                return None;
+                            }
+                            previous = Some(line.vertical_pos);
+                        }
+                    }
+                    if st.current_items.iter().any(|item| {
+                        matches!(item, PageItem::PartialTable { .. } | PageItem::Shape { .. })
+                    }) {
+                        return None;
+                    }
+                    Some(chain.first()?.line_segs.first()?.vertical_pos)
+                })
+                .flatten();
+                match (base, para.line_segs.first()) {
+                    (Some(base), Some(host)) => {
+                        let origin = st.vpos_col_anchor
+                            + (i64::from(host.vertical_pos) - i64::from(base)) as f64 * self.dpi
+                                / 7200.0;
+                        if origin.is_finite() && origin > placement.anchor_y {
+                            let shift = origin - placement.anchor_y;
+                            let mut moved = placement;
+                            moved.anchor_y = origin;
+                            moved.table_top += shift;
+                            moved.occupied_bottom += shift;
+                            moved
+                        } else {
+                            placement
+                        }
+                    }
+                    _ => placement,
+                }
+            });
         let unconstrained_host_placement = para_has_non_whitespace_text(para)
             .then(|| {
                 let text_origin = placement_para_start_height
@@ -1238,7 +1308,8 @@ impl TypesetEngine {
                     ),
                     _ => placement,
                 }
-            });
+            })
+            .or(empty_host_gap_placement);
         let constrain_host_placement = HostPlacementConstraint {
             table,
             has_preceding_coanchored_float,

@@ -28,6 +28,8 @@ pub struct ParagraphFloatPlacement {
     /// Validated single-line stored host origin, shared with text creation.
     /// None keeps the existing flowing-host contract (including continuations).
     pub stored_host_origin: Option<f64>,
+    /// 표 윗변을 배치(layout)가 저장 사다리로 정한다 — 조판은 배제 영역과 흐름만 쥔다(글 없는 host 틈 배치).
+    pub layout_owns_paint: bool,
     /// 표와 캡션을 함께 담는 배치 상자의 상단. 위 캡션은 이 상자 안에서 배치한다.
     pub table_top: f64,
     pub occupied_bottom: f64,
@@ -118,6 +120,7 @@ pub fn stored_picture_successor_placement(
         },
         anchor_y,
         stored_host_origin: Some(host_y),
+        layout_owns_paint: false,
         table_top: top,
         occupied_bottom: bottom,
     })
@@ -380,6 +383,7 @@ impl ParagraphFloatPlacement {
                 flow: ParagraphFloatFlow::Exclusion,
                 anchor_y,
                 stored_host_origin: None,
+                layout_owns_paint: false,
                 table_top,
                 occupied_bottom,
             })
@@ -401,6 +405,48 @@ impl ParagraphFloatPlacement {
             }
         }
         self
+    }
+
+    /// 글 없는 host 의 자리차지 표 — 뒤 문단 저장 줄이 표 윗변 위 틈에 있다는 저장 증거(`stored_ladder_places_next_paragraph_above_float`)가
+    /// 있을 때만 쓴다. 표는 흐름을 밀지 않는 배제 영역이고, 뒤 문단은 host 줄 바로 아래부터 틈에 흐른다(맥 한글 12.30 PluginOsaka 2쪽).
+    pub fn from_empty_host_gap(
+        para: &Paragraph,
+        next_para: Option<&Paragraph>,
+        table: &Table,
+        text_origin: f64,
+        table_height: f64,
+        dpi: f64,
+    ) -> Option<Self> {
+        if !dpi.is_finite()
+            || dpi <= 0.0
+            || !table_height.is_finite()
+            || table_height < 0.0
+            || !is_para_topbottom_float(&table.common)
+            || !matches!(table.common.vert_align, VertAlign::Top)
+            || para.stored_text_partition_is_dirty()
+            || !super::stored_float_anchor::stored_ladder_places_next_paragraph_above_float(
+                para, next_para, table,
+            )
+        {
+            return None;
+        }
+        let anchor_y = text_origin;
+        let table_top = anchor_y
+            + hwpunit_to_px(signed_hwpunit(table.common.vertical_offset), dpi)
+            + hwpunit_to_px(table.outer_margin_top as i32, dpi);
+        let occupied_bottom =
+            table_top + table_height + hwpunit_to_px(table.outer_margin_bottom as i32, dpi);
+        [anchor_y, table_top, occupied_bottom]
+            .iter()
+            .all(|v| v.is_finite())
+            .then_some(Self {
+                flow: ParagraphFloatFlow::Exclusion,
+                anchor_y,
+                stored_host_origin: None,
+                layout_owns_paint: true,
+                table_top,
+                occupied_bottom,
+            })
     }
 
     /// 저장 줄이 호스트 텍스트 전부를 표 앞에 배치하는 계약일 때 사용한다.
@@ -448,6 +494,7 @@ impl ParagraphFloatPlacement {
                 flow: ParagraphFloatFlow::Exclusion,
                 anchor_y,
                 stored_host_origin: None,
+                layout_owns_paint: false,
                 table_top,
                 occupied_bottom,
             })

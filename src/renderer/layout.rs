@@ -11148,7 +11148,12 @@ impl LayoutEngine {
                 } else {
                     None
                 };
-                let visible_outer_top_px = if is_current_visible_para_float {
+                // 글 없는 host 의 틈 배치는 바깥 위 여백을 `compute_table_y_position` 이 얹는다(글 없는 host 규칙) — 여기서 또 얹지 않는다.
+                let gap_float_host = ctx
+                    .paragraph_float_placements
+                    .get(&(para_index, control_index))
+                    .is_some_and(|p| p.layout_owns_paint);
+                let visible_outer_top_px = if is_current_visible_para_float && !gap_float_host {
                     hwpunit_to_px(t.outer_margin_top as i32, self.dpi)
                 } else {
                     0.0
@@ -11176,6 +11181,7 @@ impl LayoutEngine {
                 let table_y_start = if let Some(placement) = ctx
                     .paragraph_float_placements
                     .get(&(para_index, control_index))
+                    .filter(|placement| !placement.layout_owns_paint)
                 {
                     // typeset의 확정 결과에는 앵커와 바깥 여백이 이미 포함된다.
                     // legacy 호스트 높이/제목/앵커 보정을 다시 실행하지 않는다.
@@ -11380,6 +11386,11 @@ impl LayoutEngine {
                     // 이미 더 아래면 max 라 영향 없다.
                     let table_y_start = if is_current_visible_para_float
                         && signed_hwpunit(t.common.vertical_offset) > 0
+                        // 글 없는 host(틈 배치)는 제목 줄이 없다 — 표 윗변은 이미 문단 위 + 오프셋이다.
+                        && !ctx
+                            .paragraph_float_placements
+                            .get(&(para_index, control_index))
+                            .is_some_and(|p| p.layout_owns_paint)
                     {
                         let host_line_px = para
                             .line_segs
@@ -11481,6 +11492,7 @@ impl LayoutEngine {
                         physical_outer_box_paint_inset,
                         ctx.paragraph_float_placements
                             .get(&(para_index, control_index))
+                            .filter(|p| !p.layout_owns_paint)
                             .map(|p| col_area.y + p.table_top),
                         Self::standalone_table_char_border_fill(Some(para), t, styles),
                     )
@@ -11708,7 +11720,8 @@ impl LayoutEngine {
                         };
                         let placement = ctx
                             .paragraph_float_placements
-                            .get(&(para_index, control_index));
+                            .get(&(para_index, control_index))
+                            .filter(|placement| !placement.layout_owns_paint);
                         visible_float_exclusions.push(VisibleFloatExclusion {
                             fixed_textbox: false,
                             top: placement.map_or(table_visual_top, |p| col_area.y + p.table_top),
@@ -12224,6 +12237,7 @@ impl LayoutEngine {
             if let Some(placement) = ctx
                 .paragraph_float_placements
                 .get(&(para_index, control_index))
+                .filter(|placement| !placement.layout_owns_paint)
             {
                 para_y_for_table = col_area.y + placement.anchor_y;
             } else if let Some(Control::Table(t)) = para.controls.get(control_index) {
@@ -12241,12 +12255,23 @@ impl LayoutEngine {
                         c,
                         Control::Table(t)
                             if is_para_topbottom_float(&t.common)
-                                && para_has_non_whitespace_text(para)
+                                && (para_has_non_whitespace_text(para)
+                                    // 글 없는 host 라도 조판이 틈 배치를 확정했으면(`from_empty_host_gap`) 같은 «표가 흐름을 안 민다» 길이다.
+                                    || ctx
+                                        .paragraph_float_placements
+                                        .get(&(para_index, control_index))
+                                        .is_some_and(|p| p.layout_owns_paint))
                     )
                 })
                 .unwrap_or(false);
-            self.para_float_host_has_text
-                .set(is_current_visible_para_float);
+            // 틈 배치 host(글 없음)는 «글 있는 host»가 아니다 — 표 윗변은 문단 위 + 오프셋 + 바깥 위 여백이다(host 줄 높이를 얹지 않는다).
+            self.para_float_host_has_text.set(
+                is_current_visible_para_float
+                    && !ctx
+                        .paragraph_float_placements
+                        .get(&(para_index, control_index))
+                        .is_some_and(|p| p.layout_owns_paint),
+            );
             self.cell_float_after_table_host.set(
                 cell_floats_stand_after_table(para, control_index)
                     .then_some((para_index, control_index)),
@@ -13504,6 +13529,7 @@ impl LayoutEngine {
             None,
             ctx.paragraph_float_placements
                 .get(&(para_index, control_index))
+                .filter(|p| !p.layout_owns_paint)
                 .map(|p| col_area.y + p.table_top),
         );
         if render_deferred_rowbreak_host_text_after {

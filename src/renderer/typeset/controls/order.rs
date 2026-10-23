@@ -134,8 +134,20 @@ pub(in crate::renderer::typeset) fn for_paragraph(
     // 그런 표가 있으면 배열(저장) 순서 그대로다 — 뒤 줄의 글자처럼 표도 그 표 뒤에 온다.
     // 양수 오프셋 표가 같은 줄의 글자처럼 표 **뒤**에 실려 그 줄에 겹치면 한/글은 글자처럼 줄을 먼저 두고 표를 그 줄
     // 아래로 내린다(`positive_float_below_tac_line_offset_hu`) — 보조 키가 표를 앞세우면 제목 띠가 표 꼬리 뒤로 간다.
+    // 오프셋 0 자리차지 표가 글자처럼 표와 같은 줄에 앉고 배열에서 그 뒤면(맥 한글 12.30 PluginOsaka 2쪽) 표 줄이 먼저 놓인다 —
+    // 자리차지 표가 남은 쪽에 안 들어가면 표 줄은 그 쪽에 남고 자리차지 표만 다음 쪽으로 넘어간다.
+    let float_on_tac_line_after_tac = |i: usize| -> bool {
+        matches!(&para.controls[i], Control::Table(t)
+            if is_para_topbottom_float(&t.common)
+                && signed_hwpunit(t.common.vertical_offset) == 0
+                && tac_host_line_height_hu > 0
+                && crate::renderer::layout::has_line_taking_tac_sibling_before(para, i)
+                && crate::renderer::layout::zero_offset_float_anchor_line_offset_hu(para, i)
+                    < tac_host_line_height_hu)
+    };
     let keep_array_order = (0..para.controls.len()).any(|i| {
         float_anchored_after_tac_line(i)
+            || float_on_tac_line_after_tac(i)
             || crate::renderer::layout::positive_float_below_tac_line_offset_hu(para, i).is_some()
     });
     let table_flow_tiebreak = |ctrl: &Control| -> u8 {

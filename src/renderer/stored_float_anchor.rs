@@ -157,3 +157,28 @@ pub(crate) fn stored_single_topbottom_top_px(
     // 본문 안에 온전히 드는 앵커만 물리 좌표로 읽는다.
     (top >= -0.5 && bottom <= available_px + 0.5).then_some(top)
 }
+
+/// 뒤 문단이 자리차지 표 **위 틈**에 저장돼 있는가 — 문단 기준 세로 오프셋이 양수인 표는 흐름을 밀지 않고, 뒤 문단 첫 저장 줄이
+/// 표 윗변(host vpos + 오프셋)보다 위에 있으면 한글은 그 줄을 틈에 둔다(맥 한글 12.30 PluginOsaka 2쪽: host vpos 11340 · 오프셋 5152 ·
+/// 뒤 문단 vpos 12040 — 제목 표가 큰 표 위 틈). 저장 vpos 가 증거라 합성 줄은 쓰지 않는다.
+pub(crate) fn stored_ladder_places_next_paragraph_above_float(
+    para: &Paragraph,
+    next_para: Option<&Paragraph>,
+    table: &Table,
+) -> bool {
+    use crate::model::shape::{TextWrap, VertRelTo};
+    if table.common.treat_as_char
+        || !matches!(table.common.text_wrap, TextWrap::TopAndBottom)
+        || !matches!(table.common.vert_rel_to, VertRelTo::Para)
+    {
+        return false;
+    }
+    let v_off = i64::from(table.common.vertical_offset as i32);
+    if v_off <= 0 {
+        return false;
+    }
+    match (stored_vpos(para), next_para.and_then(stored_vpos)) {
+        (Some(current), Some(next)) => next > current && next + 100 < current + v_off,
+        _ => false,
+    }
+}

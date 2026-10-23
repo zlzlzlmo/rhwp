@@ -4589,7 +4589,9 @@ impl TypesetEngine {
         let is_visible_para_float =
             is_para_topbottom_float(&table.common)
                 && (para_has_non_whitespace_text(para)
-                    || crate::renderer::float_placement::is_whitespace_host_of_offset_float(para));
+                    || crate::renderer::float_placement::is_whitespace_host_of_offset_float(para)
+                    // 글 없는 host 라도 뒤 문단이 표 위 틈에 저장돼 있으면(`from_empty_host_gap`) 같은 배제 영역 길이다.
+                    || st.paragraph_float_placements.contains_key(&(para_idx, ctrl_idx)));
         // 단 오른쪽 밖으로 통째로 벗어난 자리차지 개체는 본문 세로 공간을 차지하지
         // 않는다(재현 문서 D: horz=단 227.6mm, A4 폭 210mm — 화면 밖). 이 계약은
         let signed_vertical_offset = vertical_offset as i32;
