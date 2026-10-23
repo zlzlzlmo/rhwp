@@ -406,6 +406,27 @@ pub(crate) fn stored_nested_table_wrap_successor(
 /// `vertical_pos` 만 같으면 건너뛰지 않는다. HWP3 와 페이지 분할 픽스처는
 /// 모든 줄의 `vertical_pos` 가 0 이고, 그 경우 줄마다 높이를 더해야 한다.
 /// 가로 조각은 `column_start` 가 갈라진다.
+/// 저장 다음 줄 좌표가 정한 줄 흐름 높이(HU) — 칸 안 줄은 저장 줄 사다리를 따른다.
+/// 맥 한글 12.30 PDF(패션기업 1쪽): lh 1100 · 글자 높이 800 · 간격 480 인 줄은 다음 줄 vpos 가 1280 이라 흐름이 800 이다(lh + 간격 1580 이 아니다).
+/// 저장 줄(합성 아님)이고 흐름이 `lh` 보다 작되 글자 높이 아래로는 내려가지 않을 때만 쓴다. 합성 줄 수가 저장 줄과 1:1 이 아니면 쓰지 않는다.
+fn stored_flow_line_height_hu(segs: &[LineSeg], composed_line_count: usize, idx: usize) -> Option<i32> {
+    if composed_line_count != segs.len() {
+        return None;
+    }
+    let seg = segs.get(idx)?;
+    let next = segs[idx + 1..]
+        .iter()
+        .find(|n| n.vertical_pos != seg.vertical_pos)?;
+    if (seg.tag | next.tag) & LineSeg::TAG_IMPLEMENTATION_PROPERTY != 0
+        || next.vertical_pos <= seg.vertical_pos
+        || seg.line_spacing < 0
+    {
+        return None;
+    }
+    let flow = next.vertical_pos - seg.vertical_pos - seg.line_spacing;
+    (flow > 0 && flow < seg.line_height && flow >= seg.text_height).then_some(flow)
+}
+
 fn is_same_vertpos_wrap_fragment(segs: &[LineSeg], idx: usize) -> bool {
     idx > 0
         && idx < segs.len()
@@ -2538,7 +2559,10 @@ impl HeightMeasurer {
                                         ) {
                                             return 0.0;
                                         }
-                                        let raw_lh = hwpunit_to_px(line.line_height, self.dpi);
+                                        let raw_lh = hwpunit_to_px(
+                                            stored_flow_line_height_hu(&p.line_segs, line_count, i).unwrap_or(line.line_height),
+                                            self.dpi,
+                                        );
                                         let max_fs = line
                                             .runs
                                             .iter()
@@ -3502,7 +3526,10 @@ impl HeightMeasurer {
                                         ) {
                                             return 0.0;
                                         }
-                                        let raw_lh = hwpunit_to_px(line.line_height, self.dpi);
+                                        let raw_lh = hwpunit_to_px(
+                                            stored_flow_line_height_hu(&p.line_segs, line_count, i).unwrap_or(line.line_height),
+                                            self.dpi,
+                                        );
                                         let max_fs = line
                                             .runs
                                             .iter()
@@ -4089,7 +4116,10 @@ impl HeightMeasurer {
                                     line_heights.push(0.0);
                                     continue;
                                 }
-                                let raw_lh = hwpunit_to_px(line.line_height, self.dpi);
+                                let raw_lh = hwpunit_to_px(
+                                    stored_flow_line_height_hu(&p.line_segs, line_count, li).unwrap_or(line.line_height),
+                                    self.dpi,
+                                );
                                 let max_fs = line
                                     .runs
                                     .iter()

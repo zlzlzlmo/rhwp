@@ -28627,3 +28627,30 @@ fn paragraph_with_only_empty_clickhere_guide_text_takes_one_line_like_mac_hangul
         ys.iter().map(|y| (y * 10.0).round() / 10.0).take(6).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn cell_lines_flow_by_stored_vertical_positions_when_smaller_than_line_height_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(패션기업 1쪽): 칸 «(해당시) 수출실적/계획» 은 저장 줄이 셋(lh 1100·1100·1100)이지만 첫 줄은 글자 높이 800 + 간격 480 =
+    // 1280 만 흐른다(다음 줄 vpos 1280). 칸 내용 높이 = 마지막 줄 vpos 3040 + lh 1100 = 4140 → 그 행의 아랫선 243.2pt (우리는 줄마다 lh + 간격 = 4440 으로 246.3pt).
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_cell_stored_line_flow_smaller_than_line_height.hwp").expect("표본")).expect("파싱");
+    let svg = doc.render_page_svg_native(0).expect("SVG");
+    let mut ys: Vec<f64> = Vec::new();
+    for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+        let attr = |name: &str| -> Option<f64> {
+            let key = format!(" {name}=\"");
+            let i = tag.find(&key)? + key.len();
+            tag[i..].split('"').next()?.parse().ok()
+        };
+        if let (Some(x1), Some(x2), Some(y1)) = (attr("x1"), attr("x2"), attr("y1")) {
+            if x2 - x1 > 100.0 {
+                ys.push(y1 * 0.75);
+            }
+        }
+    }
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(
+        ys.iter().any(|y| (y - 243.2).abs() <= 0.5),
+        "행 아랫선 243.2pt(맥) 가 없다(우리 {:?})",
+        ys.iter().map(|y| (y * 10.0).round() / 10.0).take(14).collect::<Vec<_>>()
+    );
+}
