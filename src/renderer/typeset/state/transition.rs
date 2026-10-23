@@ -110,6 +110,7 @@ impl TypesetState {
                 vpos_lazy_base: None,
                 vpos_page_base_stored: false,
                 vpos_ladder_dirty: false,
+                vpos_ladder_off: false,
                 vpos_prev_layout_para: None,
                 vpos_prev_partial_table: false,
                 vpos_col_anchor: 0.0,
@@ -142,6 +143,7 @@ impl TypesetState {
         self.data.vpos_lazy_base = None;
         self.data.vpos_page_base_stored = false;
         self.data.vpos_ladder_dirty = false;
+        self.data.vpos_ladder_off = false;
         self.data.vpos_prev_layout_para = None;
         self.data.vpos_prev_partial_table = false;
         self.data.vpos_col_anchor = self.data.current_height;

@@ -182,3 +182,16 @@ pub(crate) fn stored_ladder_places_next_paragraph_above_float(
         _ => false,
     }
 }
+
+/// 이 표가 «같은 host 의 글자처럼 표 뒤에 놓이는 자리차지 표»인가 — 쪽 맨 위에 이월돼 온 뒤에는 저장 사다리(윈도 저장 쪽 좌표)가 그 표 아래로
+/// 이어지지 않는다(맥 한글 12.30 PluginOsaka 3쪽: 뒤 문단 vpos 69726 은 큰 표 아래 좌표). 그 쪽에서는 저장 사다리 스냅을 끈다.
+pub(crate) fn is_float_after_tac_sibling_in_host(para: &Paragraph, control_index: usize) -> bool {
+    use crate::model::control::Control;
+    let Some(Control::Table(t)) = para.controls.get(control_index) else {
+        return false;
+    };
+    crate::renderer::float_placement::is_para_topbottom_float(&t.common)
+        && para.controls[..control_index]
+            .iter()
+            .any(|c| c.is_treat_as_char_object())
+}

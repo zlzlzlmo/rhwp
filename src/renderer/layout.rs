@@ -7380,6 +7380,21 @@ impl LayoutEngine {
         }
         hcursor.uniform_filler_ladder = self.uniform_filler_ladder.get();
         hcursor.mixed_ladder = self.mixed_ladder.get();
+        // 이월돼 온 «글자처럼 표 뒤 자리차지 표»가 쪽 첫 항목이면 윈도 저장 사다리가 그 표 아래 좌표라 이 쪽에선 스냅하지 않는다(조판과 같은 술어).
+        if let Some(PageItem::Table {
+            para_index,
+            control_index,
+        }) = col_content.items.first()
+        {
+            if paragraphs.get(*para_index).is_some_and(|host| {
+                crate::renderer::stored_float_anchor::is_float_after_tac_sibling_in_host(
+                    host,
+                    *control_index,
+                )
+            }) {
+                hcursor.uniform_filler_ladder = true;
+            }
+        }
         hcursor.session_edited = self.profile.get().session_edited();
         // [Task #1246] 미주 흐름 컬럼에만 between-notes 마진(HU)을 주입 → HeightCursor 가 새 미주
         // 제목 forward 흐름의 min-gap 보정에 사용. 본문 컬럼은 0 (무영향).

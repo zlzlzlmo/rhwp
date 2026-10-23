@@ -304,6 +304,8 @@ pub(in crate::renderer::typeset) struct StateView {
     /// [#2243] 저장-앵커 사다리에 저장 lineseg 없는 문단이 끼어 dirty — 이후
     /// 사다리 역스냅(backward)은 fresh 성장분을 뭉갤 수 있어 금지(전방만 허용).
     pub(in crate::renderer::typeset) vpos_ladder_dirty: bool,
+    /// 이 쪽은 저장 사다리 스냅을 쓰지 않는다 — 이월돼 온 «글자처럼 표 뒤 자리차지 표»가 쪽 첫 항목이면 켠다.
+    pub(in crate::renderer::typeset) vpos_ladder_off: bool,
     pub(in crate::renderer::typeset) vpos_prev_layout_para: Option<usize>,
     pub(in crate::renderer::typeset) vpos_prev_partial_table: bool,
     /// 컬럼 시작 시점의 current_height (page_path anchor — 렌더러 col_anchor_y 대응).

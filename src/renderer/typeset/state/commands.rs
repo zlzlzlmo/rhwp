@@ -124,6 +124,10 @@ impl TypesetState {
     pub(in crate::renderer::typeset) fn require_strict_following_text_fit(&mut self) {
         self.data.strict_plain_text_fit_after_empty_host_float_once = true;
     }
+    pub(in crate::renderer::typeset) fn set_vpos_ladder_off(&mut self) {
+        self.data.vpos_ladder_off = true;
+    }
+
     pub(in crate::renderer::typeset) fn mark_vpos_ladder_dirty(&mut self) {
         self.data.vpos_ladder_dirty = true;
     }

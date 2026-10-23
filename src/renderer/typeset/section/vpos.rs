@@ -21,6 +21,9 @@ impl TypesetEngine {
         if st.col_count != 1 {
             return; // 다단은 Stage E
         }
+        if st.vpos_ladder_off {
+            return;
+        }
         // 컬럼 첫 항목: anchor + page_base 확립 (렌더러 2186/2216 정합).
         // items.first() 의 vpos 를 page_base 로, 현 current_height 를 anchor 로 둔다.
         if st.current_items.is_empty() {
@@ -58,6 +61,16 @@ impl TypesetEngine {
                 _ => None,
             };
             if let Some((para_index, control_index)) = first_table {
+                // 이월돼 온 «글자처럼 표 뒤 자리차지 표» — 윈도 저장 사다리는 그 표 아래 좌표라 이 쪽에선 쓰지 않는다(맥 한글 12.30).
+                if paragraphs.get(para_index).is_some_and(|host| {
+                    crate::renderer::stored_float_anchor::is_float_after_tac_sibling_in_host(
+                        host,
+                        control_index,
+                    )
+                }) {
+                    st.set_vpos_ladder_off();
+                    return;
+                }
                 let first_table_vpos = paragraphs.get(para_index).and_then(|host| {
                     let para_float = host.controls.get(control_index).is_some_and(|c| {
                         matches!(c, crate::model::control::Control::Table(t)
