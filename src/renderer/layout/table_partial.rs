@@ -4308,11 +4308,38 @@ impl LayoutEngine {
                     Some(child.bbox.y + child.bbox.height + repeated_previous_bottom)
                 })
                 .fold(f64::NEG_INFINITY, f64::max);
-            let reclaims_previous_host_margin = reclaim_previous_host_margin.is_some_and(|max| {
-                prev_table_end.is_finite()
-                    && y_start > prev_table_end
-                    && y_start - prev_table_end <= max + 0.5
-            });
+            // 맥 한글 12.30(b7ef0592 22쪽): 바로 앞 표가 글자처럼 취급한 제목 표면 그 줄의 줄 간격과 이 표의 세로 오프셋을
+            // 되찾지 않는다 — 윗선 = 앞 줄 아래 + 줄 간격 + 오프셋 + 바깥 위 여백(105.55pt). 되찾기는 앞 표가 떠 있는 흐름 표일 때의 규칙이다.
+            let prev_end_is_tac = col_node
+                .children
+                .iter()
+                .filter_map(|child| {
+                    let RenderNodeType::Table(meta) = &child.node_type else {
+                        return None;
+                    };
+                    let control = meta
+                        .para_index
+                        .zip(meta.control_index)
+                        .and_then(|(pi, ci)| paragraphs.get(pi)?.controls.get(ci));
+                    Some((
+                        child.bbox.y + child.bbox.height,
+                        matches!(control, Some(Control::Table(t)) if t.common.treat_as_char),
+                    ))
+                })
+                .fold((f64::NEG_INFINITY, false), |acc, (bottom, tac)| {
+                    if bottom > acc.0 {
+                        (bottom, tac)
+                    } else {
+                        acc
+                    }
+                })
+                .1;
+            let reclaims_previous_host_margin = !prev_end_is_tac
+                && reclaim_previous_host_margin.is_some_and(|max| {
+                    prev_table_end.is_finite()
+                        && y_start > prev_table_end
+                        && y_start - prev_table_end <= max + 0.5
+                });
             if reclaims_previous_host_margin {
                 prev_table_end
             } else if repeat_fragment_outer_margin {

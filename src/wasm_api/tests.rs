@@ -28572,3 +28572,31 @@ fn multi_col_one_row_terminal_fragment_flow_adds_outer_bottom_margin_like_mac_ha
         om283 - om141
     );
 }
+
+#[test]
+fn float_rowbreak_table_after_tac_title_row_keeps_line_spacing_and_offset_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(b7ef0592 22쪽): 글자처럼 제목 표(1×3 · 줄 lh 2348 + ls 652 · 본문 위 68.0pt) 뒤 별도 문단의 빈 host 가
+    // 든 자리차지 14×9 표(문단 기준 오프셋 617HU · 바깥 위 140HU)는 윗선이 «앞 줄 아래 + 줄 간격 + 오프셋 + 바깥 위» = 105.55pt 다
+    // (제목 표 아래 91.5pt). 우리는 줄 간격 6.5 + 오프셋 6.2 를 잃어 92.9pt 에 그렸다.
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_title_tac_then_float_rowbreak.hwp").expect("표본")).expect("파싱");
+    let svg = doc.render_page_svg_native(1).expect("SVG");
+    let mut ys: Vec<f64> = Vec::new();
+    for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+        let attr = |name: &str| -> Option<f64> {
+            let key = format!(" {name}=\"");
+            let i = tag.find(&key)? + key.len();
+            tag[i..].split('"').next()?.parse().ok()
+        };
+        if let (Some(x1), Some(x2), Some(y1)) = (attr("x1"), attr("x2"), attr("y1")) {
+            if x2 - x1 > 300.0 {
+                ys.push(y1 * 0.75);
+            }
+        }
+    }
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(
+        ys.iter().any(|y| (y - 105.55).abs() <= 0.3),
+        "큰 표 윗선 105.55pt(맥) 가 없다(우리 {:?})",
+        ys.iter().map(|y| (y * 10.0).round() / 10.0).take(10).collect::<Vec<_>>()
+    );
+}
