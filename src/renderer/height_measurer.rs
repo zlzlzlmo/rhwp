@@ -3787,8 +3787,21 @@ impl HeightMeasurer {
         // 뒤 글과 겹친다(간장 기증자 중간진도보고서 hwpx 9쪽 RowBreak 표 +7.6px → 글 겹침 2건).
         let stored_growth = table.page_break == crate::model::table::TablePageBreak::None
             && shrink_target > common_h + 0.5;
+        // rhwp 가 다시 짠(합성 줄뿐인) 표는 선언 높이로 누르지 않는다 — 맥 한글은 채움 계획서의 칸을 글에서 다시 재서 행을 키운다
+        // (맥 한글 12.30 채움 초창패 2쪽 안내 상자: 선언 162.1px → 내용 176.6px · 상자 아랫선 250.6pt). 한컴이 저장한 줄이 하나라도 있는 표는 종전 그대로다.
+        let table_is_rhwp_recomposed = table
+            .cells
+            .iter()
+            .flat_map(|c| c.paragraphs.iter())
+            .all(crate::renderer::para_has_no_stored_line_segs)
+            && table
+                .cells
+                .iter()
+                .flat_map(|c| c.paragraphs.iter())
+                .any(|p| !p.line_segs.is_empty());
         let table_height = if table.common.treat_as_char
             && !self.session_edited
+            && !table_is_rhwp_recomposed
             && common_h > 0.0
             && (raw_table_height > shrink_target + shrink_threshold
                 || (stored_growth && raw_table_height > shrink_target + 0.5))

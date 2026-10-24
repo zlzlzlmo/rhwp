@@ -28769,3 +28769,14 @@ fn synthetic_lines_atomic_tac_picture_paragraph_does_not_bleed_into_bottom_margi
         rules.iter().map(|y| (y * 10.0).round() / 10.0).take(8).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn recomposed_tac_table_grows_to_content_instead_of_shrinking_to_declared_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(채움 초창패 2쪽): rhwp 가 다시 짠(합성 줄뿐인) 글자처럼 표는 선언 높이(162.1px)로 누르지 않는다 — 안내 상자 내용 8줄이 176.6px 로 그려져
+    // 아랫선 250.6pt, 마지막 줄 «[학력] …» 도 보인다(종전엔 선언까지 눌려 239.7pt · 마지막 줄 클립). 한컴이 저장한 줄이 있는 표는 종전 그대로다.
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_fill_chochang_body12.hwp").expect("표본")).expect("파싱");
+    let rules = svg_long_rules_pt(&doc, 1);
+    assert!(rules.iter().any(|y| (y - 250.6).abs() <= 0.8), "상자 아랫선 250.6pt(맥) 가 없다(우리 {:?})", rules.iter().map(|y| (y * 10.0).round() / 10.0).take(8).collect::<Vec<_>>());
+    let svg = doc.render_page_svg_native(1).expect("SVG");
+    assert!(svg.contains(">학<"), "«[학력]» 줄 글자가 그려진다");
+}
