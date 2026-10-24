@@ -55,7 +55,14 @@ pub(in crate::renderer::typeset) fn atomic_overflow_fits(
             para_idx,
             crate::renderer::px_to_hwpunit(page.body_height, dpi),
         );
+    // 한컴이 저장한 줄일 때만 top-fit 이다 — rhwp 가 다시 짠(합성 줄) 채움 계획서는 맥 한글이 그림 문단을 엄격히 쪽 안에 담는다
+    // (맥 한글 12.30 채움 도약 viz5 8쪽: 하단 여백으로 18.6px 흘리던 그림 문단 «그림 5»가 9쪽 맨 위로 간다).
+    let stored_atomic_lines = para
+        .line_segs
+        .iter()
+        .any(|ls| ls.tag & crate::model::paragraph::LineSeg::TAG_IMPLEMENTATION_PROPERTY == 0);
     if is_atomic_tac_singleton
+        && stored_atomic_lines
         && !stored_next_page_atomic
         && page.current_height < available
         && page.has_items

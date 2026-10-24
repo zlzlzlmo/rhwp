@@ -28756,3 +28756,16 @@ fn synthetic_tac_multi_paragraph_cell_rows_exclude_trailing_line_spacing_like_ma
     assert!(rules.iter().any(|y| (y - 197.2).abs() <= 0.5), "행 아랫선 197.2pt(맥) 가 없다(우리 {:?})", rules.iter().map(|y| (y * 10.0).round() / 10.0).take(12).collect::<Vec<_>>());
     assert!(rules.iter().any(|y| (y - 227.6).abs() <= 0.5), "다음 행 아랫선 227.6pt(맥) 가 없다");
 }
+
+#[test]
+fn synthetic_lines_atomic_tac_picture_paragraph_does_not_bleed_into_bottom_margin_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(채움 도약 viz5 8·9쪽): rhwp 가 다시 짠(합성 줄) 문서의 그림 문단(«그림 5»)이 본문 바닥을 18.6px 넘으면 맥은 9쪽 맨 위로 넘긴다
+    // (9쪽 첫 표 윗선 248.0pt). 한컴이 저장한 줄은 종전대로 하단 여백으로 흘리는 top-fit 이다(윈도 정본).
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_fill_leap_viz5.hwp").expect("표본")).expect("파싱");
+    let rules = svg_long_rules_pt(&doc, 8);
+    assert!(
+        rules.iter().any(|y| (y - 248.0).abs() <= 0.5),
+        "9쪽 표 윗선 248.0pt(맥) 가 없다(우리 {:?})",
+        rules.iter().map(|y| (y * 10.0).round() / 10.0).take(8).collect::<Vec<_>>()
+    );
+}
