@@ -729,21 +729,7 @@ impl DocumentCore {
                 return;
             };
             let metrics = Self::table_cell_reflow_metrics(table);
-            let stale_cells: Vec<(usize, usize)> = table
-                .cells
-                .iter()
-                .enumerate()
-                .filter(|(cell_idx, cell)| {
-                    let Some(&(owner_width, _, _)) = metrics.get(*cell_idx) else {
-                        return false;
-                    };
-                    cell.paragraphs
-                        .iter()
-                        .flat_map(|p| p.line_segs.iter())
-                        .any(|ls| i64::from(ls.segment_width) > i64::from(owner_width))
-                })
-                .map(|(ci, cell)| (ci, cell.paragraphs.len()))
-                .collect();
+            let stale_cells = Self::stale_split_cells(table, &metrics);
             (stale_cells, metrics)
         };
         self.reflow_table_cell_paragraphs_after_split(
@@ -761,6 +747,31 @@ impl DocumentCore {
                 cell_idx,
             );
         }
+    }
+
+    /// 셀 나누기 뒤 저장 line_segs 가 stale 한 셀 — `(셀 인덱스, 문단 수)`.
+    ///
+    /// 저장 seg 폭이 해석된 문단 frame 폭을 넘는 셀이다. 평면 `reflow_stale_cells_after_split` 와
+    /// 중첩 표 경로판(`reflow_stale_cells_after_split_at`)이 같은 판별을 쓴다.
+    pub(crate) fn stale_split_cells(
+        table: &crate::model::table::Table,
+        metrics: &[crate::document_core::commands::text_editing::CellReflowMetrics],
+    ) -> Vec<(usize, usize)> {
+        table
+            .cells
+            .iter()
+            .enumerate()
+            .filter(|(cell_idx, cell)| {
+                let Some(&(owner_width, _, _)) = metrics.get(*cell_idx) else {
+                    return false;
+                };
+                cell.paragraphs
+                    .iter()
+                    .flat_map(|p| p.line_segs.iter())
+                    .any(|ls| i64::from(ls.segment_width) > i64::from(owner_width))
+            })
+            .map(|(ci, cell)| (ci, cell.paragraphs.len()))
+            .collect()
     }
 
     /// 범위 내 셀들을 각각 N줄 × M칸으로 분할한다 (네이티브).
@@ -1275,6 +1286,27 @@ impl DocumentCore {
         cell_idx: usize,
         json: &str,
     ) -> Result<String, HwpError> {
+        self.set_cell_properties_at_native(
+            section_idx,
+            parent_para_idx,
+            &[(control_idx, 0, 0)],
+            cell_idx,
+            json,
+        )
+    }
+
+    /// 셀 속성을 수정한다 — 표 주소가 셀 경로다(깊이 1 = 본문 최상위 표, 깊이 ≥ 2 = 중첩 표).
+    ///
+    /// 평면 `set_cell_properties_native` 의 본문이다. 표를 찾는 자리·글줄을 다시 짜는 자리·이웃 셀
+    /// 테두리를 맞추는 자리만 경로를 따르고, 깊이 1 에서는 종전과 같은 호출을 한다.
+    pub(crate) fn set_cell_properties_at_native(
+        &mut self,
+        section_idx: usize,
+        parent_para_idx: usize,
+        path: &[(usize, usize, usize)],
+        cell_idx: usize,
+        json: &str,
+    ) -> Result<String, HwpError> {
         let parsed: serde_json::Value =
             serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
         let obj = parsed.as_object();
@@ -1309,7 +1341,7 @@ impl DocumentCore {
             Some(self.normalize_cell_border_fill_json_for_edit(
                 section_idx,
                 parent_para_idx,
-                control_idx,
+                path,
                 cell_idx,
                 json,
             ))
@@ -1331,7 +1363,7 @@ impl DocumentCore {
         let (needs_reflow, reflow_para_count) = {
             let mut needs_reflow = false;
             let mut size_changed = false;
-            let table = self.get_table_mut(section_idx, parent_para_idx, control_idx)?;
+            let table = self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)?;
             let direct_border_fill_id = if has_border_fill_change {
                 None
             } else {
@@ -1414,10 +1446,10 @@ impl DocumentCore {
         if needs_reflow {
             let para_count = reflow_para_count;
             for cell_para_idx in 0..para_count {
-                self.reflow_cell_paragraph(
+                self.reflow_table_cell_paragraph_at(
                     section_idx,
                     parent_para_idx,
-                    control_idx,
+                    path,
                     cell_idx,
                     cell_para_idx,
                 );
@@ -1457,7 +1489,8 @@ impl DocumentCore {
 
             // 대상 셀 정보 추출 + border_fill_id 변경
             let (target_row, target_col, target_col_span, target_row_span) = {
-                let table = self.get_table_mut(section_idx, parent_para_idx, control_idx)?;
+                let table =
+                    self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)?;
                 let (row, col, col_span, row_span) = {
                     let cell = table.cells.get_mut(cell_idx).ok_or_else(|| {
                         HwpError::RenderError(format!("셀 인덱스 {} 범위 초과", cell_idx))
@@ -1505,7 +1538,7 @@ impl DocumentCore {
             bf_changes.extend(self.update_neighbor_borders(
                 section_idx,
                 parent_para_idx,
-                control_idx,
+                path,
                 cell_idx,
                 target_row,
                 target_col,
@@ -1616,7 +1649,7 @@ impl DocumentCore {
         &self,
         section_idx: usize,
         parent_para_idx: usize,
-        control_idx: usize,
+        path: &[(usize, usize, usize)],
         cell_idx: usize,
         json: &str,
     ) -> String {
@@ -1635,16 +1668,7 @@ impl DocumentCore {
             return json.to_string();
         }
 
-        let Some(table) = self
-            .document
-            .sections
-            .get(section_idx)
-            .and_then(|section| section.paragraphs.get(parent_para_idx))
-            .and_then(|para| match para.controls.get(control_idx) {
-                Some(Control::Table(table)) => Some(table),
-                _ => None,
-            })
-        else {
+        let Ok(table) = self.resolve_table_by_path(section_idx, parent_para_idx, path) else {
             return json.to_string();
         };
         let Some(cell) = table.cells.get(cell_idx) else {
@@ -2051,7 +2075,7 @@ impl DocumentCore {
         &mut self,
         section_idx: usize,
         parent_para_idx: usize,
-        control_idx: usize,
+        path: &[(usize, usize, usize)],
         skip_cell_idx: usize,
         target_row: usize,
         target_col: usize,
@@ -2068,10 +2092,11 @@ impl DocumentCore {
         // 1단계: 이웃 셀 탐색 — (셀 인덱스, old_bf_id, 갱신할 방향, 새 테두리)
         let mut updates: Vec<(usize, u16, usize, BorderLine)> = Vec::new();
         {
-            let table = match self.get_table_mut(section_idx, parent_para_idx, control_idx) {
-                Ok(t) => t,
-                Err(_) => return neighbor_changes,
-            };
+            let table =
+                match self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path) {
+                    Ok(t) => t,
+                    Err(_) => return neighbor_changes,
+                };
             for (ci, cell) in table.cells.iter().enumerate() {
                 if ci == skip_cell_idx {
                     continue;
@@ -2160,10 +2185,11 @@ impl DocumentCore {
                 }
             };
 
-            let table = match self.get_table_mut(section_idx, parent_para_idx, control_idx) {
-                Ok(t) => t,
-                Err(_) => return neighbor_changes,
-            };
+            let table =
+                match self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path) {
+                    Ok(t) => t,
+                    Err(_) => return neighbor_changes,
+                };
             if bf_id != old_bf_id {
                 neighbor_changes.push((ci, old_bf_id, bf_id));
             }
@@ -2673,6 +2699,25 @@ impl DocumentCore {
             }
         };
 
+        self.table_properties_json(table)
+    }
+
+    /// 표 속성을 조회한다 — 표 주소가 셀 경로다(깊이 1 = 본문 최상위 표, 깊이 ≥ 2 = 중첩 표).
+    pub(crate) fn get_table_properties_at_native(
+        &self,
+        section_idx: usize,
+        parent_para_idx: usize,
+        path: &[(usize, usize, usize)],
+    ) -> Result<String, HwpError> {
+        let table = self.resolve_table_by_path(section_idx, parent_para_idx, path)?;
+        self.table_properties_json(table)
+    }
+
+    /// 표 속성 JSON — 평면·경로 입구가 같은 본문을 읽는다.
+    fn table_properties_json(
+        &self,
+        table: &crate::model::table::Table,
+    ) -> Result<String, HwpError> {
         let pb = match table.page_break {
             crate::model::table::TablePageBreak::None => 0,
             crate::model::table::TablePageBreak::CellBreak => 1,
@@ -2776,6 +2821,24 @@ impl DocumentCore {
         control_idx: usize,
         json: &str,
     ) -> Result<String, HwpError> {
+        self.set_table_properties_at_native(
+            section_idx,
+            parent_para_idx,
+            &[(control_idx, 0, 0)],
+            json,
+        )
+    }
+
+    /// 표 속성을 수정한다 — 표 주소가 셀 경로다(깊이 1 = 본문 최상위 표, 깊이 ≥ 2 = 중첩 표).
+    ///
+    /// 평면 `set_table_properties_native` 의 본문이다. 표를 찾는 자리만 경로를 따른다.
+    pub(crate) fn set_table_properties_at_native(
+        &mut self,
+        section_idx: usize,
+        parent_para_idx: usize,
+        path: &[(usize, usize, usize)],
+        json: &str,
+    ) -> Result<String, HwpError> {
         use super::super::helpers::{json_bool, json_i16, json_i32, json_str, json_u32, json_u8};
 
         let caption_style = self
@@ -2789,7 +2852,7 @@ impl DocumentCore {
             .map(|(idx, s)| (idx as u8, s.para_shape_id, s.char_shape_id as u32))
             .unwrap_or((0, 0, 0));
 
-        let table = self.get_table_mut(section_idx, parent_para_idx, control_idx)?;
+        let table = self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)?;
 
         if let Some(v) = json_i16(json, "cellSpacing") {
             table.cell_spacing = v;
@@ -3109,7 +3172,7 @@ impl DocumentCore {
             || json.contains("\"centerLine\"");
         if has_border_fill_change {
             let new_bf_id = self.create_border_fill_from_json(json);
-            let table = self.get_table_mut(section_idx, parent_para_idx, control_idx)?;
+            let table = self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)?;
             table.border_fill_id = new_bf_id;
             for cell in &mut table.cells {
                 cell.border_fill_id = new_bf_id;
@@ -3120,12 +3183,13 @@ impl DocumentCore {
         // 중간 표 캡션 삭제 시 남은 표 번호가 한컴처럼 1부터 이어지도록 보장한다.
         if caption_created || caption_changed {
             crate::parser::assign_auto_numbers(&mut self.document);
-            if let Some(crate::model::control::Control::Table(ref mut tbl)) =
-                self.document.sections[section_idx].paragraphs[parent_para_idx]
-                    .controls
-                    .get_mut(control_idx)
-            {
-                if let Some(ref mut cap) = tbl.caption {
+            // 표를 `&mut self` 메서드로 찾으므로 `self.styles` 를 같이 빌릴 수 없다 — 캡션 문단을
+            // 꺼내 다시 짜고 되돌려 놓는다.
+            let caption_para = self
+                .resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)
+                .ok()
+                .and_then(|tbl| {
+                    let cap = tbl.caption.as_mut()?;
                     let available_width_hu = if matches!(
                         cap.direction,
                         crate::model::shape::CaptionDirection::Left
@@ -3135,18 +3199,29 @@ impl DocumentCore {
                     } else {
                         cap.max_width
                     };
-                    let available_width_px =
-                        crate::renderer::hwpunit_to_px(available_width_hu as i32, self.dpi);
-                    // 표 캡션 상자 — 캡션은 자기 열이 없으므로 미스냅.
-                    crate::renderer::composer::reflow_line_segs(
-                        &mut cap.paragraphs[0],
-                        crate::renderer::composer::ParagraphBox::content_width_px(
-                            available_width_px,
-                            self.dpi,
-                        ),
-                        &self.styles,
+                    let para = std::mem::take(cap.paragraphs.get_mut(0)?);
+                    Some((available_width_hu, para))
+                });
+            if let Some((available_width_hu, mut cap_para)) = caption_para {
+                let available_width_px =
+                    crate::renderer::hwpunit_to_px(available_width_hu as i32, self.dpi);
+                // 표 캡션 상자 — 캡션은 자기 열이 없으므로 미스냅.
+                crate::renderer::composer::reflow_line_segs(
+                    &mut cap_para,
+                    crate::renderer::composer::ParagraphBox::content_width_px(
+                        available_width_px,
                         self.dpi,
-                    );
+                    ),
+                    &self.styles,
+                    self.dpi,
+                );
+                if let Some(slot) = self
+                    .resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)
+                    .ok()
+                    .and_then(|tbl| tbl.caption.as_mut())
+                    .and_then(|cap| cap.paragraphs.get_mut(0))
+                {
+                    *slot = cap_para;
                 }
             }
         }
@@ -3157,7 +3232,8 @@ impl DocumentCore {
 
         if caption_created {
             let char_offset = {
-                let table = self.get_table_mut(section_idx, parent_para_idx, control_idx)?;
+                let table =
+                    self.resolve_table_mut_by_cell_path(section_idx, parent_para_idx, path)?;
                 table.caption.as_ref().map_or(0, |c| {
                     c.paragraphs.first().map_or(0, |p| p.text.chars().count())
                 })
@@ -4369,7 +4445,7 @@ mod neighbor_border_raw_data_tests {
         core.update_neighbor_borders(
             0,
             0,
-            0,
+            &[(0, 0, 0)],
             0,
             0,
             0,
@@ -4427,7 +4503,7 @@ mod neighbor_border_raw_data_tests {
         core.update_neighbor_borders(
             0,
             0,
-            0,
+            &[(0, 0, 0)],
             0,
             0,
             0,

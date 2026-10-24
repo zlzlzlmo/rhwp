@@ -20,6 +20,8 @@ pub(crate) mod picture_transform_journal;
 // [#3565] 대형 문서 결함을 이분법으로 좁히기 위한 쪽 범위 추출.
 pub mod page_extract;
 mod table_ops;
+// 중첩 표(셀 안에 든 표)의 구조 쓰기 — 셀 경로판.
+mod table_ops_nested;
 mod text_editing;
 // [#5769] Stage 4 — 구역 raw 저널. SectionRawCapture 타입이 DocumentCore 필드로
 // 쓰이므로 pub(crate).

@@ -3940,8 +3940,10 @@ impl DocumentCore {
 
                 if check_table_match(node, parent_para, path) {
                     // 이 테이블의 직속 셀 bbox 수집
-                    for (cell_idx, child) in node.children.iter().enumerate() {
+                    for (child_idx, child) in node.children.iter().enumerate() {
                         if let RenderNodeType::TableCell(ref cn) = child.node_type {
+                            // 평면 `get_table_cell_bboxes` 와 같이 모델 칸 번호를 낸다 — 렌더 트리 자식 순번은 쪽이 갈린 표에서 조각마다 0부터 다시 센다.
+                            let cell_idx = cn.model_cell_index.map_or(child_idx, |m| m as usize);
                             result.push(format!(
                                 "{{\"cellIdx\":{},\"row\":{},\"col\":{},\"rowSpan\":{},\"colSpan\":{},\"pageIndex\":{},\"x\":{:.1},\"y\":{:.1},\"w\":{:.1},\"h\":{:.1}}}",
                                 cell_idx, cn.row, cn.col, cn.row_span, cn.col_span,

@@ -3579,6 +3579,225 @@ impl HwpDocument {
         .map_err(|e| e.into())
     }
 
+    // ─── 중첩 표(셀 안에 든 표) 구조 쓰기 — 셀 경로판 ──────────────────────
+    //
+    // 평면 API 는 `(구역, 문단, 컨트롤)` 로 본문 최상위 표만 닿는다. 아래 여덟은 같은 동작을
+    // `cell_path_json` 으로 받는다: `[{"controlIndex":0,"cellIndex":0,"cellParaIndex":9},...]`
+    // 의 **마지막 항목이 대상 표**다(`resizeTableCellsByPath` 와 같은 규약). 깊이 1 은 평면 API 와
+    // 같은 결과다. 반환 JSON 도 평면 쌍둥이와 같다.
+
+    /// 중첩 표에 행을 삽입한다 (`insertTableRow` 의 경로판).
+    #[wasm_bindgen(js_name = insertTableRowByPath)]
+    pub fn insert_table_row_by_path(
+        &mut self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+        row_idx: u32,
+        below: bool,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.insert_table_row_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+            row_idx as u16,
+            below,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// 중첩 표에 열을 삽입한다 (`insertTableColumn` 의 경로판).
+    #[wasm_bindgen(js_name = insertTableColumnByPath)]
+    pub fn insert_table_column_by_path(
+        &mut self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+        col_idx: u32,
+        right: bool,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.insert_table_column_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+            col_idx as u16,
+            right,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// 중첩 표에서 행을 삭제한다 (`deleteTableRow` 의 경로판).
+    #[wasm_bindgen(js_name = deleteTableRowByPath)]
+    pub fn delete_table_row_by_path(
+        &mut self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+        row_idx: u32,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.delete_table_row_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+            row_idx as u16,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// 중첩 표에서 열을 삭제한다 (`deleteTableColumn` 의 경로판).
+    #[wasm_bindgen(js_name = deleteTableColumnByPath)]
+    pub fn delete_table_column_by_path(
+        &mut self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+        col_idx: u32,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.delete_table_column_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+            col_idx as u16,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// 중첩 표의 셀을 병합한다 (`mergeTableCells` 의 경로판).
+    #[wasm_bindgen(js_name = mergeTableCellsByPath)]
+    pub fn merge_table_cells_by_path(
+        &mut self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.merge_table_cells_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+            start_row as u16,
+            start_col as u16,
+            end_row as u16,
+            end_col as u16,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// 중첩 표의 병합된 셀을 나눈다 (`splitTableCell` 의 경로판).
+    #[wasm_bindgen(js_name = splitTableCellByPath)]
+    pub fn split_table_cell_by_path(
+        &mut self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+        row: u32,
+        col: u32,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.split_table_cell_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+            row as u16,
+            col as u16,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// 중첩 표의 한 칸을 N줄 × M칸으로 나눈다 (`splitTableCellInto` 의 경로판).
+    #[wasm_bindgen(js_name = splitTableCellIntoByPath)]
+    pub fn split_table_cell_into_by_path(
+        &mut self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+        row: u32,
+        col: u32,
+        n_rows: u32,
+        m_cols: u32,
+        equal_row_height: bool,
+        merge_first: bool,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.split_table_cell_into_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+            row as u16,
+            col as u16,
+            n_rows as u16,
+            m_cols as u16,
+            equal_row_height,
+            merge_first,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// 중첩 표의 셀 속성을 수정한다 (`setCellProperties` 의 경로판).
+    #[wasm_bindgen(js_name = setCellPropertiesByPath)]
+    pub fn set_cell_properties_by_path(
+        &mut self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+        cell_idx: u32,
+        json: &str,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.set_cell_properties_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+            cell_idx as usize,
+            json,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// 중첩 표의 표 속성을 수정한다 (`setTableProperties` 의 경로판).
+    #[wasm_bindgen(js_name = setTablePropertiesByPath)]
+    pub fn set_table_properties_by_path(
+        &mut self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+        json: &str,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.set_table_properties_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+            json,
+        )
+        .map_err(|e| e.into())
+    }
+
+    /// 중첩 표의 표 속성을 조회한다 (`getTableProperties` 의 경로판).
+    #[wasm_bindgen(js_name = getTablePropertiesByPath)]
+    pub fn get_table_properties_by_path(
+        &self,
+        section_idx: u32,
+        parent_para_idx: u32,
+        cell_path_json: &str,
+    ) -> Result<String, JsValue> {
+        let path = parse_cell_path_arg(cell_path_json)?;
+        self.get_table_properties_by_cell_path_native(
+            section_idx as usize,
+            parent_para_idx as usize,
+            &path,
+        )
+        .map_err(|e| e.into())
+    }
+
     /// 표의 모든 셀 bbox를 반환한다 (F5 셀 선택 모드용).
     ///
     /// 반환: JSON `[{cellIdx, row, col, rowSpan, colSpan, pageIndex, x, y, w, h}, ...]`

@@ -3152,6 +3152,41 @@ impl DocumentCore {
         path: &[(usize, usize, usize)],
         cell_para_idx: usize,
     ) {
+        self.reflow_cell_paragraph_by_path_with(
+            section_idx,
+            parent_para_idx,
+            path,
+            cell_para_idx,
+            false,
+        );
+    }
+
+    /// 칸 나누기로 폭이 바뀌어 저장 LINE_SEG 가 stale 해진 중첩 표 문단을 다시 짠다 —
+    /// `reflow_cell_paragraph_after_split` 의 경로판(한컴의 좁아진 셀 규칙을 opt-in).
+    pub(crate) fn reflow_cell_paragraph_by_path_after_split(
+        &mut self,
+        section_idx: usize,
+        parent_para_idx: usize,
+        path: &[(usize, usize, usize)],
+        cell_para_idx: usize,
+    ) {
+        self.reflow_cell_paragraph_by_path_with(
+            section_idx,
+            parent_para_idx,
+            path,
+            cell_para_idx,
+            true,
+        );
+    }
+
+    fn reflow_cell_paragraph_by_path_with(
+        &mut self,
+        section_idx: usize,
+        parent_para_idx: usize,
+        path: &[(usize, usize, usize)],
+        cell_para_idx: usize,
+        split_stale_cell_reflow: bool,
+    ) {
         use crate::renderer::hwpunit_to_px;
 
         let Some((cell_width, pad_left, pad_right)) =
@@ -3184,14 +3219,41 @@ impl DocumentCore {
         let margin_right = para_style.map(|s| s.margin_right).unwrap_or(0.0);
         let final_width = (available_width - margin_left - margin_right).max(0.0);
         // 셀 내용 상자 — 열이 없으므로 미스냅.
-        reflow_line_segs(
-            cell_para,
-            ParagraphBox::content_width_px(final_width, dpi),
-            &styles,
-            dpi,
-        );
+        if split_stale_cell_reflow {
+            crate::renderer::composer::reflow_line_segs_after_cell_split(
+                cell_para,
+                ParagraphBox::content_width_px(final_width, dpi),
+                &styles,
+                dpi,
+            );
+        } else {
+            reflow_line_segs(
+                cell_para,
+                ParagraphBox::content_width_px(final_width, dpi),
+                &styles,
+                dpi,
+            );
+        }
         if squeeze {
             crate::renderer::composer::merge_squeeze_line_segs(cell_para);
+        }
+    }
+
+    /// [#4138] 중첩 표 셀의 vpos 사다리를 처음부터 끝까지 단조 재구축한다 —
+    /// `rebuild_table_cell_vpos_ladder_native` 의 경로판. `path` 의 마지막 항목이 그 셀이다.
+    pub(crate) fn rebuild_cell_vpos_ladder_by_path(
+        &mut self,
+        section_idx: usize,
+        parent_para_idx: usize,
+        path: &[(usize, usize, usize)],
+    ) {
+        let styles = self.resolve_render_styles();
+        let dpi = self.dpi;
+        let is_hwp3_variant = self.document.layout_profile().hwp3_layout();
+        if let Ok(paras) = self.get_cell_paragraphs_mut_by_path(section_idx, parent_para_idx, path)
+        {
+            let stop_para = paras.len();
+            apply_cell_vpos_ladder(paras, 0, stop_para, &styles, dpi, is_hwp3_variant);
         }
     }
 
