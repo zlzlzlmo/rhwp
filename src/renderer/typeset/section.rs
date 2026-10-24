@@ -169,6 +169,45 @@ impl TypesetEngine {
             if st.prefilled_paras.contains(&para_idx) {
                 continue;
             }
+            // 개체 이월(맥 한글 12.30): 쪽에 안 들어 다음 쪽으로 미뤄 둔 «글자처럼 표 뒤 자리차지 표»는 뒤 문단이 현재 쪽을 채우다
+            // 새 쪽이 열리는 자리에서 맨 먼저 놓는다 — 이 문단이 현재 쪽 잔여에 안 들면 쪽을 열고 먼저 놓는다.
+            if st.has_carry_deferred_table() {
+                let first_line_px = para
+                    .line_segs
+                    .iter()
+                    .find(|seg| !is_synthetic_line_seg(seg))
+                    .map(|seg| hwpunit_to_px(seg.line_height.saturating_add(seg.line_spacing), self.dpi));
+                let fresh_page = st.current_items.is_empty();
+                let does_not_fit = first_line_px
+                    .is_some_and(|need| st.current_height + need > st.available_height() + 0.5);
+                // 저장 vpos 가 앞 문단보다 되감기면 윈도 저장 쪽이 거기서 갈렸다는 증거다 — 이월 표는 그 새 쪽에서 맨 먼저 놓는다.
+                let stored_rewind = para_idx > 0
+                    && para
+                        .line_segs
+                        .iter()
+                        .find(|seg| !is_synthetic_line_seg(seg))
+                        .zip(
+                            paragraphs[para_idx - 1]
+                                .line_segs
+                                .iter()
+                                .rev()
+                                .find(|seg| !is_synthetic_line_seg(seg)),
+                        )
+                        .is_some_and(|(own, prev)| own.vertical_pos < prev.vertical_pos);
+                if fresh_page || does_not_fit || stored_rewind {
+                    if !fresh_page {
+                        st.advance_column_or_new_page();
+                    }
+                    self.flush_deferred_table_controls(
+                        &mut st,
+                        paragraphs,
+                        composed,
+                        styles,
+                        measured_tables,
+                        DeferredTableFlushPoint::SectionEnd,
+                    );
+                }
+            }
             // 후속 본문이 사이에 없는 새 표 문단은 이전 묶음의 일부가 아니다.
             // 이전 문단의 후행 표를 먼저 완료한다. 새 문단의 명시적 쪽/단 나눔과
             // 저장 vpos를 적용하기 전이어야 이전 표가 새 문단 뒤로 밀리지 않는다.

@@ -474,6 +474,34 @@ impl TypesetState {
         }
     }
 
+    /// 다른 문단이 남긴 자리차지 밴드를 지난 뒤 높이 `probe_height` 인 개체가 앉을 시작 높이 — 상태는 바꾸지 않는다.
+    pub(super) fn start_height_after_other_float_bands(
+        &self,
+        para_index: usize,
+        probe_height: f64,
+    ) -> f64 {
+        let mut start = self.data.current_height;
+        for zone in &self.data.visible_float_exclusions {
+            if zone.para_index == para_index || start >= zone.bottom - 0.5 {
+                continue;
+            }
+            let starts_in_zone = start + 0.5 >= zone.top;
+            let overlaps_zone = start < zone.top && start + probe_height > zone.top + 0.5;
+            if starts_in_zone || overlaps_zone {
+                start = start.max(zone.bottom);
+            }
+        }
+        start
+    }
+
+    /// 다음 쪽 맨 위로 이월을 기다리는 표가 있는가(개체 이월).
+    pub(super) fn has_carry_deferred_table(&self) -> bool {
+        self.data
+            .deferred_table_controls
+            .iter()
+            .any(|deferred| deferred.carry_to_next_page)
+    }
+
     pub(super) fn has_deferred_table_controls(&self) -> bool {
         !self.data.deferred_table_controls.is_empty()
     }

@@ -18,6 +18,9 @@ pub(in crate::renderer::typeset) struct DeferredTableControl {
     /// inline(캡션)을 반영해 out-of-flow float 예산을 과소평가하므로, 분할 예산 기준용
     /// para_start 를 원 배치 시점 값으로 보존한다.
     pub(in crate::renderer::typeset) para_start_height: f64,
+    /// 쪽에 안 드는 «글자처럼 표 뒤 자리차지 표» — 맥 한글은 이 표만 다음 쪽 맨 위로 이월하고 뒤 문단은 현재 쪽을 채운다(개체 이월).
+    /// 일반 지연 큐 flush 지점(표 문단 앞·뒤)에서는 놓지 않고 새 쪽 시작에서만 놓는다.
+    pub(in crate::renderer::typeset) carry_to_next_page: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -34,6 +37,9 @@ impl DeferredTableFlushPoint {
         deferred: &DeferredTableControl,
         paragraphs: &[Paragraph],
     ) -> bool {
+        if deferred.carry_to_next_page && !matches!(self, Self::SectionEnd) {
+            return true;
+        }
         match self {
             Self::BeforeTableParagraph(idx) => {
                 idx <= deferred.para_index
@@ -152,6 +158,7 @@ impl<'a> CoanchoredTableQuery<'a> {
                             is_last_placed: last_placed_table == Some(next_ctrl_idx),
                             // [Task #1860] 원 배치 시점의 참 para_start.
                             para_start_height,
+                            carry_to_next_page: false,
                         }
                     })
             })

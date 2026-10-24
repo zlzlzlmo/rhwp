@@ -89,6 +89,25 @@ pub(in crate::renderer::typeset) fn place(
     let mt = measured_tables
         .iter()
         .find(|mt| mt.para_index == para_idx && mt.control_index == ctrl_idx);
+    // 쪽에 안 드는 «글자처럼 표 뒤 자리차지 표»는 다음 쪽 맨 위로 이월하고 뒤 문단은 현재 쪽을 채운다(맥 한글 12.30 PluginOsaka 2·3쪽).
+    if !engine.is_effective_tac_table(para, table, fmt)
+        && crate::renderer::stored_float_anchor::is_float_after_tac_sibling_in_host(para, ctrl_idx)
+        && !st.has_deferred_table_controls()
+        && !st.flow_table_column_top()
+        && para_idx + 1 < paragraphs_all.len()
+        && st.start_height_after_other_float_bands(para_idx, ft.effective_height) + ft.effective_height
+            > st.available_height() + 0.5
+    {
+        st.enqueue_deferred_table_controls(vec![super::deferred::DeferredTableControl {
+            para_index: para_idx,
+            control_index: ctrl_idx,
+            is_first_placed: first_placed_table == Some(ctrl_idx),
+            is_last_placed: last_placed_table == Some(ctrl_idx),
+            para_start_height,
+            carry_to_next_page: true,
+        }]);
+        return false;
+    }
     let is_first_placed = first_placed_table == Some(ctrl_idx);
     let is_last_placed = last_placed_table == Some(ctrl_idx);
     if engine.is_effective_tac_table(para, table, fmt) {

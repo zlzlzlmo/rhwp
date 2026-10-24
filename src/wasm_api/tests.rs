@@ -28691,3 +28691,31 @@ fn next_paragraph_stored_above_float_table_flows_in_the_gap_like_mac_hangul() {
         p3.iter().map(|(y, w)| (((y * 10.0).round() / 10.0), w.round())).take(8).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn unfit_float_after_tac_heading_carries_alone_and_following_empty_paragraph_stays_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(PluginOsaka 2·3쪽): 쪽에 안 드는 오프셋 0 자리차지 표는 다음 쪽 맨 위(58.0pt)로 이월하고(개체 이월), 뒤 빈 문단 하나는 현재 쪽 틈에 남고
+    // 저장 vpos 가 되감기는 다음 빈 문단부터 새 쪽이다 — 3쪽 제목 표 윗선 240.1pt(표 바닥 217.9 + 빈 줄 하나 + 바깥 여백).
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_float_carry_next_page_keeps_following_paragraph.hwp").expect("표본")).expect("파싱");
+    let rules = |page: u32| -> Vec<f64> {
+        let svg = doc.render_page_svg_native(page).expect("SVG");
+        let mut out = Vec::new();
+        for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+            let attr = |name: &str| -> Option<f64> {
+                let key = format!(" {name}=\"");
+                let i = tag.find(&key)? + key.len();
+                tag[i..].split('"').next()?.parse().ok()
+            };
+            if let (Some(x1), Some(x2), Some(y1)) = (attr("x1"), attr("x2"), attr("y1")) {
+                if x2 - x1 > 30.0 {
+                    out.push(y1 * 0.75);
+                }
+            }
+        }
+        out
+    };
+    let p3 = rules(2);
+    let fmt = |v: &[f64]| v.iter().map(|y| (y * 10.0).round() / 10.0).take(10).collect::<Vec<_>>();
+    assert!(p3.iter().any(|y| (y - 58.0).abs() <= 0.8), "3쪽 맨 위 이월 표 58.0pt 가 없다(우리 {:?})", fmt(&p3));
+    assert!(p3.iter().any(|y| (y - 240.1).abs() <= 1.6), "3쪽 제목 표 윗선 240.1pt 가 없다(우리 {:?})", fmt(&p3));
+}

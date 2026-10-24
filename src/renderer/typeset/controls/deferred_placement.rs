@@ -28,8 +28,9 @@ pub(in crate::renderer::typeset) fn place(
     let host_col_w = st.deferred_table_column_width();
     let composed_para = composed.get(deferred.para_index);
     let fmt = engine.format_paragraph(para, composed_para, styles, Some(host_col_w));
-    if !CoanchoredTableQuery::new(para, &fmt, engine.tac_flow_query())
-        .is_deferred_coanchored_rowbreak_table(table)
+    if !deferred.carry_to_next_page
+        && !CoanchoredTableQuery::new(para, &fmt, engine.tac_flow_query())
+            .is_deferred_coanchored_rowbreak_table(table)
     {
         return;
     }
