@@ -28780,3 +28780,16 @@ fn recomposed_tac_table_grows_to_content_instead_of_shrinking_to_declared_like_m
     let svg = doc.render_page_svg_native(1).expect("SVG");
     assert!(svg.contains(">학<"), "«[학력]» 줄 글자가 그려진다");
 }
+
+#[test]
+fn page_top_whitespace_host_float_table_keeps_outer_bottom_margin_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(채움 도약 viz0 7쪽): 쪽 맨 위로 넘어온 자리차지 표(호스트는 공백뿐, 호스트 줄은 앞 쪽에 남음) 뒤 흐름에 표 바깥 아래 여백(1.41pt)이
+    // 남는다 — 뒤따르는 제목 표 윗선 317.2pt (여백을 잃으면 315.7pt, 우리 종전값).
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_fill_leap_viz0.hwp").expect("표본")).expect("파싱");
+    let rules = svg_long_rules_pt(&doc, 6);
+    assert!(
+        rules.iter().any(|y| (y - 317.2).abs() <= 0.4),
+        "7쪽 표 윗선 317.2pt(맥) 가 없다(우리 {:?})",
+        rules.iter().map(|y| (y * 10.0).round() / 10.0).take(20).collect::<Vec<_>>()
+    );
+}

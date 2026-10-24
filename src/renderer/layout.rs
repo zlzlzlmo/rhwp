@@ -11701,8 +11701,17 @@ impl LayoutEngine {
                     // [#4533 ⑥] 표는 예약 공간(앵커 위)에 이미 놓였다 — 흐름은
                     // 전진하지 않는다(앵커·후속 문단이 사다리 위치 유지).
                     table_y_before
+                } else if let Some(end) = empty_rowbreak_flow_end {
+                    end
+                } else if !is_current_visible_para_float
+                    && !t.common.treat_as_char
+                    && is_para_topbottom_float(&t.common)
+                    && (table_y_before - col_area.y).abs() < 0.5
+                {
+                    // 쪽 맨 위로 넘어온 빈 호스트 자리차지 표 — 맥 한글은 표 아랫선 뒤 바깥 아래 여백을 흐름에 남긴다.
+                    table_flow_end + hwpunit_to_px(t.outer_margin_bottom as i32, self.dpi)
                 } else {
-                    empty_rowbreak_flow_end.unwrap_or(table_flow_end)
+                    table_flow_end
                 };
                 let signed_vertical_offset = signed_hwpunit(t.common.vertical_offset);
                 let zero_offset_has_following_coanchored_float = signed_vertical_offset == 0
