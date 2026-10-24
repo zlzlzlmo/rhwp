@@ -28719,3 +28719,40 @@ fn unfit_float_after_tac_heading_carries_alone_and_following_empty_paragraph_sta
     assert!(p3.iter().any(|y| (y - 58.0).abs() <= 0.8), "3쪽 맨 위 이월 표 58.0pt 가 없다(우리 {:?})", fmt(&p3));
     assert!(p3.iter().any(|y| (y - 240.1).abs() <= 1.6), "3쪽 제목 표 윗선 240.1pt 가 없다(우리 {:?})", fmt(&p3));
 }
+
+fn svg_long_rules_pt(doc: &HwpDocument, page: u32) -> Vec<f64> {
+    let svg = doc.render_page_svg_native(page).expect("SVG");
+    let mut out = Vec::new();
+    for tag in svg.split('<').filter(|t| t.starts_with("line ")) {
+        let attr = |name: &str| -> Option<f64> {
+            let key = format!(" {name}=\"");
+            let i = tag.find(&key)? + key.len();
+            tag[i..].split('"').next()?.parse().ok()
+        };
+        if let (Some(x1), Some(x2), Some(y1)) = (attr("x1"), attr("x2"), attr("y1")) {
+            if x2 - x1 > 30.0 {
+                out.push(y1 * 0.75);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn stacked_tac_tables_one_per_line_keep_outer_margins_between_them_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(채움 초창패 2쪽): 한 문단에 글자처럼 표 둘이 줄마다 하나씩(줄 높이 = 위 여백 + 표 + 아래 여백, 합성 줄 포함) — 둘째 표 윗선 =
+    // 첫 표 아랫선 105.8 + 아래 여백 2.8 + 줄 간격 6.6 + 위 여백 2.8 = 118.0pt (우리는 여백 둘을 잃어 112.4pt).
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_fill_chochang_body12.hwp").expect("표본")).expect("파싱");
+    let rules = svg_long_rules_pt(&doc, 1);
+    assert!(rules.iter().any(|y| (y - 118.0).abs() <= 0.5), "둘째 표 윗선 118.0pt(맥) 가 없다(우리 {:?})", rules.iter().map(|y| (y * 10.0).round() / 10.0).take(8).collect::<Vec<_>>());
+}
+
+#[test]
+fn synthetic_tac_multi_paragraph_cell_rows_exclude_trailing_line_spacing_like_mac_hangul() {
+    // 맥 한글 12.30 PDF(채움 도약 1쪽): rhwp 가 다시 짠(합성 줄) 글자처럼 표의 다문단 칸은 내용 높이가 마지막 줄 바닥이다 — 행 167.6→197.2pt(29.6)
+    // (마지막 줄 간격 5.5 를 더하면 202.7). 한컴이 저장한 줄(hwpfile-basic 14쪽)은 간격 포함이 맥 정답이라 그쪽은 그대로다.
+    let doc = HwpDocument::from_bytes(&std::fs::read("samples/webiz_fill_leap_body12.hwp").expect("표본")).expect("파싱");
+    let rules = svg_long_rules_pt(&doc, 0);
+    assert!(rules.iter().any(|y| (y - 197.2).abs() <= 0.5), "행 아랫선 197.2pt(맥) 가 없다(우리 {:?})", rules.iter().map(|y| (y * 10.0).round() / 10.0).take(12).collect::<Vec<_>>());
+    assert!(rules.iter().any(|y| (y - 227.6).abs() <= 0.5), "다음 행 아랫선 227.6pt(맥) 가 없다");
+}

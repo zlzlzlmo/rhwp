@@ -2654,9 +2654,14 @@ impl HeightMeasurer {
                                         // 올라가 한컴 정본(pdf/KTX-2022.pdf)에서 멀어진다.
                                         let last_line_is_empty =
                                             p.text.is_empty() && p.controls.is_empty();
+                                        // 저장(한컴이 저장한) 줄만 마지막 줄 뒤 간격을 칸 높이에 싣는다 — rhwp 가 다시 짠 합성 줄 칸은 맥 한글처럼 내용 높이가 마지막 줄 바닥이다
+                                        // (맥 한글 12.30 채움 계획서: 도약 채움 1쪽 표 행 29.6pt ↔ 간격 포함 35.1pt · 저장 문서 hwpfile-basic 14쪽은 간격 포함 81.6pt).
+                                        let stored_cell_lines =
+                                            p.line_segs.iter().any(|ls| ls.tag & 0x8000_0000 == 0);
                                         let include_trailing_ls = !is_cell_last_line
                                             || (cell_para_count > 1
                                                 && table.common.treat_as_char
+                                                && stored_cell_lines
                                                 && !last_line_is_object_only
                                                 && !last_line_is_empty);
                                         if include_trailing_ls {
@@ -3621,9 +3626,14 @@ impl HeightMeasurer {
                                         // 올라가 한컴 정본(pdf/KTX-2022.pdf)에서 멀어진다.
                                         let last_line_is_empty =
                                             p.text.is_empty() && p.controls.is_empty();
+                                        // 저장(한컴이 저장한) 줄만 마지막 줄 뒤 간격을 칸 높이에 싣는다 — rhwp 가 다시 짠 합성 줄 칸은 맥 한글처럼 내용 높이가 마지막 줄 바닥이다
+                                        // (맥 한글 12.30 채움 계획서: 도약 채움 1쪽 표 행 29.6pt ↔ 간격 포함 35.1pt · 저장 문서 hwpfile-basic 14쪽은 간격 포함 81.6pt).
+                                        let stored_cell_lines =
+                                            p.line_segs.iter().any(|ls| ls.tag & 0x8000_0000 == 0);
                                         let include_trailing_ls = !is_cell_last_line
                                             || (cell_para_count > 1
                                                 && table.common.treat_as_char
+                                                && stored_cell_lines
                                                 && !last_line_is_object_only
                                                 && !last_line_is_empty);
                                         if include_trailing_ls {

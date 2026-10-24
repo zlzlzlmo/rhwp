@@ -11820,6 +11820,10 @@ impl LayoutEngine {
                             .vertical_pos
                             .saturating_sub(seg.vertical_pos.saturating_add(seg.line_height));
                         y_offset += hwpunit_to_px(gap, self.dpi);
+                        // 줄이 «위 여백 + 표 + 아래 여백» 이면 표 아랫선 뒤 아래 여백이 줄 안에 남아 있다(맥 한글 12.30).
+                        if Self::tac_owned_band_is_outer_box(para, t, control_index) {
+                            y_offset += hwpunit_to_px(t.outer_margin_bottom as i32, self.dpi);
+                        }
                     }
                     return TableControlOut {
                         y_offset,
@@ -12355,7 +12359,9 @@ impl LayoutEngine {
                         // 3.8px 위로 앉아 직전 표 괘선과 4.2px 겹친다 (156505870
                         // 연달은 자리차지 표 4개 중 2~4번째, 한글 이중 괘선 간격
                         // 0.4px vs rhwp 4.3px).
-                        if Self::tac_stored_band_is_outer_box(para, t) {
+                        if Self::tac_stored_band_is_outer_box(para, t)
+                            || Self::tac_owned_band_is_outer_box(para, t, control_index)
+                        {
                             y_offset += hwpunit_to_px(t.outer_margin_top as i32, self.dpi);
                         }
                         // [#5809 실측②] 직전 TAC 의 seg 전진은 줄 간격까지만 담는다.

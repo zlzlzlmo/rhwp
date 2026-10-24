@@ -2363,6 +2363,39 @@ impl LayoutEngine {
         (i64::from(ls.line_height) - (om_top_hu + declared + om_bottom_hu)).abs() <= 8
     }
 
+    /// 여러 저장 줄 문단에서 이 표가 **자기 줄 하나**를 «위 여백 + 선언 높이 + 아래 여백» 으로 가득 쓰는가 — 줄마다 표 하나(소유가 자명)일 때만.
+    /// 맥 한글 12.30(챠창패 채움 2쪽 제목 상자 + 설명 상자): 잇단 둘째 표 윗선 = 첫 표 아랫선 + 아래 여백 + 줄 간격 + 위 여백(합성 줄 포함).
+    pub(crate) fn tac_owned_band_is_outer_box(
+        para: &Paragraph,
+        tbl: &crate::model::table::Table,
+        control_index: usize,
+    ) -> bool {
+        use crate::model::control::Control;
+        if para.line_segs.len() < 2 {
+            return false;
+        }
+        let om_top_hu = i64::from(tbl.outer_margin_top);
+        let om_bottom_hu = i64::from(tbl.outer_margin_bottom);
+        let declared = i64::from(tbl.common.height.min(i32::MAX as u32));
+        if om_top_hu <= 0 || om_bottom_hu <= 0 || declared <= 0 {
+            return false;
+        }
+        let Some(line) = super::control_line_seg_index(para, control_index) else {
+            return false;
+        };
+        let Some(ls) = para.line_segs.get(line) else {
+            return false;
+        };
+        // 같은 줄을 쓰는 다른 글자처럼 표가 없어야 소유가 자명하다.
+        let shares_line = para.controls.iter().enumerate().any(|(i, c)| {
+            i != control_index
+                && matches!(c, Control::Table(t) if t.common.treat_as_char)
+                && super::control_line_seg_index(para, i) == Some(line)
+        });
+        !shares_line
+            && (i64::from(ls.line_height) - (om_top_hu + declared + om_bottom_hu)).abs() <= 8
+    }
+
     /// #6812: 측정/fit 소유자가 확정한 줄 결과를 그린다. 여기서 회피·줄바꿈을 재판정하지 않는다.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn layout_inline_flow_plan(
